@@ -287,6 +287,19 @@ func TestParseMSVCDiagnostic(t *testing.T) {
 	}
 }
 
+func TestMSVCDeterministicCommandMapsWorkspacePaths(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "bofs", "demo", "payload.c")
+	output := filepath.Join(root, "dist", "demo.x64.o")
+	command := compileCommand("msvc", "x64", "cl", source, output, filepath.Dir(source), nil, true, "seed")
+	joined := strings.Join(command, " ")
+	for _, flag := range []string{"/Brepro", "/experimental:deterministic", "/pathmap:" + root + "=."} {
+		if !strings.Contains(joined, flag) {
+			t.Fatalf("MSVC command missing %q: %s", flag, joined)
+		}
+	}
+}
+
 func TestRealMinGWReproducibleBuildWhenAvailable(t *testing.T) {
 	if _, err := exec.LookPath("x86_64-w64-mingw32-gcc"); err != nil {
 		t.Skip("MinGW x64 compiler unavailable")

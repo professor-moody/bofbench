@@ -95,7 +95,10 @@ func compileCommand(profile, arch, executable, sourceAbs, outAbs, includeDir str
 	if profile == "msvc" {
 		command := []string{executable, "/nologo", "/c", sourceAbs, "/Fo:" + outAbs, "/I", includeDir, "/DBOF"}
 		if deterministic {
-			command = append(command, "/Brepro")
+			command = append(command, "/Brepro", "/experimental:deterministic")
+			if pathMapRoot := commonDirectory(filepath.Dir(sourceAbs), filepath.Dir(outAbs)); pathMapRoot != "" {
+				command = append(command, "/pathmap:"+pathMapRoot+"=.")
+			}
 		}
 		return append(command, cflags...)
 	}
@@ -104,6 +107,22 @@ func compileCommand(profile, arch, executable, sourceAbs, outAbs, includeDir str
 		command = append(command, "-frandom-seed="+seed, "-ffile-prefix-map="+includeDir+"=.")
 	}
 	return append(command, cflags...)
+}
+
+func commonDirectory(left, right string) string {
+	candidate := filepath.Clean(left)
+	right = filepath.Clean(right)
+	for {
+		relative, err := filepath.Rel(candidate, right)
+		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return candidate
+		}
+		parent := filepath.Dir(candidate)
+		if parent == candidate {
+			return ""
+		}
+		candidate = parent
+	}
 }
 
 func commandProvenance(requested, profile, selectedBy, command string) CompilerInfo {

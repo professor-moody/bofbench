@@ -79,6 +79,9 @@ $steps.Add((Invoke-Step "MSVC reproducible build evidence" {
     if (!$buildEvidence.reproducibility.checked -or !$buildEvidence.reproducibility.reproducible) {
         throw "MSVC object did not pass reproducibility verification"
     }
+    if (!(($buildEvidence.command -contains "/experimental:deterministic") -and ($buildEvidence.command | Where-Object { $_ -like "/pathmap:*" }))) {
+        throw "MSVC deterministic path-mapping flags are missing"
+    }
     $buildEvidence | ConvertTo-Json -Depth 8
 }))
 

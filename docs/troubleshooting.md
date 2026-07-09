@@ -25,7 +25,7 @@ x86_64-w64-mingw32-gcc
 Windows x64 fallback:
 
 ```text
-cl /nologo /c payload.c /Fo:dist\payload.x64.o /I payload-dir /DBOF /Brepro
+cl /nologo /c payload.c /Fo:dist\payload.x64.o /I payload-dir /DBOF /Brepro /experimental:deterministic /pathmap:workspace=.
 ```
 
 Use `--compiler mingw` or `--compiler msvc` to stop auto-selection and receive an explicit `compiler_unavailable` diagnostic when that profile cannot be used. The persisted `build.json` records the requested profile even when selection fails.
