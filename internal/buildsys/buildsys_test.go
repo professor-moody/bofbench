@@ -147,7 +147,7 @@ printf 'stable-object' > "$out"
 		t.Fatal(err)
 	}
 
-	result, err := BuildWithOptions(project, Options{Arch: "x64", Compiler: "mingw", VerifyReproducible: true})
+	result, err := BuildWithOptions(project, Options{Arch: "x64", Compiler: "mingw", ExtraCFlags: []string{"-O2"}, VerifyReproducible: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,8 +158,11 @@ printf 'stable-object' > "$out"
 		t.Fatalf("reproducibility = %+v", result.Reproducibility)
 	}
 	command := strings.Join(result.Command, " ")
-	if !strings.Contains(command, "-frandom-seed=") || !strings.Contains(command, "-ffile-prefix-map=") || !strings.Contains(command, "-DTEST=1") {
+	if !strings.Contains(command, "-frandom-seed=") || !strings.Contains(command, "-ffile-prefix-map=") || !strings.Contains(command, "-DTEST=1") || !strings.Contains(command, "-O2") {
 		t.Fatalf("deterministic command = %s", command)
+	}
+	if got := strings.Join(result.CFlags, " "); got != "-DTEST=1 -O2" {
+		t.Fatalf("combined cflags = %q", got)
 	}
 	if result.Environment["SOURCE_DATE_EPOCH"] != "0" || result.ObjectFingerprint == nil || result.Status != "built" {
 		t.Fatalf("build result = %+v", result)

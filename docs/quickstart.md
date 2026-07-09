@@ -59,6 +59,14 @@ Example build output:
 
 The complete build record and combined compiler log are persisted together under `runs/<timestamp>-build-smoke/`. A compiler or configuration failure produces the same JSON contract with `status: "error"`, diagnostics, and an evidence path.
 
+Check compiler and object-pattern portability:
+
+```sh
+work/bin/bofbench matrix bofs/smoke --compiler mingw --arch all --execute never
+```
+
+This preserves reproducible debug, size, and speed objects. x64 cells must pass loader preflight; x86 cells must remain explicitly unsupported and are never executed. Copy the complete matrix run directory to Windows and use `matrix replay <matrix.json>` to verify hashes and execute the x64 objects there.
+
 Inspect:
 
 ```sh

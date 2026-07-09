@@ -7,7 +7,7 @@ This version is convention-first and operator-shaped:
 - No required JSON manifest.
 - No approval/review gates.
 - Optional, strictly validated `bofbench.toml` stores repeatable test contracts and build defaults.
-- Cobra command surface with direct verbs: `new`, `fetch`, `list`, `build`, `inspect`, `analyze`, `preflight`, `run`, `test`, `stage`, `lab`, `doctor`, `tui`, and `docs`.
+- Cobra command surface with direct verbs: `new`, `fetch`, `list`, `build`, `matrix`, `inspect`, `analyze`, `preflight`, `run`, `test`, `stage`, `lab`, `doctor`, `tui`, and `docs`.
 - Bubble Tea/Lip Gloss TUI for arsenal details, command previews, run-history filters, event snippets, and analyzer navigation.
 - Static artifact analysis for Windows COFF, Linux ELF, and macOS Mach-O relocatable objects.
 - Analysis reports include bounded COFF structural diagnostics, toolchain and resolved-entrypoint evidence, section alignment/storage, runtime compatibility, the versioned loader-capability catalog, structured blockers/warnings, host requirements, and next run/test commands.
@@ -17,6 +17,7 @@ This version is convention-first and operator-shaped:
 - Persisted JSON carries versioned schema, run lineage, tool build identity, host metadata, and relevant source/object/loader/configuration fingerprints.
 - Stage manifests are versioned and carry SHA-256/size records for every packaged file; directories and ZIPs can be verified after handoff.
 - BOF source builds expose explicit MinGW/MSVC profiles, deterministic defaults, compiler path/version/hash evidence, structured diagnostics, and optional byte-for-byte rebuild verification.
+- Compiler/runtime matrices preserve debug/size/speed artifacts, distinguish expected x86 and unavailable-compiler cells from regressions, and can replay cross-compiled x64 artifacts on Windows.
 - Non-matching hosts can still fetch, build, inspect, analyze, test statically, stage, and build docs.
 
 ## Quickstart
@@ -28,6 +29,7 @@ work/bin/bofbench new pidcheck --template winapi
 work/bin/bofbench doctor
 work/bin/bofbench version --format json
 work/bin/bofbench build bofs/smoke --compiler mingw --verify-reproducible
+work/bin/bofbench matrix bofs/smoke --compiler mingw --arch all --execute never
 work/bin/bofbench inspect dist/smoke.x64.o
 work/bin/bofbench analyze dist/smoke.x64.o --format md
 work/bin/bofbench analyze dist/smoke.x64.o --suppress memory_api --format md

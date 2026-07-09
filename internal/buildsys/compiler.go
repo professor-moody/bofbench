@@ -3,6 +3,7 @@ package buildsys
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
@@ -209,10 +210,14 @@ func reproducibilitySeed(result Result) string {
 	} else if result.SourceTreeFingerprint != nil {
 		hash = result.SourceTreeFingerprint.SHA256
 	}
-	if len(hash) > 16 {
-		return hash[:16]
+	if len(result.CFlags) > 0 {
+		digest := sha256.Sum256([]byte(hash + "\x00" + strings.Join(result.CFlags, "\x00")))
+		hash = fmt.Sprintf("%x", digest[:])
 	}
-	return hash
+	if len(hash) <= 16 {
+		return hash
+	}
+	return hash[:16]
 }
 
 func parseCompilerDiagnostics(output, profile string) []Diagnostic {

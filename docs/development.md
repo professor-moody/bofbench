@@ -45,6 +45,14 @@ Use the release-quality build gate during development:
 bofbench build bofs/echoer --compiler mingw --verify-reproducible
 ```
 
+Use the compiler matrix before treating a fixture as portable across supported object patterns:
+
+```sh
+bofbench matrix bofs/echoer --compiler mingw --arch all --execute never
+```
+
+This produces reproducible `-O0`, `-Os`, and `-O2` objects, requires all x64 objects to pass loader preflight, and requires every x86 object to stop at the explicit architecture boundary. On Windows, run the MSVC half with `--compiler msvc --execute auto`. A MinGW matrix directory created on macOS/Linux can be copied to Windows and exercised with `bofbench matrix replay <matrix.json>`.
+
 For a custom `build` command, Makefile, or CMake project, BOFBench records the dispatcher rather than claiming to know the nested compiler. Reproducibility verification repeats that command and compares the resulting object.
 
 ## Test Profiles

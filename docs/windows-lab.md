@@ -17,6 +17,8 @@ go test ./...
 go build -o work\bin\bofbench.exe .\cmd\bofbench
 .\work\bin\bofbench.exe doctor
 .\work\bin\bofbench.exe build .\testdata\bofs\hello --compiler msvc --verify-reproducible
+.\work\bin\bofbench.exe matrix .\testdata\bofs\hello --compiler msvc --arch all --execute auto
+.\work\bin\bofbench.exe matrix replay .\work\imported-matrix\matrix.json
 .\work\bin\bofbench.exe run .\dist\hello.x64.o --args z:hello i:3
 .\work\bin\bofbench.exe run .\dist\arg_echo.x64.o --args z:test-message i:42
 .\work\bin\bofbench.exe run .\dist\winapi_call.x64.o
@@ -54,9 +56,9 @@ The underlying script can still be run directly:
 powershell -ExecutionPolicy Bypass -File .\scripts\windows-lab-smoke.ps1 -RepoRoot C:\bofbench -Select 'whoami,ipconfig,env'
 ```
 
-The script writes `runs\<timestamp>-lab-smoke\lab-smoke.json` with each step, status, duration, and error text. It rebuilds the native loader from the current source, verifies the generated capability contract, runs the 30-case/180-mutation loader hardening corpus, requires an explicit MSVC `/Brepro` build with deterministic workspace path mapping, proves that the hello fixture has execute/read code and stubs with no writable/executable section, preserves the same memory evidence through the crash fixture, executes the catalog-declared plain-import fixture, relocates a pinned real `nslookup` object without calling its entrypoint, covers the other positive and expected negative fixtures (`unresolved`, `timeout`), runs the selected x64 gate plus a report-only x64/x86 architecture matrix, and then runs the arsenal smoke.
+The script writes `runs\<timestamp>-lab-smoke\lab-smoke.json` with each step, status, duration, and error text. It rebuilds the native loader from the current source, verifies the generated capability contract, runs the 30-case/180-mutation loader hardening corpus, requires an explicit MSVC `/Brepro` build with deterministic workspace path mapping, runs the MSVC debug/size/speed runtime matrix while classifying MSVC/x86 as an expected unsupported combination, proves that the hello fixture has execute/read code and stubs with no writable/executable section, preserves the same memory evidence through the crash fixture, executes the catalog-declared plain-import fixture, relocates a pinned real `nslookup` object without calling its entrypoint, covers the other positive and expected negative fixtures (`unresolved`, `timeout`), runs the selected x64 gate plus a report-only x64/x86 architecture matrix, and then runs the arsenal smoke.
 
-The summary also carries the shared evidence header and fingerprints the lab environment: Windows version/architecture, PowerShell, Go, compiler path, machine identity, and SHA-256 for the BOFBench and loader binaries.
+All 25 steps must pass. The summary also carries the shared evidence header and fingerprints the lab environment: Windows version/architecture, PowerShell, Go, compiler path, machine identity, and SHA-256 for the BOFBench and loader binaries.
 
 Fixture coverage:
 
@@ -91,3 +93,5 @@ Compiler setup:
 - MinGW-w64 is preferred for BOF parity with common public BOF build flows.
 - MSVC `cl.exe` is accepted on Windows x64 for local source fixtures and simple payloads; direct deterministic builds add `/Brepro`, `/experimental:deterministic`, and `/pathmap` for the common source/output root.
 - The native loader can be copied from `native/loader/bofbench-loader.exe`, built with MinGW-w64, or built with MSVC.
+
+For a cross-host MinGW runtime proof, create a matrix on the host with `--compiler mingw --arch all --execute never`, copy the complete matrix run directory to Windows, and use `matrix replay`. Replay verifies the preserved hashes, runs only the three x64 optimization variants, and leaves all three x86 cells at `expected_unsupported_arch` with `runtime_attempted: false`.

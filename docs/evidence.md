@@ -36,6 +36,7 @@ bofbench version --format json
 | `bofbench.analysis` | static artifact analysis |
 | `bofbench.analysis-diff` | baseline/current analysis comparison |
 | `bofbench.build` | build command, log, configuration, and output evidence |
+| `bofbench.compiler-matrix` | compiler/optimization/architecture cells and cross-host runtime replay |
 | `bofbench.run` | run or single-payload test result |
 | `bofbench.arsenal-test` | aggregate arsenal test report |
 | `bofbench.arsenal-source` | fetched source metadata |
@@ -62,6 +63,7 @@ Run directory allocation is collision-safe even when identical operations start 
 - Analysis records object size and SHA-256.
 - Builds persist `build.json` beside `build.log` for success and failure. Records include source tree/file, configuration, compiler binary, and output fingerprints; build mode, working directory, relevant environment, exact command, exit code, typed diagnostics, and failure text.
 - Reproducibility-gated builds retain the first and second object size/SHA-256 plus the comparison method and verdict. `non_reproducible` is a failing build state, not a warning.
+- Compiler matrices retain each cell object, self-contained build JSON/log pair, build and analysis evidence, optimization flags, expected outcome, classification, embedded runtime contract, and dimension summaries. Replay fingerprints both the source matrix and every imported object before Windows execution.
 - Arsenal `source.json` records a deterministic content-tree fingerprint in addition to URL/ref metadata.
 - Runtime reports record object, loader, and test-configuration fingerprints. Windows results also carry the native loader error code plus bounded process exit/exception/stdout/stderr evidence, including stream-truncation flags.
 - Loader preflight reports record the capability-catalog version, artifact hashes, root tree fingerprint, structured blockers/warnings, architecture/status/toolchain/argument dimensions, and configuration fingerprints when sidecar arguments are present.

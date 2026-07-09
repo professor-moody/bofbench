@@ -23,6 +23,7 @@ import (
 	"bofbench/internal/doctor"
 	"bofbench/internal/evidence"
 	"bofbench/internal/lab"
+	matrixsvc "bofbench/internal/matrix"
 	preflightsvc "bofbench/internal/preflight"
 	"bofbench/internal/runlog"
 	runtimesvc "bofbench/internal/runtime"
@@ -101,6 +102,7 @@ func rootCommand(stdout, stderr io.Writer) *cobra.Command {
 		fetchCommand(stdout),
 		listCommand(stdout),
 		buildCommand(stdout),
+		matrixCommand(stdout),
 		inspectCommand(stdout),
 		analyzeCommand(stdout),
 		preflightCommand(stdout),
@@ -252,6 +254,108 @@ func buildCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&arch, "arch", "x64", "architecture: x64 or x86")
 	cmd.Flags().StringVar(&compiler, "compiler", "", "compiler profile override: auto, mingw, or msvc")
 	cmd.Flags().BoolVar(&verifyReproducible, "verify-reproducible", false, "build twice and require identical object bytes")
+	return cmd
+}
+
+func matrixCommand(stdout io.Writer) *cobra.Command {
+	var compilers []string
+	var optimizations []string
+	var architecture string
+	var execution string
+	var runtimeName string
+	var profile string
+	var format string
+	var verifyReproducible bool
+	cmd := &cobra.Command{
+		Use:   "matrix <dir|source.c>",
+		Short: "Exercise compiler, optimization, architecture, and runtime combinations",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "text" && format != "json" && format != "md" && format != "markdown" {
+				return fmt.Errorf("unknown matrix format %q", format)
+			}
+			persisted, matrixErr := matrixsvc.Run(matrixsvc.Options{
+				Path:               args[0],
+				Compilers:          compilers,
+				Optimizations:      optimizations,
+				Architecture:       architecture,
+				Execution:          execution,
+				Runtime:            runtimeName,
+				Profile:            profile,
+				VerifyReproducible: verifyReproducible,
+			})
+			if persisted.Report.RunID != "" {
+				switch format {
+				case "text":
+					fmt.Fprint(stdout, matrixsvc.Text(persisted.Report))
+					fmt.Fprintf(stdout, "reports: %s %s\n", persisted.JSONPath, persisted.MDPath)
+				case "md", "markdown":
+					fmt.Fprint(stdout, matrixsvc.Markdown(persisted.Report))
+					fmt.Fprintf(stdout, "\nreports: %s %s\n", persisted.JSONPath, persisted.MDPath)
+				case "json":
+					if err := printJSON(stdout, struct {
+						Report   matrixsvc.Report `json:"report"`
+						JSONPath string           `json:"json_path"`
+						MDPath   string           `json:"md_path"`
+					}{Report: persisted.Report, JSONPath: persisted.JSONPath, MDPath: persisted.MDPath}); err != nil {
+						return err
+					}
+				}
+			}
+			if matrixErr != nil {
+				return codedError{code: 1, err: matrixErr}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringSliceVar(&compilers, "compiler", []string{"mingw", "msvc"}, "compiler profiles: mingw, msvc; repeatable")
+	cmd.Flags().StringSliceVar(&optimizations, "optimization", []string{"debug", "size", "speed"}, "optimization modes: debug, size, speed; repeatable")
+	cmd.Flags().StringVar(&architecture, "arch", "all", "architecture: x64, x86, or all")
+	cmd.Flags().StringVar(&execution, "execute", "auto", "runtime execution: auto, always, or never")
+	cmd.Flags().StringVar(&runtimeName, "runtime", "windows-coff", "runtime for executable x64 cells")
+	cmd.Flags().StringVar(&profile, "profile", "", "bofbench.toml test profile for runtime arguments and contracts")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, or md")
+	cmd.Flags().BoolVar(&verifyReproducible, "verify-reproducible", true, "build every available cell twice and require identical bytes")
+	cmd.AddCommand(matrixReplayCommand(stdout))
+	return cmd
+}
+
+func matrixReplayCommand(stdout io.Writer) *cobra.Command {
+	var format string
+	cmd := &cobra.Command{
+		Use:   "replay <matrix.json>",
+		Short: "Replay preserved x64 matrix artifacts through the Windows runtime",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "text" && format != "json" && format != "md" && format != "markdown" {
+				return fmt.Errorf("unknown matrix replay format %q", format)
+			}
+			persisted, replayErr := matrixsvc.Replay(args[0])
+			if persisted.Report.RunID != "" {
+				switch format {
+				case "text":
+					fmt.Fprint(stdout, matrixsvc.Text(persisted.Report))
+					fmt.Fprintf(stdout, "reports: %s %s\n", persisted.JSONPath, persisted.MDPath)
+				case "md", "markdown":
+					fmt.Fprint(stdout, matrixsvc.Markdown(persisted.Report))
+					fmt.Fprintf(stdout, "\nreports: %s %s\n", persisted.JSONPath, persisted.MDPath)
+				case "json":
+					if err := printJSON(stdout, struct {
+						Report   matrixsvc.Report `json:"report"`
+						JSONPath string           `json:"json_path"`
+						MDPath   string           `json:"md_path"`
+					}{Report: persisted.Report, JSONPath: persisted.JSONPath, MDPath: persisted.MDPath}); err != nil {
+						return err
+					}
+				}
+			}
+			if replayErr != nil {
+				return codedError{code: 1, err: replayErr}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, or md")
 	return cmd
 }
 

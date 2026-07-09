@@ -23,6 +23,8 @@ const buildTimeout = 90 * time.Second
 type Options struct {
 	Arch               string
 	Compiler           string
+	ExtraCFlags        []string
+	ParentRunID        string
 	VerifyReproducible bool
 }
 
@@ -100,7 +102,7 @@ func BuildWithOptions(input string, opts Options) (res Result, returnErr error) 
 		return Result{}, err
 	}
 	res = Result{
-		Header:             evidence.New(evidence.SchemaBuild, runlog.ID(runDir), ""),
+		Header:             evidence.New(evidence.SchemaBuild, runlog.ID(runDir), opts.ParentRunID),
 		Source:             input,
 		Name:               initialName,
 		Arch:               arch,
@@ -164,6 +166,7 @@ func BuildWithOptions(input string, opts Options) (res Result, returnErr error) 
 	}
 	res.Object = filepath.Join("dist", fmt.Sprintf("%s.%s.o", res.Name, arch))
 	res.CFlags = append([]string(nil), cfg.CFlags...)
+	res.CFlags = append(res.CFlags, opts.ExtraCFlags...)
 	res.Deterministic = cfg.Deterministic
 
 	outAbs, err := filepath.Abs(res.Object)
@@ -248,7 +251,7 @@ func BuildWithOptions(input string, opts Options) (res Result, returnErr error) 
 		}
 		res.Compiler = commandProvenance(requestedCompiler, profile, selectedBy, executable)
 		seed := reproducibilitySeed(res)
-		cmd = compileCommand(profile, arch, executable, sourceAbs, outAbs, filepath.Dir(sourceAbs), cfg.CFlags, cfg.Deterministic, seed)
+		cmd = compileCommand(profile, arch, executable, sourceAbs, outAbs, filepath.Dir(sourceAbs), res.CFlags, cfg.Deterministic, seed)
 	}
 	res.Command = append([]string(nil), cmd...)
 	if res.Compiler.Path == "" {

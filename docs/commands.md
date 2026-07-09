@@ -67,6 +67,25 @@ Every attempted build that reaches run-directory allocation writes `runs/<timest
 
 Configuration is strict. Unknown keys or sections, duplicate keys (including aliases such as `entry`/`entrypoint`), malformed quoted arrays, and invalid typed values produce line-addressed diagnostics and a nonzero exit. The failure evidence is still printed as JSON and persisted.
 
+## `matrix`
+
+Exercise a direct C-source BOF across compiler, optimization, architecture, and runtime dimensions:
+
+```sh
+bofbench matrix ./bofs/whoami
+bofbench matrix ./bofs/whoami --compiler mingw --arch all --execute never
+bofbench matrix ./bofs/whoami --compiler msvc --optimization debug,size,speed --arch x64
+bofbench matrix replay ./imported-matrix/matrix.json
+```
+
+The default plan contains MinGW and MSVC, `debug`, `size`, and `speed`, and both x64 and x86. The optimization names map to `-O0/-Os/-O2` for MinGW and `/Od,/O1,/O2` for MSVC. Every available cell is reproducibility-gated by default; use `--verify-reproducible=false` only for a diagnostic run.
+
+`--execute auto` runs compatible x64 cells on Windows x64 and records `runtime_deferred` elsewhere. `--execute never` produces a portable build/analysis bundle, while `--execute always` requires runtime success. A successfully built x86 object must classify as `expected_unsupported_arch` and is never invoked. The intentionally unsupported MSVC/x86 combination is `unsupported_compiler_arch`; a genuinely unavailable compiler is a `skip`. Compilation, analysis, compatibility, integrity, output-contract, or runtime failures remain failing cells.
+
+Results are written to `runs/<timestamp>-matrix-*/matrix.json` and `matrix.md`, with one preserved object per cell under `objects/` and a copied `build.json`/`build.log` pair under `builds/<cell>/`. The JSON embeds source/config/compiler/object fingerprints, exact flags and commands, first/second reproducibility hashes, static analysis, runtime contract, and optional run evidence.
+
+`matrix replay` is the cross-host half of the workflow. Copy a matrix directory—including `matrix.json` and `objects/`—to Windows x64, then replay it. BOFBench verifies every object against the originating fingerprint before executing only the x64 cells. The embedded argument/output/timeout contract makes replay independent of the original source workspace.
+
 ## `inspect`
 
 Inspect an artifact in human-readable form:

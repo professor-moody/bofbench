@@ -60,6 +60,49 @@ func TestCLIBuildFailurePrintsAndPersistsEvidence(t *testing.T) {
 	}
 }
 
+func TestCLICompilerMatrixPersistsClassifiedEvidence(t *testing.T) {
+	if _, err := exec.LookPath("x86_64-w64-mingw32-gcc"); err != nil {
+		t.Skip("x86_64-w64-mingw32-gcc not available")
+	}
+	bin := buildTestBinary(t)
+	tmp := t.TempDir()
+	project := filepath.Join(tmp, "matrix-fixture")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := "void BeaconPrintf(int, const char *, ...);\nvoid go(char *args, int len) { (void)args; (void)len; BeaconPrintf(0, \"matrix pass\"); }\n"
+	if err := os.WriteFile(filepath.Join(project, "matrix.c"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "bofbench.toml"), []byte("name = \"matrix-fixture\"\nexpect = [\"matrix pass\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output := runOK(t, tmp, bin, "matrix", project, "--compiler", "mingw", "--optimization", "debug", "--arch", "x64", "--execute", "never", "--verify-reproducible=false", "--format", "json")
+	var result struct {
+		Report struct {
+			Schema  string `json:"schema"`
+			Status  string `json:"status"`
+			Summary struct {
+				Total  int `json:"total"`
+				Passed int `json:"passed"`
+			} `json:"summary"`
+			Cells []struct {
+				Classification string `json:"classification"`
+			} `json:"cells"`
+		} `json:"report"`
+		JSONPath string `json:"json_path"`
+		MDPath   string `json:"md_path"`
+	}
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Report.Schema != "bofbench.compiler-matrix" || result.Report.Status != "pass" || result.Report.Summary.Total != 1 || result.Report.Summary.Passed != 1 || len(result.Report.Cells) != 1 || result.Report.Cells[0].Classification != "analysis_pass" {
+		t.Fatalf("matrix output = %+v", result)
+	}
+	mustExist(t, filepath.Join(tmp, result.JSONPath))
+	mustExist(t, filepath.Join(tmp, result.MDPath))
+}
+
 func TestCLIStageVerifyDirectoryZipAndFailure(t *testing.T) {
 	bin := buildTestBinary(t)
 	tmp := t.TempDir()

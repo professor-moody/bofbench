@@ -101,6 +101,21 @@ $steps.Add((Invoke-Step "MSVC reproducible build evidence" {
     $buildEvidence | ConvertTo-Json -Depth 8
 }))
 
+$steps.Add((Invoke-Step "MSVC compiler runtime matrix" {
+    $matrixEvidence = & $BofbenchExe matrix .\testdata\bofs\hello --compiler msvc --arch all --execute auto --format json | ConvertFrom-Json
+    $matrixReport = $matrixEvidence.report
+    if ($matrixReport.summary.total -ne 6 -or $matrixReport.summary.passed -ne 3 -or $matrixReport.summary.expected -ne 3 -or $matrixReport.summary.skipped -ne 0 -or $matrixReport.summary.failed -ne 0) {
+        throw "unexpected MSVC matrix summary"
+    }
+    if ($matrixReport.summary.by_classification.runtime_pass -ne 3 -or $matrixReport.summary.by_classification.unsupported_compiler_arch -ne 3) {
+        throw "MSVC matrix did not separate x64 runtime passes from the explicit x86 compiler boundary"
+    }
+    if (@($matrixReport.cells | Where-Object { $_.architecture -eq "x64" -and (!$_.runtime_attempted -or $_.run.exit_state -ne "success") }).Count -ne 0) {
+        throw "one or more MSVC x64 matrix cells did not execute successfully"
+    }
+    $matrixReport | ConvertTo-Json -Depth 12
+}))
+
 $steps.Add((Invoke-Step "fixture build" {
     Remove-Item -Force .\dist\*.x64.o -ErrorAction SilentlyContinue
     & $BofbenchExe build .\testdata\bofs\hello
