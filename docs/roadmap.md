@@ -25,7 +25,7 @@ This page records the original phase-two roadmap. The governing multi-phase plan
 - Improve `new` with selectable templates: no-arg, arg parser, WinAPI import, and failure fixtures. Implemented for `hello`, `args`, `winapi`, `unresolved`, and `timeout`.
 - Add `test --profile` so common argument/output contracts are easy to rerun. Implemented.
 - Add `analyze --baseline` to compare current object output against a previous run. Implemented.
-- Add clearer build logs and compiler diagnostics.
+- Add clearer build logs and compiler diagnostics. Implemented with strict configuration, compiler provenance, structured diagnostics, persisted failure evidence, and reproducibility comparison.
 
 ## Slice 4: TUI Operator UX
 

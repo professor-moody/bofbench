@@ -6,16 +6,16 @@ This version is convention-first and operator-shaped:
 
 - No required JSON manifest.
 - No approval/review gates.
-- Optional `bofbench.toml` only stores repeatable test args and build defaults.
+- Optional, strictly validated `bofbench.toml` stores repeatable test contracts and build defaults.
 - Cobra command surface with direct verbs: `new`, `fetch`, `list`, `build`, `inspect`, `analyze`, `preflight`, `run`, `test`, `stage`, `lab`, `doctor`, `tui`, and `docs`.
 - Bubble Tea/Lip Gloss TUI for arsenal details, command previews, run-history filters, event snippets, and analyzer navigation.
 - Static artifact analysis for Windows COFF, Linux ELF, and macOS Mach-O relocatable objects.
 - Analysis reports include bounded COFF structural diagnostics, toolchain and resolved-entrypoint evidence, section alignment/storage, runtime compatibility, the versioned loader-capability catalog, structured blockers/warnings, host requirements, and next run/test commands.
 - Real Windows x64 native execution is handled by `native/loader/bofbench-loader.exe`.
 - Run and test reports include normalized runtime event timelines for load, args, entry calls, output/errors, and terminal state.
-- Persisted JSON carries versioned schema, run lineage, tool build identity, host metadata, and relevant object/loader/configuration fingerprints.
+- Persisted JSON carries versioned schema, run lineage, tool build identity, host metadata, and relevant source/object/loader/configuration fingerprints.
 - Stage manifests are versioned and carry SHA-256/size records for every packaged file; directories and ZIPs can be verified after handoff.
-- BOF source builds prefer MinGW-w64 and fall back to MSVC `cl.exe` on Windows x64.
+- BOF source builds expose explicit MinGW/MSVC profiles, deterministic defaults, compiler path/version/hash evidence, structured diagnostics, and optional byte-for-byte rebuild verification.
 - Non-matching hosts can still fetch, build, inspect, analyze, test statically, stage, and build docs.
 
 ## Quickstart
@@ -26,7 +26,7 @@ work/bin/bofbench new smoke
 work/bin/bofbench new pidcheck --template winapi
 work/bin/bofbench doctor
 work/bin/bofbench version --format json
-work/bin/bofbench build bofs/smoke
+work/bin/bofbench build bofs/smoke --compiler mingw --verify-reproducible
 work/bin/bofbench inspect dist/smoke.x64.o
 work/bin/bofbench analyze dist/smoke.x64.o --format md
 work/bin/bofbench analyze dist/smoke.x64.o --suppress memory_api --format md
@@ -70,7 +70,7 @@ HTTP downloads are bounded and ZIP acquisition is transactional. Unsafe paths, s
 
 `inspect`, `analyze`, and `preflight` derive Windows COFF compatibility from the loader's authoritative catalog. Malformed layouts become structured preflight blockers, and `run`/`test` enforce the same gate before native execution. Finding suppressions mark acknowledged evidence without deleting it.
 
-`bofbench.toml` supports named test profiles and expected exits for repeatable positive and negative fixture checks.
+`bofbench.toml` supports compiler selection, extra flags, deterministic settings, named test profiles, and expected exits. Unknown keys, malformed values, duplicate aliases, and unsupported sections fail with line-addressed diagnostics rather than being ignored.
 
 ## Runtime Model
 

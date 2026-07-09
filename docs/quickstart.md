@@ -27,10 +27,10 @@ created BOF payload workspace bofs/smoke
 ```
 
 ```sh
-work/bin/bofbench build bofs/smoke
+work/bin/bofbench build bofs/smoke --verify-reproducible
 ```
 
-The default compiler is MinGW-w64. On Windows x64, `bofbench` falls back to MSVC `cl.exe` when MinGW is not installed.
+The default `auto` profile prefers MinGW-w64. On Windows x64, `bofbench` falls back to MSVC `cl.exe` when MinGW is not installed. Use `--compiler mingw` or `--compiler msvc` when toolchain identity must be explicit.
 
 Example build output:
 
@@ -39,9 +39,25 @@ Example build output:
   "name": "smoke",
   "arch": "x64",
   "object": "dist/smoke.x64.o",
+  "compiler": {
+    "requested": "auto",
+    "profile": "mingw",
+    "path": "/opt/homebrew/bin/x86_64-w64-mingw32-gcc",
+    "version": "x86_64-w64-mingw32-gcc (GCC) 16.1.0",
+    "sha256": "..."
+  },
+  "reproducibility": {
+    "checked": true,
+    "reproducible": true,
+    "method": "double_compile",
+    "first": {"sha256": "..."},
+    "second": {"sha256": "..."}
+  },
   "status": "built"
 }
 ```
+
+The complete build record and combined compiler log are persisted together under `runs/<timestamp>-build-smoke/`. A compiler or configuration failure produces the same JSON contract with `status: "error"`, diagnostics, and an evidence path.
 
 Inspect:
 

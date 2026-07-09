@@ -25,8 +25,18 @@ x86_64-w64-mingw32-gcc
 Windows x64 fallback:
 
 ```text
-cl /nologo /c payload.c /Fo:dist\payload.x64.o /I payload-dir /DBOF
+cl /nologo /c payload.c /Fo:dist\payload.x64.o /I payload-dir /DBOF /Brepro
 ```
+
+Use `--compiler mingw` or `--compiler msvc` to stop auto-selection and receive an explicit `compiler_unavailable` diagnostic when that profile cannot be used. The persisted `build.json` records the requested profile even when selection fails.
+
+## Configuration rejected
+
+`bofbench.toml` is parsed strictly. The error and `build.json` diagnostics identify every malformed line in one pass. Quote string values and each array element, use only `[profile.<name>]` sections, remove duplicate aliases such as setting both `entry` and `entrypoint`, and keep `timeout_ms` positive.
+
+## Reproducibility check failed
+
+`--verify-reproducible` compares two object files byte-for-byte by size and SHA-256. On failure, inspect `reproducibility.first`, `reproducibility.second`, the compiler identity, environment, full command, diagnostics, and `build.log`. Timestamp macros, generated source, nondeterministic custom build steps, and flags that embed absolute paths are common causes. Set `deterministic = false` only when nondeterminism is intentional; doing so disables BOFBench's deterministic flags but does not bypass an explicitly requested reproducibility check.
 
 ## Unsupported relocation
 

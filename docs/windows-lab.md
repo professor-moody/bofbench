@@ -16,6 +16,7 @@ cd C:\bofbench
 go test ./...
 go build -o work\bin\bofbench.exe .\cmd\bofbench
 .\work\bin\bofbench.exe doctor
+.\work\bin\bofbench.exe build .\testdata\bofs\hello --compiler msvc --verify-reproducible
 .\work\bin\bofbench.exe run .\dist\hello.x64.o --args z:hello i:3
 .\work\bin\bofbench.exe run .\dist\arg_echo.x64.o --args z:test-message i:42
 .\work\bin\bofbench.exe run .\dist\winapi_call.x64.o
@@ -52,7 +53,7 @@ The underlying script can still be run directly:
 powershell -ExecutionPolicy Bypass -File .\scripts\windows-lab-smoke.ps1 -RepoRoot C:\bofbench -Select 'whoami,ipconfig,env'
 ```
 
-The script writes `runs\<timestamp>-lab-smoke\lab-smoke.json` with each step, status, duration, and error text. It verifies the generated loader-capability contract, covers positive fixtures and expected negative fixtures (`unresolved`, `timeout`), runs the selected x64 gate plus a report-only x64/x86 architecture matrix, and then runs the arsenal smoke.
+The script writes `runs\<timestamp>-lab-smoke\lab-smoke.json` with each step, status, duration, and error text. It verifies the generated loader-capability contract, requires an explicit MSVC `/Brepro` build to reproduce byte-for-byte with complete compiler provenance, covers positive fixtures and expected negative fixtures (`unresolved`, `timeout`), runs the selected x64 gate plus a report-only x64/x86 architecture matrix, and then runs the arsenal smoke.
 
 The summary also carries the shared evidence header and fingerprints the lab environment: Windows version/architecture, PowerShell, Go, compiler path, machine identity, and SHA-256 for the BOFBench and loader binaries.
 
@@ -85,5 +86,5 @@ The current VM arsenal smoke uses a small TrustedSec Situational Awareness selec
 Compiler setup:
 
 - MinGW-w64 is preferred for BOF parity with common public BOF build flows.
-- MSVC `cl.exe` is accepted on Windows x64 for local source fixtures and simple payloads.
+- MSVC `cl.exe` is accepted on Windows x64 for local source fixtures and simple payloads; direct deterministic builds add `/Brepro`.
 - The native loader can be copied from `native/loader/bofbench-loader.exe`, built with MinGW-w64, or built with MSVC.

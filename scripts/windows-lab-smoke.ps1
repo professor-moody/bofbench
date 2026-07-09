@@ -68,7 +68,22 @@ $steps.Add((Invoke-Step "doctor" {
     & $BofbenchExe doctor
 }))
 
+$steps.Add((Invoke-Step "MSVC reproducible build evidence" {
+    $buildEvidence = & $BofbenchExe build .\testdata\bofs\hello --compiler msvc --verify-reproducible | ConvertFrom-Json
+    if ($buildEvidence.compiler.profile -ne "msvc") {
+        throw "expected msvc compiler profile, got $($buildEvidence.compiler.profile)"
+    }
+    if (!$buildEvidence.compiler.path -or !$buildEvidence.compiler.version -or !$buildEvidence.compiler.sha256) {
+        throw "MSVC compiler provenance is incomplete"
+    }
+    if (!$buildEvidence.reproducibility.checked -or !$buildEvidence.reproducibility.reproducible) {
+        throw "MSVC object did not pass reproducibility verification"
+    }
+    $buildEvidence | ConvertTo-Json -Depth 8
+}))
+
 $steps.Add((Invoke-Step "fixture build" {
+    Remove-Item -Force .\dist\*.x64.o -ErrorAction SilentlyContinue
     & $BofbenchExe build .\testdata\bofs\hello
     & $BofbenchExe build .\testdata\bofs\arg_echo
     & $BofbenchExe build .\testdata\bofs\winapi_call

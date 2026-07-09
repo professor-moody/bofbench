@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 const ContractVersion = 1
@@ -114,6 +115,9 @@ func FingerprintTree(root string) (TreeFingerprint, error) {
 			if entry.Name() == ".git" {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if entry.Name() == ".DS_Store" || strings.HasPrefix(entry.Name(), "._") {
 			return nil
 		}
 		rel, err := filepath.Rel(root, diskPath)

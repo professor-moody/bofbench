@@ -11,6 +11,7 @@ This page captures the current design review so future work starts from evidence
 - Analysis reports include structured runtime compatibility with host requirements and next commands.
 - Run and test reports now include a normalized event timeline across runtime types.
 - Persisted evidence uses shared schema/tool/host/run headers with lineage and relevant object, loader, configuration, and lab fingerprints.
+- Builds use strict typed configuration, explicit MinGW/MSVC profiles, deterministic defaults, structured diagnostics, compiler provenance, and optional byte-for-byte rebuild gates; failures persist the same evidence contract.
 - Windows lab smoke and summary evidence are available through the main CLI.
 - Stage packages include objects, manifests, analysis reports, and latest run/test reports when available.
 - Stage manifests are versioned, hash every packaged file, and can be verified in directory or ZIP form.
@@ -20,7 +21,7 @@ This page captures the current design review so future work starts from evidence
 ## Main Gaps
 
 - The Windows loader has useful fixture coverage now, but still needs broader real-world import and relocation validation against larger BOF sets.
-- Analysis is improving, but compatibility notes should eventually include loader capability gaps such as unsupported imports or relocation families when discovered.
+- Build and analysis evidence are now predictive; the next reliability gap is hardening native loader behavior against malformed inputs and crash classes.
 - The TUI is now a triage surface; next improvement is optional command execution or clipboard integration.
 - Windows lab setup has repeatable smoke and summary commands; next improvement is richer bootstrap for toolchain installation and optional debugger setup.
 - Staging integrity is now machine-verifiable; real Cobalt Strike and Sliver import/execution validation remains environment-gated work.

@@ -226,19 +226,32 @@ func listCommand(stdout io.Writer) *cobra.Command {
 
 func buildCommand(stdout io.Writer) *cobra.Command {
 	var arch string
+	var compiler string
+	var verifyReproducible bool
 	cmd := &cobra.Command{
 		Use:   "build <dir|file>",
 		Short: "Build or copy a payload artifact",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			res, err := buildsys.Build(args[0], arch)
-			if err != nil {
-				return err
+			res, err := buildsys.BuildWithOptions(args[0], buildsys.Options{
+				Arch:               arch,
+				Compiler:           compiler,
+				VerifyReproducible: verifyReproducible,
+			})
+			if res.RunID != "" {
+				if printErr := printJSON(stdout, res); printErr != nil {
+					return printErr
+				}
 			}
-			return printJSON(stdout, res)
+			if err != nil {
+				return codedError{code: 1, err: err}
+			}
+			return nil
 		},
 	}
-	cmd.Flags().StringVar(&arch, "arch", "x64", "architecture")
+	cmd.Flags().StringVar(&arch, "arch", "x64", "architecture: x64 or x86")
+	cmd.Flags().StringVar(&compiler, "compiler", "", "compiler profile override: auto, mingw, or msvc")
+	cmd.Flags().BoolVar(&verifyReproducible, "verify-reproducible", false, "build twice and require identical object bytes")
 	return cmd
 }
 

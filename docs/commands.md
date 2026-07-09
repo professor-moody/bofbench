@@ -50,7 +50,22 @@ Build a BOF from a directory, source file, or existing object:
 
 ```sh
 bofbench build ./bofs/whoami --arch x64
+bofbench build ./bofs/whoami --compiler mingw --verify-reproducible
 ```
+
+Flags:
+
+| Flag | Meaning |
+| --- | --- |
+| `--arch` | `x64` (default) or `x86`; x86 currently requires MinGW |
+| `--compiler` | override the configuration with `auto`, `mingw`, or `msvc` |
+| `--verify-reproducible` | run the build twice and fail unless object size and SHA-256 match |
+
+`auto` prefers the matching MinGW cross-compiler and falls back to MSVC `cl.exe` for Windows x64. Direct MinGW builds use a source-derived random seed, a file-prefix map, `SOURCE_DATE_EPOCH=0`, and `ZERO_AR_DATE=1`; direct MSVC builds use `/Brepro` and the same environment controls. `cflags` from `bofbench.toml` are appended to the selected compiler command.
+
+Every attempted build that reaches run-directory allocation writes `runs/<timestamp>-build-*/build.json` and `build.log`, including failures before compiler execution. Evidence identifies source/config/object hashes, build mode, working directory, relevant environment, full command, compiler profile/path/version/SHA-256, exit code, and structured diagnostics. A reproducibility check records both artifact hashes. Custom `build`, Make, and CMake modes identify the dispatcher and warn that compiler provenance is controlled indirectly; their reproducibility method repeats the configured command.
+
+Configuration is strict. Unknown keys or sections, duplicate keys (including aliases such as `entry`/`entrypoint`), malformed quoted arrays, and invalid typed values produce line-addressed diagnostics and a nonzero exit. The failure evidence is still printed as JSON and persisted.
 
 ## `inspect`
 

@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +26,38 @@ func TestCLIWorkspaceBuildInspectStage(t *testing.T) {
 	runOK(t, tmp, bin, "stage", filepath.Join("dist", "hello.x64.o"), "--target", "cobaltstrike", "--args", "z:hello", "i:3")
 	mustExist(t, filepath.Join(tmp, "stage", "hello-cobaltstrike", "hello.cna"))
 	mustExist(t, filepath.Join(tmp, "stage", "hello-cobaltstrike.zip"))
+}
+
+func TestCLIBuildFailurePrintsAndPersistsEvidence(t *testing.T) {
+	bin := buildTestBinary(t)
+	tmp := t.TempDir()
+	project := filepath.Join(tmp, "broken")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "payload.c"), []byte("void go(void) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "bofbench.toml"), []byte("compiler = \"invalid\"\nunknown = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run(t, tmp, bin, "build", project)
+	if err == nil {
+		t.Fatal("expected build command failure")
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("exit error = %v", err)
+	}
+	for _, want := range []string{`"schema": "bofbench.build"`, `"status": "error"`, `"tool": "config"`, `"evidence_path":`, "2 configuration error"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in build failure output:\n%s", want, out)
+		}
+	}
+	matches, globErr := filepath.Glob(filepath.Join(tmp, "runs", "*-build-broken", "build.json"))
+	if globErr != nil || len(matches) != 1 {
+		t.Fatalf("persisted build evidence = %v err=%v", matches, globErr)
+	}
 }
 
 func TestCLIStageVerifyDirectoryZipAndFailure(t *testing.T) {

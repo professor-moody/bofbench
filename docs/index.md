@@ -9,7 +9,7 @@
 5. test payload behavior,
 6. stage for Cobalt Strike, Sliver, or raw operator handoff.
 
-The CLI is intentionally direct. There is no required manifest and no workflow gate in the hot path. A tiny optional `bofbench.toml` can store repeatable args and output checks.
+The CLI is intentionally direct. There is no required manifest and no workflow gate in the hot path. An optional, strictly validated `bofbench.toml` can store compiler/build defaults and repeatable test contracts.
 
 ```sh
 bofbench build ./bofs/whoami

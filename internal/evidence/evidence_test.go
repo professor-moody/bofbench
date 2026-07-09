@@ -45,6 +45,12 @@ func TestFingerprintTreeIsStableAndExcludesMetadata(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "source.json"), []byte("metadata"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "._a.o"), []byte("appledouble"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".DS_Store"), []byte("finder"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	second, err := FingerprintTree(root)
 	if err != nil {
 		t.Fatal(err)

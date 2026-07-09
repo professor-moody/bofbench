@@ -20,6 +20,33 @@ Templates:
 | `unresolved` | negative fixture expecting `relocation_error` |
 | `timeout` | negative fixture expecting `timeout` |
 
+## Build Configuration
+
+Direct source builds are deterministic by default. Pin the toolchain and add toolchain-specific flags in `bofbench.toml` when a fixture needs them:
+
+```toml
+name = "echoer"
+entry = "go"
+compiler = "mingw"
+cflags = ["-Os", "-DVARIANT=1"]
+deterministic = true
+args = ["z:default", "i:1"]
+expect = ["echoer: default count=1"]
+timeout_ms = 5000
+```
+
+Root keys are `name`, `entry`, `build`, `compiler`, `cflags`, `deterministic`, `args`, `expect`, `forbid`, `timeout_ms`, `expect_exit`, `expect_status`, and `operator_notes`. Compiler values are `auto`, `mingw`, or `msvc`. Project names use portable letters, numbers, dot, underscore, and hyphen characters and cannot start with a dot. String values and array elements must be quoted. Inline comments are supported outside quoted values.
+
+The parser rejects unknown keys/sections, duplicate keys and aliases, invalid compiler or Boolean values, non-positive timeouts, and malformed arrays. A bad configuration still creates build failure evidence with one diagnostic per offending line.
+
+Use the release-quality build gate during development:
+
+```sh
+bofbench build bofs/echoer --compiler mingw --verify-reproducible
+```
+
+For a custom `build` command, Makefile, or CMake project, BOFBench records the dispatcher rather than claiming to know the nested compiler. Reproducibility verification repeats that command and compares the resulting object.
+
 ## Test Profiles
 
 `bofbench.toml` can define named profiles for repeatable argument and output contracts:
