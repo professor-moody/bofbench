@@ -19,12 +19,15 @@ Run selected smoke coverage:
 
 ```sh
 bofbench preflight arsenal/trustedsec-sa --select whoami,ipconfig,netuser
+bofbench preflight arsenal/trustedsec-sa --arch all --report-only
 bofbench test arsenal/trustedsec-sa --select whoami,ipconfig,netuser
 ```
 
 Arsenal tests write JSON and Markdown reports under `runs/<timestamp>-test-arsenal-*/`.
 
-Arsenal preflight writes a corpus compatibility matrix under `runs/<timestamp>-preflight-*/`. Each x64 object is classified as `compatible`, `compatible_runtime_lookup`, or a concrete blocker such as `unsupported_relocation` or `unsupported_beacon_api`. The JSON retains every structured issue and the Markdown report is the review-oriented matrix. Use `--strict` when runtime fallback lookup warnings must fail the gate.
+Arsenal preflight writes a corpus compatibility matrix under `runs/<timestamp>-preflight-*/`. Each object variant is classified as `compatible`, `compatible_runtime_lookup`, or a concrete blocker such as `unsupported_arch`, `unsupported_relocation`, or `unsupported_beacon_api`. The JSON and Markdown summarize by architecture, status, blocker, toolchain, and argument need. Argument states are `configured`, `required_unconfigured` (BeaconData imports without sidecar args), `none_observed`, or `not_applicable`; configured sidecars carry their path, values, and SHA-256 fingerprint.
+
+`--arch x64` is the default release gate. `--arch all --report-only` inventories x64 and x86 together without turning the deliberately unsupported x86 rows into a command failure. The pinned TrustedSec matrix currently contains 128 variants: 57 compatible x64, 7 x64 runtime-lookup warnings, and 64 x86 `unsupported_arch` rows, with zero analysis failures. Use `--strict` when runtime fallback lookup warnings must also fail the gate.
 
 On non-Windows, arsenal tests inspect compatible objects and report that execution requires Windows x64. Loader-incompatible objects fail during the preflight phase on every host.
 

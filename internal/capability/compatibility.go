@@ -60,7 +60,8 @@ func AssessWindowsCOFF(input COFFInput) Compatibility {
 		Status:         "compatible",
 		Compatible:     true,
 	}
-	if input.Arch != catalog.Machine.Arch {
+	archSupported := input.Arch == catalog.Machine.Arch
+	if !archSupported {
 		result.Blockers = append(result.Blockers, Issue{
 			Category: "unsupported_arch",
 			Detail:   fmt.Sprintf("loader supports %s objects; artifact architecture is %s", catalog.Machine.Arch, emptyAs(input.Arch, "unknown")),
@@ -82,52 +83,56 @@ func AssessWindowsCOFF(input COFFInput) Compatibility {
 			Symbol:   emptyAs(input.Entrypoint, catalog.DefaultEntrypoint),
 		})
 	}
-	for _, use := range input.Relocations {
-		relocation, declared := catalog.RelocationByCode(use.Code)
-		if declared && relocation.Supported {
-			continue
+	if archSupported {
+		for _, use := range input.Relocations {
+			relocation, declared := catalog.RelocationByCode(use.Code)
+			if declared && relocation.Supported {
+				continue
+			}
+			detail := relocation.Detail
+			if !declared {
+				detail = "relocation is not declared in the loader capability catalog"
+			}
+			result.Blockers = append(result.Blockers, Issue{
+				Category:   "unsupported_relocation",
+				Detail:     detail,
+				Symbol:     use.Symbol,
+				Relocation: relocation.Name,
+				Code:       use.Code,
+				Section:    use.Section,
+			})
 		}
-		detail := relocation.Detail
-		if !declared {
-			detail = "relocation is not declared in the loader capability catalog"
-		}
-		result.Blockers = append(result.Blockers, Issue{
-			Category:   "unsupported_relocation",
-			Detail:     detail,
-			Symbol:     use.Symbol,
-			Relocation: relocation.Name,
-			Code:       use.Code,
-			Section:    use.Section,
-		})
 	}
-	for _, symbol := range input.Unresolved {
-		normalized, _ := catalog.NormalizeImport(symbol)
-		candidate := strings.TrimLeft(normalized, "_")
-		if strings.HasPrefix(candidate, "Beacon") {
-			if !catalog.supportsBeaconName(candidate) {
-				result.Blockers = append(result.Blockers, Issue{
-					Category: "unsupported_beacon_api",
-					Detail:   "Beacon API is not implemented by the native loader shim",
-					Symbol:   symbol,
-				})
+	if archSupported {
+		for _, symbol := range input.Unresolved {
+			normalized, _ := catalog.NormalizeImport(symbol)
+			candidate := strings.TrimLeft(normalized, "_")
+			if strings.HasPrefix(candidate, "Beacon") {
+				if !catalog.supportsBeaconName(candidate) {
+					result.Blockers = append(result.Blockers, Issue{
+						Category: "unsupported_beacon_api",
+						Detail:   "Beacon API is not implemented by the native loader shim",
+						Symbol:   symbol,
+					})
+				}
+				continue
 			}
-			continue
-		}
-		if library, api, dynamic := strings.Cut(normalized, catalog.DynamicImportSeparator); dynamic {
-			if library == "" || api == "" {
-				result.Blockers = append(result.Blockers, Issue{
-					Category: "malformed_dynamic_import",
-					Detail:   fmt.Sprintf("dynamic imports must use LIBRARY%sAPI", catalog.DynamicImportSeparator),
-					Symbol:   symbol,
-				})
+			if library, api, dynamic := strings.Cut(normalized, catalog.DynamicImportSeparator); dynamic {
+				if library == "" || api == "" {
+					result.Blockers = append(result.Blockers, Issue{
+						Category: "malformed_dynamic_import",
+						Detail:   fmt.Sprintf("dynamic imports must use LIBRARY%sAPI", catalog.DynamicImportSeparator),
+						Symbol:   symbol,
+					})
+				}
+				continue
 			}
-			continue
+			result.Warnings = append(result.Warnings, Issue{
+				Category: "fallback_lookup",
+				Detail:   "symbol requires runtime lookup across the loader fallback libraries",
+				Symbol:   symbol,
+			})
 		}
-		result.Warnings = append(result.Warnings, Issue{
-			Category: "fallback_lookup",
-			Detail:   "symbol requires runtime lookup across the loader fallback libraries",
-			Symbol:   symbol,
-		})
 	}
 	result.Blockers = uniqueIssues(result.Blockers)
 	result.Warnings = uniqueIssues(result.Warnings)

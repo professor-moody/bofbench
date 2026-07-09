@@ -63,7 +63,7 @@ Run directory allocation is collision-safe even when identical operations start 
 - Builds persist `build.json` beside `build.log`, including configuration and output fingerprints when available.
 - Arsenal `source.json` records a deterministic content-tree fingerprint in addition to URL/ref metadata.
 - Runtime reports record object, loader, and test-configuration fingerprints.
-- Loader preflight reports record the capability-catalog version, artifact hashes, root tree fingerprint, and structured blockers/warnings.
+- Loader preflight reports record the capability-catalog version, artifact hashes, root tree fingerprint, structured blockers/warnings, architecture/status/toolchain/argument dimensions, and configuration fingerprints when sidecar arguments are present.
 - Stage manifests record every packaged file's size and SHA-256.
 - Windows lab summaries record BOFBench and loader SHA-256 plus Windows, architecture, PowerShell, Go, compiler, and machine identity.
 

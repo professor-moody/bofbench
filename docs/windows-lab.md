@@ -27,6 +27,7 @@ go build -o work\bin\bofbench.exe .\cmd\bofbench
 .\work\bin\bofbench.exe stage verify .\stage\hello-raw.zip --format json
 .\work\bin\bofbench.exe fetch trustedsec-sa
 .\work\bin\bofbench.exe preflight .\arsenal\trustedsec-sa --select whoami,ipconfig,env,arp,netstat,routeprint,tasklist,uptime,locale
+.\work\bin\bofbench.exe preflight .\arsenal\trustedsec-sa --select whoami,ipconfig,env --arch all --report-only
 .\work\bin\bofbench.exe test .\arsenal\trustedsec-sa --select whoami,ipconfig,env,arp,netstat,routeprint,tasklist,uptime,locale --timeout 7000
 ```
 
@@ -51,7 +52,7 @@ The underlying script can still be run directly:
 powershell -ExecutionPolicy Bypass -File .\scripts\windows-lab-smoke.ps1 -RepoRoot C:\bofbench -Select 'whoami,ipconfig,env'
 ```
 
-The script writes `runs\<timestamp>-lab-smoke\lab-smoke.json` with each step, status, duration, and error text. It verifies the generated loader-capability contract, covers positive fixtures and expected negative fixtures (`unresolved`, `timeout`), preflights the selected TrustedSec objects, and then runs the arsenal smoke.
+The script writes `runs\<timestamp>-lab-smoke\lab-smoke.json` with each step, status, duration, and error text. It verifies the generated loader-capability contract, covers positive fixtures and expected negative fixtures (`unresolved`, `timeout`), runs the selected x64 gate plus a report-only x64/x86 architecture matrix, and then runs the arsenal smoke.
 
 The summary also carries the shared evidence header and fingerprints the lab environment: Windows version/architecture, PowerShell, Go, compiler path, machine identity, and SHA-256 for the BOFBench and loader binaries.
 

@@ -333,6 +333,8 @@ func preflightCommand(stdout io.Writer) *cobra.Command {
 	var entry string
 	var format string
 	var strict bool
+	var arch string
+	var reportOnly bool
 	cmd := &cobra.Command{
 		Use:   "preflight <artifact|arsenal>",
 		Short: "Predict Windows COFF loader compatibility without execution",
@@ -345,6 +347,7 @@ func preflightCommand(stdout io.Writer) *cobra.Command {
 				Path:       args[0],
 				Select:     selectList,
 				Entrypoint: entry,
+				Arch:       arch,
 			})
 			if err != nil {
 				return err
@@ -365,7 +368,7 @@ func preflightCommand(stdout io.Writer) *cobra.Command {
 				fmt.Fprint(stdout, preflightsvc.Markdown(persisted.Report))
 				fmt.Fprintf(stdout, "\nreports: %s %s\n", persisted.JSONPath, persisted.MDPath)
 			}
-			if persisted.Report.HasProblems(strict) {
+			if !reportOnly && persisted.Report.HasProblems(strict) {
 				return codedError{code: 1, err: fmt.Errorf("loader preflight gate failed with status %s", persisted.Report.Status)}
 			}
 			return nil
@@ -373,8 +376,10 @@ func preflightCommand(stdout io.Writer) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&selectList, "select", "", "comma-separated arsenal selection")
 	cmd.Flags().StringVar(&entry, "entry", "go", "entrypoint symbol")
+	cmd.Flags().StringVar(&arch, "arch", "x64", "arsenal architecture: x64, x86, or all")
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, or md")
 	cmd.Flags().BoolVar(&strict, "strict", false, "fail on runtime-lookup warnings as well as blockers")
+	cmd.Flags().BoolVar(&reportOnly, "report-only", false, "always exit zero after writing the matrix")
 	return cmd
 }
 

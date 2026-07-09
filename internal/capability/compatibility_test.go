@@ -32,9 +32,26 @@ func TestAssessWindowsCOFFStructuredBlockers(t *testing.T) {
 	if result.Compatible || result.Status != "unsupported_arch" {
 		t.Fatalf("compatibility = %+v", result)
 	}
-	for _, category := range []string{"unsupported_arch", "malformed_object", "missing_entrypoint", "unsupported_relocation", "unsupported_beacon_api", "malformed_dynamic_import"} {
+	for _, category := range []string{"unsupported_arch", "malformed_object", "missing_entrypoint"} {
 		if !hasIssue(result.Blockers, category) {
 			t.Fatalf("missing %s blocker: %+v", category, result.Blockers)
+		}
+	}
+	for _, category := range []string{"unsupported_relocation", "unsupported_beacon_api", "malformed_dynamic_import"} {
+		if hasIssue(result.Blockers, category) {
+			t.Fatalf("unsupported architecture should not be interpreted with AMD64 capability rules: %+v", result.Blockers)
+		}
+	}
+	amd64 := AssessWindowsCOFF(COFFInput{
+		Arch:         "x64",
+		Entrypoint:   "go",
+		EntrypointOK: true,
+		Relocations:  []RelocationUse{{Code: 0x000c, Name: "SECREL", Section: ".data", Symbol: "value"}},
+		Unresolved:   []string{"BeaconFormatAlloc", "$Broken"},
+	})
+	for _, category := range []string{"unsupported_relocation", "unsupported_beacon_api", "malformed_dynamic_import"} {
+		if !hasIssue(amd64.Blockers, category) {
+			t.Fatalf("missing AMD64 %s blocker: %+v", category, amd64.Blockers)
 		}
 	}
 }

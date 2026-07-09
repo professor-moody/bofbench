@@ -220,6 +220,12 @@ func TestCLIPreflightArsenalGateAndReports(t *testing.T) {
 	if err := coff.CreateMockObject(filepath.Join(root, "blocked", "blocked.x64.o"), "x64", "go", []string{"BeaconFormatAlloc"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := coff.CreateMockObject(filepath.Join(root, "supported", "supported.x86.o"), "x86", "_go@8", []string{"__imp__BeaconPrintf"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := coff.CreateMockObject(filepath.Join(root, "blocked", "blocked.x86.o"), "x86", "_go@8", nil); err != nil {
+		t.Fatal(err)
+	}
 	var passed struct {
 		Report struct {
 			Schema  string `json:"schema"`
@@ -245,6 +251,14 @@ func TestCLIPreflightArsenalGateAndReports(t *testing.T) {
 	blocked, err := run(t, tmp, bin, "preflight", filepath.Join("arsenal", "demo"), "--select", "blocked")
 	if err == nil || !strings.Contains(blocked, "unsupported_beacon_api") || !strings.Contains(blocked, "loader preflight gate failed") || !strings.Contains(blocked, "reports:") {
 		t.Fatalf("blocked preflight did not fail with evidence: err=%v\n%s", err, blocked)
+	}
+	allArchitectures, err := run(t, tmp, bin, "preflight", filepath.Join("arsenal", "demo"), "--select", "supported", "--arch", "all", "--format", "md")
+	if err == nil || !strings.Contains(allArchitectures, "Architecture request: `all`") || !strings.Contains(allArchitectures, "unsupported_arch") {
+		t.Fatalf("all-architecture CLI matrix did not expose x86 blocker: err=%v\n%s", err, allArchitectures)
+	}
+	reportOnly := runOK(t, tmp, bin, "preflight", filepath.Join("arsenal", "demo"), "--select", "supported", "--arch", "all", "--report-only")
+	if !strings.Contains(reportOnly, "unsupported_arch") || !strings.Contains(reportOnly, "reports:") {
+		t.Fatalf("report-only matrix missing blocked evidence:\n%s", reportOnly)
 	}
 }
 

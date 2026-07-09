@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"bofbench/internal/artifact"
 	"bofbench/internal/buildsys"
 	"bofbench/internal/capability"
+	"bofbench/internal/config"
 	"bofbench/internal/evidence"
 	"bofbench/internal/runlog"
 )
@@ -20,6 +22,7 @@ type Options struct {
 	Path       string
 	Select     string
 	Entrypoint string
+	Arch       string
 }
 
 type Report struct {
@@ -27,6 +30,7 @@ type Report struct {
 	Root            string                    `json:"root"`
 	Selected        string                    `json:"selected,omitempty"`
 	Entrypoint      string                    `json:"entrypoint"`
+	Architecture    string                    `json:"architecture"`
 	RootFingerprint *evidence.TreeFingerprint `json:"root_fingerprint,omitempty"`
 	StartedAt       string                    `json:"started_at"`
 	CompletedAt     string                    `json:"completed_at"`
@@ -36,30 +40,41 @@ type Report struct {
 }
 
 type Summary struct {
-	Total         int `json:"total"`
-	Compatible    int `json:"compatible"`
-	RuntimeLookup int `json:"runtime_lookup"`
-	Blocked       int `json:"blocked"`
-	NotApplicable int `json:"not_applicable"`
-	AnalyzeFailed int `json:"analyze_failed"`
-	Built         int `json:"built"`
+	Total          int            `json:"total"`
+	Compatible     int            `json:"compatible"`
+	RuntimeLookup  int            `json:"runtime_lookup"`
+	Blocked        int            `json:"blocked"`
+	NotApplicable  int            `json:"not_applicable"`
+	AnalyzeFailed  int            `json:"analyze_failed"`
+	Built          int            `json:"built"`
+	ByArchitecture map[string]int `json:"by_architecture"`
+	ByStatus       map[string]int `json:"by_status"`
+	ByBlocker      map[string]int `json:"by_blocker"`
+	ByToolchain    map[string]int `json:"by_toolchain"`
+	ByArgumentNeed map[string]int `json:"by_argument_need"`
 }
 
 type Result struct {
-	Name          string                    `json:"name"`
-	Path          string                    `json:"path"`
-	Object        string                    `json:"object,omitempty"`
-	Status        string                    `json:"status"`
-	Error         string                    `json:"error,omitempty"`
-	Built         bool                      `json:"built,omitempty"`
-	Build         *buildsys.Result          `json:"build,omitempty"`
-	Kind          artifact.Kind             `json:"kind,omitempty"`
-	Arch          string                    `json:"arch,omitempty"`
-	Toolchain     string                    `json:"toolchain,omitempty"`
-	SHA256        string                    `json:"sha256,omitempty"`
-	EntrypointOK  bool                      `json:"entrypoint_ok"`
-	Relocations   int                       `json:"relocations"`
-	Compatibility *capability.Compatibility `json:"loader_compatibility,omitempty"`
+	Name              string                    `json:"name"`
+	Path              string                    `json:"path"`
+	Object            string                    `json:"object,omitempty"`
+	Status            string                    `json:"status"`
+	Error             string                    `json:"error,omitempty"`
+	Built             bool                      `json:"built,omitempty"`
+	Build             *buildsys.Result          `json:"build,omitempty"`
+	Kind              artifact.Kind             `json:"kind,omitempty"`
+	Arch              string                    `json:"arch,omitempty"`
+	Toolchain         string                    `json:"toolchain,omitempty"`
+	SHA256            string                    `json:"sha256,omitempty"`
+	EntrypointOK      bool                      `json:"entrypoint_ok"`
+	Entrypoint        string                    `json:"entrypoint,omitempty"`
+	Relocations       int                       `json:"relocations"`
+	ArgumentNeed      string                    `json:"argument_need,omitempty"`
+	ArgumentAPIs      []string                  `json:"argument_apis,omitempty"`
+	ConfiguredArgs    []string                  `json:"configured_args,omitempty"`
+	ConfigPath        string                    `json:"config_path,omitempty"`
+	ConfigFingerprint *evidence.FileFingerprint `json:"config_fingerprint,omitempty"`
+	Compatibility     *capability.Compatibility `json:"loader_compatibility,omitempty"`
 }
 
 type Persisted struct {
@@ -72,6 +87,8 @@ type target struct {
 	name   string
 	path   string
 	object string
+	arch   string
+	build  bool
 }
 
 func Run(opts Options) (Persisted, error) {
@@ -81,7 +98,13 @@ func Run(opts Options) (Persisted, error) {
 	if opts.Entrypoint == "" {
 		opts.Entrypoint = "go"
 	}
-	targets, err := discoverTargets(opts.Path, opts.Select)
+	if opts.Arch == "" {
+		opts.Arch = "x64"
+	}
+	if opts.Arch != "x64" && opts.Arch != "x86" && opts.Arch != "all" {
+		return Persisted{}, fmt.Errorf("unsupported preflight architecture %q; expected x64, x86, or all", opts.Arch)
+	}
+	targets, err := discoverTargets(opts.Path, opts.Select, opts.Arch)
 	if err != nil {
 		return Persisted{}, err
 	}
@@ -93,11 +116,12 @@ func Run(opts Options) (Persisted, error) {
 		return Persisted{}, err
 	}
 	report := Report{
-		Header:     evidence.New(evidence.SchemaPreflight, runlog.ID(runDir), ""),
-		Root:       opts.Path,
-		Selected:   opts.Select,
-		Entrypoint: opts.Entrypoint,
-		StartedAt:  time.Now().UTC().Format(time.RFC3339),
+		Header:       evidence.New(evidence.SchemaPreflight, runlog.ID(runDir), ""),
+		Root:         opts.Path,
+		Selected:     opts.Select,
+		Entrypoint:   opts.Entrypoint,
+		Architecture: opts.Arch,
+		StartedAt:    time.Now().UTC().Format(time.RFC3339),
 	}
 	if info, statErr := os.Stat(opts.Path); statErr == nil && info.IsDir() {
 		if fingerprint, fingerprintErr := evidence.FingerprintTree(opts.Path); fingerprintErr == nil {
@@ -105,10 +129,19 @@ func Run(opts Options) (Persisted, error) {
 		}
 	}
 	for _, item := range targets {
-		result := Result{Name: item.name, Path: item.path, Object: item.object, Status: "analyze_failed"}
+		result := Result{Name: item.name, Path: item.path, Object: item.object, Status: "analyze_failed", Entrypoint: opts.Entrypoint}
 		object := item.object
 		if object == "" {
-			build, buildErr := buildsys.Build(item.path, "x64")
+			if !item.build {
+				result.Error = fmt.Sprintf("%s object is not available and the entry has no buildable C source", emptyAs(item.arch, "requested"))
+				report.Results = append(report.Results, result)
+				continue
+			}
+			buildArch := item.arch
+			if buildArch == "" {
+				buildArch = "x64"
+			}
+			build, buildErr := buildsys.Build(item.path, buildArch)
 			if buildErr != nil {
 				result.Error = buildErr.Error()
 				report.Results = append(report.Results, result)
@@ -120,8 +153,30 @@ func Run(opts Options) (Persisted, error) {
 			result.Built = true
 			result.Build = &build
 		}
-		analysis, analyzeErr := artifact.Analyze(object, opts.Entrypoint)
-		analysis.Header = evidence.New(evidence.SchemaAnalysis, report.RunID+"/"+safeName(item.name)+"/analysis", report.RunID)
+		cfg, cfgPath, configErr := config.LoadFor(item.path)
+		if configErr != nil {
+			result.Error = configErr.Error()
+			report.Results = append(report.Results, result)
+			continue
+		}
+		result.ConfigPath = cfgPath
+		if cfgPath != "" {
+			if fingerprint, fingerprintErr := evidence.FingerprintFile(cfgPath); fingerprintErr == nil {
+				result.ConfigFingerprint = &fingerprint
+			}
+		}
+		result.ConfiguredArgs = append([]string(nil), cfg.Args...)
+		entrypoint := opts.Entrypoint
+		if entrypoint == "go" && cfgPath != "" && cfg.Entrypoint != "" {
+			entrypoint = cfg.Entrypoint
+		}
+		result.Entrypoint = entrypoint
+		analysis, analyzeErr := artifact.Analyze(object, entrypoint)
+		lineageName := item.name
+		if item.arch != "" {
+			lineageName += "-" + item.arch
+		}
+		analysis.Header = evidence.New(evidence.SchemaAnalysis, report.RunID+"/"+safeName(lineageName)+"/analysis", report.RunID)
 		if analyzeErr != nil {
 			result.Error = analyzeErr.Error()
 			report.Results = append(report.Results, result)
@@ -133,6 +188,7 @@ func Run(opts Options) (Persisted, error) {
 		result.SHA256 = analysis.SHA256
 		result.EntrypointOK = analysis.EntrypointOK
 		result.Relocations = analysis.Relocations
+		result.ArgumentNeed, result.ArgumentAPIs = argumentProfile(analysis, cfg)
 		result.Compatibility = analysis.LoaderCompatibility
 		switch {
 		case analysis.Kind != artifact.KindCOFF:
@@ -159,7 +215,7 @@ func Run(opts Options) (Persisted, error) {
 	return Persisted{Report: report, JSONPath: jsonPath, MDPath: mdPath}, nil
 }
 
-func discoverTargets(path, selectList string) ([]target, error) {
+func discoverTargets(path, selectList, arch string) ([]target, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -175,19 +231,77 @@ func discoverTargets(path, selectList string) ([]target, error) {
 		}
 		out := make([]target, 0, len(selected))
 		for _, entry := range selected {
-			out = append(out, target{name: entry.Name, path: entry.Path, object: entry.X64})
+			buildable := directoryHasCSource(entry.Path)
+			switch arch {
+			case "x64":
+				out = append(out, target{name: entry.Name, path: entry.Path, object: entry.X64, arch: "x64", build: buildable})
+			case "x86":
+				out = append(out, target{name: entry.Name, path: entry.Path, object: entry.X86, arch: "x86", build: buildable})
+			case "all":
+				out = append(out,
+					target{name: entry.Name, path: entry.Path, object: entry.X64, arch: "x64", build: buildable},
+					target{name: entry.Name, path: entry.Path, object: entry.X86, arch: "x86", build: buildable},
+				)
+			}
 		}
 		return out, nil
 	}
 	if selectList != "" {
 		return nil, fmt.Errorf("--select requires an arsenal-like directory")
 	}
-	return []target{{name: filepath.Base(filepath.Clean(path)), path: path}}, nil
+	if arch == "all" {
+		return []target{
+			{name: filepath.Base(filepath.Clean(path)), path: path, arch: "x64", build: true},
+			{name: filepath.Base(filepath.Clean(path)), path: path, arch: "x86", build: true},
+		}, nil
+	}
+	return []target{{name: filepath.Base(filepath.Clean(path)), path: path, arch: arch, build: true}}, nil
+}
+
+func directoryHasCSource(root string) bool {
+	found := false
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || found {
+			return filepath.SkipAll
+		}
+		if entry.IsDir() {
+			if path != root && (entry.Name() == ".git" || entry.Name() == "build" || entry.Name() == "dist") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(strings.ToLower(entry.Name()), ".c") {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 func summarize(results []Result) Summary {
-	summary := Summary{Total: len(results)}
+	summary := Summary{
+		Total:          len(results),
+		ByArchitecture: map[string]int{},
+		ByStatus:       map[string]int{},
+		ByBlocker:      map[string]int{},
+		ByToolchain:    map[string]int{},
+		ByArgumentNeed: map[string]int{},
+	}
 	for _, result := range results {
+		summary.ByArchitecture[emptyAs(result.Arch, "unknown")]++
+		summary.ByStatus[emptyAs(result.Status, "unknown")]++
+		summary.ByToolchain[emptyAs(result.Toolchain, "unknown")]++
+		summary.ByArgumentNeed[emptyAs(result.ArgumentNeed, "unknown")]++
+		seenBlockers := map[string]bool{}
+		if result.Compatibility != nil {
+			for _, blocker := range result.Compatibility.Blockers {
+				if !seenBlockers[blocker.Category] {
+					summary.ByBlocker[blocker.Category]++
+					seenBlockers[blocker.Category] = true
+				}
+			}
+		}
 		if result.Built {
 			summary.Built++
 		}
@@ -205,6 +319,29 @@ func summarize(results []Result) Summary {
 		}
 	}
 	return summary
+}
+
+func argumentProfile(analysis artifact.Analysis, cfg config.Project) (string, []string) {
+	if analysis.Kind != artifact.KindCOFF {
+		return "not_applicable", nil
+	}
+	seen := map[string]bool{}
+	var apis []string
+	for _, imported := range analysis.Imports {
+		if imported.Category != "beacon_api" || !strings.HasPrefix(imported.API, "BeaconData") || seen[imported.API] {
+			continue
+		}
+		seen[imported.API] = true
+		apis = append(apis, imported.API)
+	}
+	sort.Strings(apis)
+	if len(cfg.Args) > 0 {
+		return "configured", apis
+	}
+	if len(apis) > 0 {
+		return "required_unconfigured", apis
+	}
+	return "none_observed", nil
 }
 
 func reportStatus(summary Summary) string {
@@ -228,6 +365,7 @@ func Text(report Report) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "BOFBench loader preflight: %s\n", report.Status)
 	fmt.Fprintf(&b, "catalog matrix: %d compatible, %d runtime-lookup, %d blocked, %d not-applicable, %d failed, %d total\n", report.Summary.Compatible, report.Summary.RuntimeLookup, report.Summary.Blocked, report.Summary.NotApplicable, report.Summary.AnalyzeFailed, report.Summary.Total)
+	fmt.Fprintf(&b, "dimensions: arch=[%s] blocker=[%s] toolchain=[%s] args=[%s]\n", formatCounts(report.Summary.ByArchitecture), formatCounts(report.Summary.ByBlocker), formatCounts(report.Summary.ByToolchain), formatCounts(report.Summary.ByArgumentNeed))
 	for _, result := range report.Results {
 		detail := result.Error
 		if detail == "" && result.Compatibility != nil {
@@ -237,15 +375,15 @@ func Text(report Report) string {
 				detail = issueSummary(result.Compatibility.Warnings)
 			}
 		}
-		fmt.Fprintf(&b, "%-28s %-28s %-6s %-12s relocs=%-4d %s\n", result.Name, result.Status, emptyAs(result.Arch, "-"), emptyAs(result.Toolchain, "-"), result.Relocations, detail)
+		fmt.Fprintf(&b, "%-28s %-28s %-6s %-12s %-22s relocs=%-4d %s\n", result.Name, result.Status, emptyAs(result.Arch, "-"), emptyAs(result.Toolchain, "-"), emptyAs(result.ArgumentNeed, "-"), result.Relocations, detail)
 	}
 	return b.String()
 }
 
 func Markdown(report Report) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Loader Preflight\n\n- Schema: `%s` version `%d`\n- Run ID: `%s`\n- Root: `%s`\n- Selection: `%s`\n- Entrypoint: `%s`\n- Status: `%s`\n- Summary: `%d compatible`, `%d runtime lookup`, `%d blocked`, `%d not applicable`, `%d failed`, `%d total`\n\n", report.Schema, report.SchemaVersion, report.RunID, report.Root, report.Selected, report.Entrypoint, report.Status, report.Summary.Compatible, report.Summary.RuntimeLookup, report.Summary.Blocked, report.Summary.NotApplicable, report.Summary.AnalyzeFailed, report.Summary.Total)
-	b.WriteString("| Name | Status | Kind | Arch | Toolchain | Relocations | SHA256 | Detail |\n| --- | --- | --- | --- | --- | ---: | --- | --- |\n")
+	fmt.Fprintf(&b, "# Loader Preflight\n\n- Schema: `%s` version `%d`\n- Run ID: `%s`\n- Root: `%s`\n- Selection: `%s`\n- Entrypoint: `%s`\n- Architecture request: `%s`\n- Status: `%s`\n- Summary: `%d compatible`, `%d runtime lookup`, `%d blocked`, `%d not applicable`, `%d failed`, `%d total`\n- By architecture: `%s`\n- By blocker: `%s`\n- By toolchain: `%s`\n- By argument need: `%s`\n\n", report.Schema, report.SchemaVersion, report.RunID, report.Root, report.Selected, report.Entrypoint, report.Architecture, report.Status, report.Summary.Compatible, report.Summary.RuntimeLookup, report.Summary.Blocked, report.Summary.NotApplicable, report.Summary.AnalyzeFailed, report.Summary.Total, formatCounts(report.Summary.ByArchitecture), formatCounts(report.Summary.ByBlocker), formatCounts(report.Summary.ByToolchain), formatCounts(report.Summary.ByArgumentNeed))
+	b.WriteString("| Name | Status | Kind | Arch | Toolchain | Entry | Arguments | Relocations | SHA256 | Detail |\n| --- | --- | --- | --- | --- | --- | --- | ---: | --- | --- |\n")
 	for _, result := range report.Results {
 		detail := result.Error
 		if detail == "" && result.Compatibility != nil {
@@ -255,9 +393,25 @@ func Markdown(report Report) string {
 				detail = issueSummary(result.Compatibility.Warnings)
 			}
 		}
-		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%s` | `%s` | %d | `%s` | %s |\n", escape(result.Name), result.Status, result.Kind, result.Arch, result.Toolchain, result.Relocations, result.SHA256, escape(detail))
+		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | %d | `%s` | %s |\n", escape(result.Name), result.Status, result.Kind, result.Arch, result.Toolchain, escape(result.Entrypoint), result.ArgumentNeed, result.Relocations, result.SHA256, escape(detail))
 	}
 	return b.String()
+}
+
+func formatCounts(counts map[string]int) string {
+	if len(counts) == 0 {
+		return "none"
+	}
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, counts[key]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func issueSummary(issues []capability.Issue) string {

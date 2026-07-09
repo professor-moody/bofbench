@@ -58,6 +58,7 @@ bofbench fetch https://example.test/payloads.zip --name payloads --type zip
 bofbench fetch https://example.test/payload.x64.o --name single-object --type raw
 bofbench list arsenal/trustedsec-sa
 bofbench preflight arsenal/trustedsec-sa --select whoami,ipconfig,netuser
+bofbench preflight arsenal/trustedsec-sa --arch all --report-only
 bofbench test arsenal/trustedsec-sa --select whoami,ipconfig,netuser
 ```
 

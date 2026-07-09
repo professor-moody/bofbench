@@ -132,6 +132,10 @@ $steps.Add((Invoke-Step "trustedsec loader preflight" {
     & $BofbenchExe preflight .\arsenal\trustedsec-sa --select $Select
 }))
 
+$steps.Add((Invoke-Step "trustedsec architecture matrix" {
+    & $BofbenchExe preflight .\arsenal\trustedsec-sa --select $Select --arch all --report-only
+}))
+
 $steps.Add((Invoke-Step "trustedsec arsenal smoke" {
     & $BofbenchExe test .\arsenal\trustedsec-sa --select $Select --runtime windows-coff --timeout $TimeoutMS
 }))

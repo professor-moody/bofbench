@@ -85,12 +85,13 @@ Predict whether one artifact or an arsenal selection can be loaded by the curren
 bofbench preflight ./dist/whoami.x64.o
 bofbench preflight arsenal/trustedsec-sa --select whoami,ipconfig,env
 bofbench preflight arsenal/trustedsec-sa --format json
+bofbench preflight arsenal/trustedsec-sa --arch all --report-only
 bofbench preflight arsenal/trustedsec-sa --format md --strict
 ```
 
 The command writes `preflight.json` and `preflight.md` under `runs/<timestamp>-preflight-*/`. It classifies architecture, entrypoint, relocation, Beacon API, dynamic-import syntax, and fallback-library lookup behavior from the same versioned catalog used to generate the native C loader header.
 
-Hard blockers and analysis failures exit nonzero. Runtime fallback lookups are warnings by default and become a failing gate with `--strict`. `--select` accepts a comma-separated arsenal subset; `--format` accepts `text`, `json`, or `md`.
+Hard blockers and analysis failures exit nonzero. Runtime fallback lookups are warnings by default and become a failing gate with `--strict`. `--arch` accepts `x64` (the default gate), `x86`, or `all`; unsupported x86 remains an explicit blocker. Use `--report-only` to inventory all variants while retaining blocked status in the reports but exiting zero. `--select` accepts a comma-separated arsenal subset; `--format` accepts `text`, `json`, or `md`.
 
 ## `run`
 
