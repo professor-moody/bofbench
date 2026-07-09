@@ -1256,6 +1256,20 @@ func runMarkdown(res runtimesvc.Result, items []argpack.Item) string {
 	if res.Loader != "" {
 		fmt.Fprintf(&b, "- Loader: `%s`\n", res.Loader)
 	}
+	if res.LoaderErrorCode != "" {
+		fmt.Fprintf(&b, "- Loader error code: `%s`\n", res.LoaderErrorCode)
+	}
+	if res.LoaderProcess != nil {
+		if res.LoaderProcess.ExitCode != nil {
+			fmt.Fprintf(&b, "- Loader process exit code: `%d`\n", *res.LoaderProcess.ExitCode)
+		}
+		if res.LoaderProcess.ExceptionCode != "" {
+			fmt.Fprintf(&b, "- Windows exception: `%s`\n", res.LoaderProcess.ExceptionCode)
+		}
+		if res.LoaderProcess.StdoutTruncated || res.LoaderProcess.StderrTruncated {
+			fmt.Fprintf(&b, "- Loader process streams truncated: `stdout=%t stderr=%t`\n", res.LoaderProcess.StdoutTruncated, res.LoaderProcess.StderrTruncated)
+		}
+	}
 	if res.ObjectFingerprint != nil {
 		fmt.Fprintf(&b, "- Object SHA-256: `%s`\n", res.ObjectFingerprint.SHA256)
 	}
@@ -1267,6 +1281,9 @@ func runMarkdown(res runtimesvc.Result, items []argpack.Item) string {
 		for _, event := range res.Events {
 			fmt.Fprintf(&b, "| `%dms` | `%s` | `%s` | %s |\n", event.TimeMS, event.Type, event.Status, escapeMarkdownTable(event.Message))
 		}
+	}
+	if res.LoaderProcess != nil && (len(res.LoaderProcess.Stdout) > 0 || len(res.LoaderProcess.Stderr) > 0) {
+		fmt.Fprintf(&b, "\n## Loader Process Streams\n\n### Stdout\n\n%s\n\n### Stderr\n\n%s\n", strings.Join(res.LoaderProcess.Stdout, "\n"), strings.Join(res.LoaderProcess.Stderr, "\n"))
 	}
 	fmt.Fprintf(&b, "\n## Output\n\n%s\n\n## Errors\n\n%s\n", strings.Join(res.Output, "\n"), strings.Join(res.Errors, "\n"))
 	return b.String()

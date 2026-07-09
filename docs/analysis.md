@@ -23,11 +23,11 @@ The analyzer currently reports:
 
 ## COFF Structural Diagnostics
 
-COFF parsing is bounded before any table or payload range is read. `coff_diagnostics` explains invalid section/symbol/string/relocation ranges, bad auxiliary-symbol references, invalid symbol sections or values, malformed long names, duplicate sections or relocations, reserved alignment encodings, stripped symbol tables, and entrypoint location/type problems.
+COFF parsing is bounded before any table or payload range is read. `coff_diagnostics` explains invalid section/symbol/string/relocation ranges, bad auxiliary-symbol references, invalid symbol sections or values, malformed long names, duplicate sections or relocations, reserved alignment encodings, stripped symbol tables, resource-limit breaches, and entrypoint location/type problems. The Go parser shares the native loader's 256 MiB file, 512 MiB mapped-image, 4,096-section, 1,048,576-symbol/relocation, and 1,024-byte name ceilings.
 
 Diagnostics remain part of the analysis even when they block execution. Error-severity layout diagnostics become structured `malformed_object` preflight blockers, so `run` and `test` refuse the artifact before launching the native loader. Warning diagnostics remain review evidence.
 
-Uninitialized-data sections such as `.bss` are recorded as `zero-fill`. Capability catalog v2 teaches the generated native loader to leave these mapped ranges zeroed instead of copying bytes from file offset zero.
+Section evidence distinguishes raw `size`, header `virtual_size`, and effective `mapped_size`; analysis and entrypoint/relocation checks use the effective size. Uninitialized-data sections such as `.bss` are recorded as `zero-fill`. Capability catalog v2 teaches the generated native loader to leave these mapped ranges zeroed instead of copying bytes from file offset zero.
 
 ## Import Classification
 

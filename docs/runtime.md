@@ -64,6 +64,24 @@ The first implemented event vocabulary is intentionally small:
 
 This gives Windows COFF, Linux ELF, and macOS Mach-O reports one review language even though their execution mechanics differ.
 
+## Windows Loader Process Evidence
+
+Windows COFF results preserve native-loader failure evidence separately from Beacon output:
+
+```json
+{
+  "status": "fail",
+  "exit_state": "crash",
+  "loader_error_code": "windows_exception",
+  "loader_process": {
+    "exit_code": 3221225477,
+    "exception_code": "0xc0000005"
+  }
+}
+```
+
+`loader_process.stdout` and `stderr` contain non-protocol process lines when present. Each stream is tail-bounded to 4 MiB and reports a truncation flag. Invalid or incomplete loader JSON, process-start failures, exit-status mismatches, output-limit failures, validation failures, crashes, and timeouts have separate exit/error codes. `result.md` renders the same process evidence.
+
 ## Linked Native Object Runners
 
 The Linux ELF and macOS Mach-O runners are intentionally simple and real: on matching hosts they use `cc` to link the relocatable object into a small harness, execute the harness with the requested timeout, and capture stdout, stderr, exit state, and duration in the normal run report.

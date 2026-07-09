@@ -24,8 +24,12 @@ const (
 	sectionWritable   = 0x80000000
 	sectionAlignMask  = 0x00f00000
 
-	maxSections = 4096
-	maxSymbols  = 1 << 20
+	maxSections     = 4096
+	maxSymbols      = 1 << 20
+	maxRelocations  = 1 << 20
+	maxCOFFFileSize = 256 << 20
+	maxImageSize    = 512 << 20
+	maxCOFFName     = 1024
 )
 
 type File struct {
@@ -50,6 +54,8 @@ type Section struct {
 	Name                 string       `json:"name"`
 	RawName              string       `json:"raw_name,omitempty"`
 	Size                 uint32       `json:"size"`
+	VirtualSize          uint32       `json:"virtual_size,omitempty"`
+	MappedSize           uint32       `json:"mapped_size"`
 	PointerToRawData     uint32       `json:"pointer_to_raw_data"`
 	PointerToRelocations uint32       `json:"pointer_to_relocations"`
 	NumberOfRelocations  uint16       `json:"number_of_relocations"`
@@ -181,9 +187,24 @@ func CreateMockObjectWithRelocations(path, arch, entrypoint string, unresolved [
 }
 
 func Inspect(path string) (*File, error) {
-	b, err := os.ReadFile(path)
+	input, err := os.Open(path)
 	if err != nil {
 		return nil, err
+	}
+	defer input.Close()
+	stat, err := input.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if stat.Size() > maxCOFFFileSize {
+		return nil, fmt.Errorf("COFF object is %d bytes; parser limit is %d", stat.Size(), maxCOFFFileSize)
+	}
+	b, err := io.ReadAll(io.LimitReader(input, maxCOFFFileSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxCOFFFileSize {
+		return nil, fmt.Errorf("COFF object grew beyond the %d-byte parser limit while reading", maxCOFFFileSize)
 	}
 	if len(b) < 20 {
 		return nil, fmt.Errorf("file too small for COFF header")
@@ -235,11 +256,16 @@ func Inspect(path string) (*File, error) {
 	}
 	file.Sections = make([]Section, 0, sectionCount)
 	uninitializedFlag := capability.WindowsCOFF().SectionFlags.UninitializedData
+	var mappedImageSize uint64
+	var totalRelocations uint64
+	relocationLimitExceeded := false
 	for i := 0; i < int(sectionCount); i++ {
 		off := 20 + i*40
 		rawNameBytes := b[off : off+8]
 		rawName := strings.TrimRight(string(rawNameBytes), "\x00")
+		virtualSize := binary.LittleEndian.Uint32(b[off+8 : off+12])
 		size := binary.LittleEndian.Uint32(b[off+16 : off+20])
+		mappedSize := max(size, virtualSize)
 		rawPtr := binary.LittleEndian.Uint32(b[off+20 : off+24])
 		relocPtr := binary.LittleEndian.Uint32(b[off+24 : off+28])
 		numRelocs := binary.LittleEndian.Uint16(b[off+32 : off+34])
@@ -249,6 +275,8 @@ func Inspect(path string) (*File, error) {
 			Name:                 rawName,
 			RawName:              rawName,
 			Size:                 size,
+			VirtualSize:          virtualSize,
+			MappedSize:           mappedSize,
 			PointerToRawData:     rawPtr,
 			PointerToRelocations: relocPtr,
 			NumberOfRelocations:  numRelocs,
@@ -277,10 +305,18 @@ func Inspect(path string) (*File, error) {
 				section.Data = append([]byte(nil), b[rawPtr:rawPtr+size]...)
 			}
 		}
+		if size == 0 && virtualSize > 0 && !section.Uninitialized {
+			addDiagnostic(Diagnostic{Severity: "error", Code: "section_data_missing", Detail: "initialized section declares virtual bytes without raw data", Section: displaySection(section)})
+		}
 		if section.Uninitialized && rawPtr != 0 {
 			addDiagnostic(Diagnostic{Severity: "warning", Code: "uninitialized_data_pointer", Detail: "uninitialized-data section has a non-zero raw-data pointer; loader will zero-fill it", Section: displaySection(section), Offset: uint64(rawPtr)})
 		}
 		if numRelocs > 0 {
+			totalRelocations += uint64(numRelocs)
+			if totalRelocations > maxRelocations && !relocationLimitExceeded {
+				addDiagnostic(Diagnostic{Severity: "error", Code: "relocation_count_limit", Detail: fmt.Sprintf("COFF object declares more than %d relocations", maxRelocations), Section: displaySection(section)})
+				relocationLimitExceeded = true
+			}
 			relocationBytes := uint64(numRelocs) * 10
 			switch {
 			case relocPtr == 0:
@@ -290,6 +326,17 @@ func Inspect(path string) (*File, error) {
 			case uint64(relocPtr) < sectionTableEnd:
 				addDiagnostic(Diagnostic{Severity: "error", Code: "relocation_table_overlap_headers", Detail: "relocation table overlaps the COFF headers or section table", Section: displaySection(section), Offset: uint64(relocPtr)})
 			}
+		}
+		allocationSize := uint64(mappedSize)
+		if allocationSize == 0 {
+			allocationSize = 1
+		}
+		alignedSize := (allocationSize + 0xfff) &^ uint64(0xfff)
+		if alignedSize > maxImageSize-mappedImageSize {
+			addDiagnostic(Diagnostic{Severity: "error", Code: "image_size_limit", Detail: fmt.Sprintf("mapped section image exceeds the %d-byte loader limit", maxImageSize), Section: displaySection(section)})
+			mappedImageSize = maxImageSize
+		} else {
+			mappedImageSize += alignedSize
 		}
 		file.Sections = append(file.Sections, section)
 	}
@@ -378,8 +425,8 @@ func Inspect(path string) (*File, error) {
 				addDiagnostic(Diagnostic{Severity: "error", Code: "symbol_section_range", Detail: fmt.Sprintf("symbol refers to invalid section number %d", sectionNumber), Symbol: name, Offset: off + 12})
 			} else if sectionNumber > 0 {
 				section := file.Sections[sectionNumber-1]
-				if value > section.Size {
-					addDiagnostic(Diagnostic{Severity: "error", Code: "symbol_value_range", Detail: fmt.Sprintf("symbol value 0x%x exceeds section size 0x%x", value, section.Size), Section: section.Name, Symbol: name, Offset: off + 8})
+				if value > section.MappedSize {
+					addDiagnostic(Diagnostic{Severity: "error", Code: "symbol_value_range", Detail: fmt.Sprintf("symbol value 0x%x exceeds mapped section size 0x%x", value, section.MappedSize), Section: section.Name, Symbol: name, Offset: off + 8})
 				}
 			}
 			i += 1 + uint32(aux)
@@ -388,6 +435,9 @@ func Inspect(path string) (*File, error) {
 
 	for si := range file.Sections {
 		section := &file.Sections[si]
+		if relocationLimitExceeded {
+			continue
+		}
 		if section.NumberOfRelocations == 0 || section.PointerToRelocations == 0 || !rangeWithin(len(b), uint64(section.PointerToRelocations), uint64(section.NumberOfRelocations)*10) {
 			continue
 		}
@@ -412,8 +462,8 @@ func Inspect(path string) (*File, error) {
 				addDiagnostic(Diagnostic{Severity: "error", Code: "relocation_aux_symbol", Detail: "relocation refers to an auxiliary symbol record", Section: section.Name, Offset: off + 4})
 			}
 			width := relocationWidth(machineName, rel.Type)
-			if width > 0 && (uint64(rel.VirtualAddress) > uint64(section.Size) || width > uint64(section.Size)-minUint64(uint64(rel.VirtualAddress), uint64(section.Size))) {
-				addDiagnostic(Diagnostic{Severity: "error", Code: "relocation_offset_range", Detail: fmt.Sprintf("%s relocation at 0x%x needs %d bytes in a section of size 0x%x", rel.TypeName, rel.VirtualAddress, width, section.Size), Section: section.Name, Symbol: rel.SymbolName, Offset: off})
+			if uint64(rel.VirtualAddress) > uint64(section.MappedSize) || width > uint64(section.MappedSize)-minUint64(uint64(rel.VirtualAddress), uint64(section.MappedSize)) {
+				addDiagnostic(Diagnostic{Severity: "error", Code: "relocation_offset_range", Detail: fmt.Sprintf("%s relocation at 0x%x needs %d bytes in a mapped section of size 0x%x", rel.TypeName, rel.VirtualAddress, width, section.MappedSize), Section: section.Name, Symbol: rel.SymbolName, Offset: off})
 			}
 			key := fmt.Sprintf("%x:%d:%x", rel.VirtualAddress, symIdx, rel.Type)
 			if seenRelocations[key] {
@@ -462,9 +512,9 @@ func resolveSectionName(section Section, stringTable []byte) (string, *Diagnosti
 	if err != nil {
 		return raw, &Diagnostic{Severity: "error", Code: "section_name_encoding", Detail: fmt.Sprintf("long section name %q does not contain a decimal string-table offset", raw), Section: displaySection(section), Offset: uint64(20 + (section.Index-1)*40)}
 	}
-	name, ok := stringAt(stringTable, uint32(offset))
+	name, ok := stringAt(stringTable, uint32(offset), maxCOFFName)
 	if !ok {
-		return raw, &Diagnostic{Severity: "error", Code: "section_name_offset", Detail: fmt.Sprintf("long section name offset %d is outside the COFF string table", offset), Section: displaySection(section), Offset: uint64(20 + (section.Index-1)*40)}
+		return raw, &Diagnostic{Severity: "error", Code: "section_name_offset", Detail: fmt.Sprintf("long section name offset %d is invalid, unterminated, or exceeds the name limit", offset), Section: displaySection(section), Offset: uint64(20 + (section.Index-1)*40)}
 	}
 	return name, nil
 }
@@ -475,9 +525,9 @@ func resolveSymbolName(raw, stringTable []byte) (string, *Diagnostic) {
 	}
 	if binary.LittleEndian.Uint32(raw[:4]) == 0 {
 		offset := binary.LittleEndian.Uint32(raw[4:])
-		name, ok := stringAt(stringTable, offset)
+		name, ok := stringAt(stringTable, offset, maxCOFFName)
 		if !ok {
-			return fmt.Sprintf("<bad-string-%d>", offset), &Diagnostic{Severity: "error", Code: "symbol_name_offset", Detail: fmt.Sprintf("symbol name offset %d is outside the COFF string table", offset)}
+			return fmt.Sprintf("<bad-string-%d>", offset), &Diagnostic{Severity: "error", Code: "symbol_name_offset", Detail: fmt.Sprintf("symbol name offset %d is invalid, unterminated, or exceeds the name limit", offset)}
 		}
 		return name, nil
 	}
@@ -488,7 +538,7 @@ func resolveSymbolName(raw, stringTable []byte) (string, *Diagnostic) {
 	return name, nil
 }
 
-func stringAt(stringTable []byte, offset uint32) (string, bool) {
+func stringAt(stringTable []byte, offset uint32, limit int) (string, bool) {
 	if offset < 4 || uint64(offset) >= uint64(len(stringTable)) {
 		return "", false
 	}
@@ -497,6 +547,9 @@ func stringAt(stringTable []byte, offset uint32) (string, bool) {
 		end++
 	}
 	if end == len(stringTable) {
+		return "", false
+	}
+	if end-int(offset) > limit {
 		return "", false
 	}
 	return string(stringTable[offset:end]), true

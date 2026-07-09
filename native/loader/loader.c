@@ -1,13 +1,25 @@
+#define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <limits.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
 #include "capabilities.generated.h"
 
 #define SYM_UNDEFINED 0
+#define MAX_FILE_SIZE ((size_t)256 * 1024 * 1024)
+#define MAX_IMAGE_SIZE ((size_t)512 * 1024 * 1024)
+#define MAX_ARG_BYTES ((size_t)16 * 1024 * 1024)
+#define MAX_SECTIONS 4096u
+#define MAX_SYMBOLS (1u << 20)
+#define MAX_RELOCATIONS (1u << 20)
+#define MAX_RESOLVED_SYMBOLS 512
+#define MAX_SYMBOL_NAME 1024
+#define PAGE_SIZE 0x1000u
+#define STUB_SIZE 0x10000u
 
 #pragma pack(push, 1)
 typedef struct {
@@ -67,41 +79,64 @@ typedef struct {
     uintptr_t target;
 } resolved_symbol;
 
+typedef struct {
+    uint8_t *file_base;
+    size_t file_size;
+    coff_file_header *header;
+    coff_section_header *sections;
+    coff_symbol *symbols;
+    char *string_table;
+    size_t string_table_size;
+    size_t *section_sizes;
+    uint8_t *aux_symbols;
+    size_t section_image_size;
+    size_t image_size;
+} coff_view;
+
 static char g_output[128][4096];
 static int g_output_count = 0;
 static char g_error[128][4096];
 static int g_error_count = 0;
+static char g_error_code[64];
 static uint8_t *g_stub_cursor = NULL;
 static uint8_t *g_stub_end = NULL;
 
-static void add_line(char lines[128][4096], int *count, const char *fmt, ...) {
-    if (*count >= 128) return;
+static void add_error(const char *code, const char *fmt, ...) {
     va_list ap;
+    if (g_error_code[0] == 0 && code) {
+        snprintf(g_error_code, sizeof(g_error_code), "%s", code);
+    }
+    if (g_error_count >= 128) return;
     va_start(ap, fmt);
-    vsnprintf(lines[*count], sizeof(lines[*count]), fmt, ap);
+    vsnprintf(g_error[g_error_count], sizeof(g_error[g_error_count]), fmt, ap);
     va_end(ap);
-    (*count)++;
+    g_error_count++;
 }
 
 static void add_output(const char *fmt, ...) {
-    if (g_output_count >= 128) return;
     va_list ap;
+    if (g_output_count >= 128) return;
     va_start(ap, fmt);
     vsnprintf(g_output[g_output_count], sizeof(g_output[g_output_count]), fmt, ap);
     va_end(ap);
     g_output_count++;
 }
 
+static int parser_has(datap *parser, int amount) {
+    if (!parser || !parser->buffer || amount < 0 || parser->length < 0 || parser->offset < 0 || parser->offset > parser->length) return 0;
+    return amount <= parser->length - parser->offset;
+}
+
 void BeaconDataParse(datap *parser, char *buffer, int size) {
     if (!parser) return;
-    parser->buffer = buffer;
-    parser->length = size;
+    parser->buffer = size >= 0 ? buffer : NULL;
+    parser->length = size >= 0 ? size : 0;
     parser->offset = 0;
 }
 
 int BeaconDataInt(datap *parser) {
     int out = 0;
-    if (!parser || parser->offset + 4 > parser->length) return 0;
+    if (!parser_has(parser, 4)) return 0;
     memcpy(&out, parser->buffer + parser->offset, 4);
     parser->offset += 4;
     return out;
@@ -109,25 +144,25 @@ int BeaconDataInt(datap *parser) {
 
 short BeaconDataShort(datap *parser) {
     short out = 0;
-    if (!parser || parser->offset + 2 > parser->length) return 0;
+    if (!parser_has(parser, 2)) return 0;
     memcpy(&out, parser->buffer + parser->offset, 2);
     parser->offset += 2;
     return out;
 }
 
 int BeaconDataLength(datap *parser) {
-    if (!parser) return 0;
+    if (!parser || parser->length < 0 || parser->offset < 0 || parser->offset > parser->length) return 0;
     return parser->length - parser->offset;
 }
 
 char *BeaconDataExtract(datap *parser, int *size) {
     int len = 0;
-    char *out = NULL;
+    char *out;
     if (size) *size = 0;
-    if (!parser || parser->offset + 4 > parser->length) return NULL;
+    if (!parser_has(parser, 4)) return NULL;
     memcpy(&len, parser->buffer + parser->offset, 4);
     parser->offset += 4;
-    if (len < 0 || parser->offset + len > parser->length) return NULL;
+    if (len < 0 || !parser_has(parser, len)) return NULL;
     out = parser->buffer + parser->offset;
     parser->offset += len;
     if (size) *size = len;
@@ -135,120 +170,360 @@ char *BeaconDataExtract(datap *parser, int *size) {
 }
 
 void BeaconOutput(int type, char *data, int len) {
+    char tmp[4096];
+    int n;
     (void)type;
     if (!data || len <= 0) {
         add_output("");
         return;
     }
-    char tmp[4096];
-    int n = len < (int)sizeof(tmp) - 1 ? len : (int)sizeof(tmp) - 1;
-    memcpy(tmp, data, n);
+    n = len < (int)sizeof(tmp) - 1 ? len : (int)sizeof(tmp) - 1;
+    memcpy(tmp, data, (size_t)n);
     tmp[n] = 0;
     add_output("%s", tmp);
 }
 
 void BeaconPrintf(int type, const char *fmt, ...) {
-    (void)type;
-    if (!fmt) return;
     char tmp[4096];
     va_list ap;
+    (void)type;
+    if (!fmt) return;
     va_start(ap, fmt);
     vsnprintf(tmp, sizeof(tmp), fmt, ap);
     va_end(ap);
     add_output("%s", tmp);
 }
 
-static void *read_file(const char *path, size_t *out_size) {
-    FILE *f = fopen(path, "rb");
-    void *buf;
-    long size;
-    if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (size <= 0) {
-        fclose(f);
-        return NULL;
-    }
-    buf = calloc(1, (size_t)size);
-    if (!buf) {
-        fclose(f);
-        return NULL;
-    }
-    if (fread(buf, 1, (size_t)size, f) != (size_t)size) {
-        free(buf);
-        fclose(f);
-        return NULL;
-    }
-    fclose(f);
-    *out_size = (size_t)size;
-    return buf;
+static int range_within(size_t total, uint64_t offset, uint64_t length) {
+    uint64_t total64 = (uint64_t)total;
+    return offset <= total64 && length <= total64 - offset;
 }
 
-static int hexval(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+static int align_page(size_t value, size_t *out) {
+    if (value > SIZE_MAX - (PAGE_SIZE - 1)) return 0;
+    *out = (value + (PAGE_SIZE - 1)) & ~((size_t)PAGE_SIZE - 1);
+    return 1;
+}
+
+static void *read_file(const char *path, size_t *out_size) {
+    FILE *file;
+    void *buffer;
+    long length;
+    *out_size = 0;
+    file = fopen(path, "rb");
+    if (!file) {
+        add_error("file_open", "could not open COFF object: %s", path);
+        return NULL;
+    }
+    if (fseek(file, 0, SEEK_END) != 0 || (length = ftell(file)) < 0 || fseek(file, 0, SEEK_SET) != 0) {
+        add_error("file_size", "could not determine COFF object size");
+        fclose(file);
+        return NULL;
+    }
+    if (length == 0) {
+        add_error("file_empty", "COFF object is empty");
+        fclose(file);
+        return NULL;
+    }
+    if ((uint64_t)length > (uint64_t)MAX_FILE_SIZE) {
+        add_error("file_size_limit", "COFF object exceeds the %u MiB loader limit", (unsigned)(MAX_FILE_SIZE / 1024 / 1024));
+        fclose(file);
+        return NULL;
+    }
+    buffer = calloc(1, (size_t)length);
+    if (!buffer) {
+        add_error("oom", "could not allocate memory for COFF object");
+        fclose(file);
+        return NULL;
+    }
+    if (fread(buffer, 1, (size_t)length, file) != (size_t)length) {
+        add_error("file_read", "could not read complete COFF object");
+        free(buffer);
+        fclose(file);
+        return NULL;
+    }
+    fclose(file);
+    *out_size = (size_t)length;
+    return buffer;
+}
+
+static int hex_value(char value) {
+    if (value >= '0' && value <= '9') return value - '0';
+    if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+    if (value >= 'A' && value <= 'F') return value - 'A' + 10;
     return -1;
 }
 
 static unsigned char *decode_hex(const char *hex, int *out_len) {
-    size_t len = hex ? strlen(hex) : 0;
+    size_t length = hex ? strlen(hex) : 0;
     unsigned char *out;
-    size_t i;
-    if (len % 2 != 0) return NULL;
-    out = (unsigned char *)calloc(1, len / 2 + 1);
-    if (!out) return NULL;
-    for (i = 0; i < len; i += 2) {
-        int hi = hexval(hex[i]);
-        int lo = hexval(hex[i + 1]);
-        if (hi < 0 || lo < 0) {
+    size_t index;
+    *out_len = 0;
+    if (length > MAX_ARG_BYTES * 2 || length / 2 > (size_t)INT_MAX) {
+        add_error("arg_size_limit", "packed argument data exceeds the %u MiB loader limit", (unsigned)(MAX_ARG_BYTES / 1024 / 1024));
+        return NULL;
+    }
+    if (length % 2 != 0) {
+        add_error("arg_hex_length", "packed argument hex has odd length");
+        return NULL;
+    }
+    out = (unsigned char *)calloc(1, length / 2 + 1);
+    if (!out) {
+        add_error("oom", "could not allocate packed argument buffer");
+        return NULL;
+    }
+    for (index = 0; index < length; index += 2) {
+        int high = hex_value(hex[index]);
+        int low = hex_value(hex[index + 1]);
+        if (high < 0 || low < 0) {
+            add_error("arg_hex_character", "packed argument hex contains a non-hex character at byte %u", (unsigned)index);
             free(out);
             return NULL;
         }
-        out[i / 2] = (unsigned char)((hi << 4) | lo);
+        out[index / 2] = (unsigned char)((high << 4) | low);
     }
-    *out_len = (int)(len / 2);
+    *out_len = (int)(length / 2);
     return out;
 }
 
-static char *symbol_name(coff_symbol *sym, char *string_table, size_t string_table_size, char *buf, size_t buflen) {
-    if (sym->name.long_name.zeroes == 0) {
-        uint32_t off = sym->name.long_name.offset;
-        if (off < string_table_size) return string_table + off;
-        snprintf(buf, buflen, "<bad-string-%u>", off);
-        return buf;
+static int copy_symbol_name(const coff_symbol *symbol, const char *string_table, size_t string_table_size, char *buffer, size_t buffer_size) {
+    size_t length;
+    const char *start;
+    const char *end;
+    if (!symbol || !buffer || buffer_size == 0) return 0;
+    buffer[0] = 0;
+    if (symbol->name.long_name.zeroes == 0) {
+        uint32_t offset = symbol->name.long_name.offset;
+        if (!string_table || offset < 4 || offset >= string_table_size) {
+            add_error("symbol_name_offset", "symbol string-table offset %u is outside object bounds", offset);
+            return 0;
+        }
+        start = string_table + offset;
+        end = (const char *)memchr(start, 0, string_table_size - offset);
+        if (!end) {
+            add_error("symbol_name_termination", "symbol name at string-table offset %u is not NUL-terminated", offset);
+            return 0;
+        }
+        length = (size_t)(end - start);
+    } else {
+        start = (const char *)symbol->name.short_name;
+        end = (const char *)memchr(start, 0, 8);
+        length = end ? (size_t)(end - start) : 8;
     }
-    memcpy(buf, sym->name.short_name, 8);
-    buf[8] = 0;
-    return buf;
+    if (length >= buffer_size || length > MAX_SYMBOL_NAME) {
+        add_error("symbol_name_limit", "symbol name exceeds the %u-byte loader limit", (unsigned)MAX_SYMBOL_NAME);
+        return 0;
+    }
+    memcpy(buffer, start, length);
+    buffer[length] = 0;
+    return 1;
 }
 
-static char *relocation_symbol_name(
-    coff_relocation *rel,
-    coff_symbol *symbols,
-    uint32_t symbol_count,
-    char *string_table,
-    size_t string_table_size,
-    char *buf,
-    size_t buflen
-) {
-    if (rel->symbol_table_index >= symbol_count) {
-        snprintf(buf, buflen, "<bad-symbol-index-%u>", rel->symbol_table_index);
-        return buf;
+static size_t relocation_width(uint16_t type) {
+    if (type == REL_AMD64_ABSOLUTE) return 0;
+    if (type == REL_AMD64_ADDR64) return 8;
+    return 4;
+}
+
+static int validate_coff(uint8_t *file_base, size_t file_size, coff_view *view) {
+    coff_file_header *header;
+    uint64_t section_table_size;
+    uint64_t section_table_end;
+    uint64_t total_relocations = 0;
+    uint32_t section_index;
+    memset(view, 0, sizeof(*view));
+    view->file_base = file_base;
+    view->file_size = file_size;
+    if (!range_within(file_size, 0, sizeof(coff_file_header))) {
+        add_error("header_range", "file is too small for a COFF header");
+        return 0;
     }
-    return symbol_name(&symbols[rel->symbol_table_index], string_table, string_table_size, buf, buflen);
+    header = (coff_file_header *)file_base;
+    view->header = header;
+    if (header->number_of_sections == 0) {
+        add_error("section_table_empty", "COFF object declares no sections");
+        return 0;
+    }
+    if (header->number_of_sections > MAX_SECTIONS) {
+        add_error("section_count_limit", "COFF object declares %u sections; loader limit is %u", header->number_of_sections, MAX_SECTIONS);
+        return 0;
+    }
+    section_table_size = (uint64_t)header->number_of_sections * sizeof(coff_section_header);
+    section_table_end = sizeof(coff_file_header) + section_table_size;
+    if (!range_within(file_size, sizeof(coff_file_header), section_table_size)) {
+        add_error("section_table_range", "section table extends beyond object bounds");
+        return 0;
+    }
+    view->sections = (coff_section_header *)(file_base + sizeof(coff_file_header));
+    view->section_sizes = (size_t *)calloc(header->number_of_sections, sizeof(size_t));
+    if (!view->section_sizes) {
+        add_error("oom", "could not allocate section-size table");
+        return 0;
+    }
+    for (section_index = 0; section_index < header->number_of_sections; section_index++) {
+        coff_section_header *section = &view->sections[section_index];
+        size_t mapped_size = section->size_of_raw_data;
+        size_t allocation_size;
+        size_t aligned_size;
+        uint64_t relocation_bytes;
+        if (section->virtual_size > mapped_size) mapped_size = section->virtual_size;
+        view->section_sizes[section_index] = mapped_size;
+        if (!(section->characteristics & SECTION_CNT_UNINITIALIZED_DATA)) {
+            if (section->size_of_raw_data > 0) {
+                if (section->pointer_to_raw_data == 0) {
+                    add_error("section_data_pointer", "section %u declares data with a zero file pointer", section_index + 1);
+                    return 0;
+                }
+                if (!range_within(file_size, section->pointer_to_raw_data, section->size_of_raw_data)) {
+                    add_error("section_data_range", "section %u raw data extends beyond object bounds", section_index + 1);
+                    return 0;
+                }
+                if ((uint64_t)section->pointer_to_raw_data < section_table_end) {
+                    add_error("section_data_overlap_headers", "section %u raw data overlaps COFF headers", section_index + 1);
+                    return 0;
+                }
+            } else if (section->virtual_size > 0) {
+                add_error("section_data_missing", "initialized section %u declares virtual bytes without raw data", section_index + 1);
+                return 0;
+            }
+        }
+        allocation_size = mapped_size ? mapped_size : 1;
+        if (!align_page(allocation_size, &aligned_size) || aligned_size > MAX_IMAGE_SIZE - view->section_image_size) {
+            add_error("image_size_limit", "mapped section image exceeds the %u MiB loader limit", (unsigned)(MAX_IMAGE_SIZE / 1024 / 1024));
+            return 0;
+        }
+        view->section_image_size += aligned_size;
+        if (section->number_of_relocations == 0) continue;
+        relocation_bytes = (uint64_t)section->number_of_relocations * sizeof(coff_relocation);
+        total_relocations += section->number_of_relocations;
+        if (total_relocations > MAX_RELOCATIONS) {
+            add_error("relocation_count_limit", "COFF object exceeds the %u-relocation loader limit", MAX_RELOCATIONS);
+            return 0;
+        }
+        if (section->pointer_to_relocations == 0) {
+            add_error("relocation_table_pointer", "section %u declares relocations with a zero table pointer", section_index + 1);
+            return 0;
+        }
+        if (!range_within(file_size, section->pointer_to_relocations, relocation_bytes)) {
+            add_error("relocation_table_range", "relocation table for section %u extends beyond object bounds", section_index + 1);
+            return 0;
+        }
+        if ((uint64_t)section->pointer_to_relocations < section_table_end) {
+            add_error("relocation_table_overlap_headers", "relocation table for section %u overlaps COFF headers", section_index + 1);
+            return 0;
+        }
+    }
+    if (view->section_image_size > MAX_IMAGE_SIZE - STUB_SIZE) {
+        add_error("image_size_limit", "mapped image and external stubs exceed the %u MiB loader limit", (unsigned)(MAX_IMAGE_SIZE / 1024 / 1024));
+        return 0;
+    }
+    view->image_size = view->section_image_size + STUB_SIZE;
+
+    if (header->number_of_symbols > MAX_SYMBOLS) {
+        add_error("symbol_count_limit", "COFF object declares %u symbols; loader limit is %u", header->number_of_symbols, MAX_SYMBOLS);
+        return 0;
+    }
+    if (header->number_of_symbols > 0) {
+        uint64_t symbol_bytes = (uint64_t)header->number_of_symbols * sizeof(coff_symbol);
+        uint64_t string_start;
+        uint32_t string_size = 0;
+        uint32_t symbol_index;
+        if (header->pointer_to_symbol_table == 0) {
+            add_error("symbol_table_pointer", "COFF object declares symbols with a zero table pointer");
+            return 0;
+        }
+        if (!range_within(file_size, header->pointer_to_symbol_table, symbol_bytes)) {
+            add_error("symbol_table_range", "symbol table extends beyond object bounds");
+            return 0;
+        }
+        if ((uint64_t)header->pointer_to_symbol_table < section_table_end) {
+            add_error("symbol_table_overlap_headers", "symbol table overlaps COFF headers");
+            return 0;
+        }
+        view->symbols = (coff_symbol *)(file_base + header->pointer_to_symbol_table);
+        string_start = (uint64_t)header->pointer_to_symbol_table + symbol_bytes;
+        if (range_within(file_size, string_start, 4)) {
+            memcpy(&string_size, file_base + (size_t)string_start, sizeof(string_size));
+            if (string_size < 4) {
+                add_error("string_table_length", "COFF string-table length %u is smaller than 4", string_size);
+                return 0;
+            }
+            if (!range_within(file_size, string_start, string_size)) {
+                add_error("string_table_range", "COFF string table extends beyond object bounds");
+                return 0;
+            }
+            view->string_table = (char *)(file_base + (size_t)string_start);
+            view->string_table_size = string_size;
+        }
+        view->aux_symbols = (uint8_t *)calloc(header->number_of_symbols, 1);
+        if (!view->aux_symbols) {
+            add_error("oom", "could not allocate auxiliary-symbol map");
+            return 0;
+        }
+        for (symbol_index = 0; symbol_index < header->number_of_symbols;) {
+            coff_symbol *symbol = &view->symbols[symbol_index];
+            uint32_t aux_count = symbol->number_of_aux_symbols;
+            uint64_t next = (uint64_t)symbol_index + 1 + aux_count;
+            uint32_t aux_index;
+            char name[MAX_SYMBOL_NAME + 1];
+            if (!copy_symbol_name(symbol, view->string_table, view->string_table_size, name, sizeof(name))) return 0;
+            if (next > header->number_of_symbols) {
+                add_error("aux_symbol_range", "symbol %u declares %u auxiliary records beyond the symbol table", symbol_index, aux_count);
+                return 0;
+            }
+            for (aux_index = 1; aux_index <= aux_count; aux_index++) view->aux_symbols[symbol_index + aux_index] = 1;
+            if (symbol->section_number > (int16_t)header->number_of_sections || symbol->section_number < -2) {
+                add_error("symbol_section_range", "symbol %u refers to invalid section %d", symbol_index, symbol->section_number);
+                return 0;
+            }
+            if (symbol->section_number > 0 && symbol->value > view->section_sizes[symbol->section_number - 1]) {
+                add_error("symbol_value_range", "symbol %u value 0x%x exceeds section %d size", symbol_index, symbol->value, symbol->section_number);
+                return 0;
+            }
+            symbol_index = (uint32_t)next;
+        }
+    }
+
+    for (section_index = 0; section_index < header->number_of_sections; section_index++) {
+        coff_section_header *section = &view->sections[section_index];
+        coff_relocation *relocations;
+        uint32_t relocation_index;
+        if (section->number_of_relocations == 0) continue;
+        relocations = (coff_relocation *)(file_base + section->pointer_to_relocations);
+        for (relocation_index = 0; relocation_index < section->number_of_relocations; relocation_index++) {
+            coff_relocation *relocation = &relocations[relocation_index];
+            size_t width;
+            if (relocation->symbol_table_index >= header->number_of_symbols) {
+                add_error("relocation_symbol_range", "relocation %u in section %u refers to symbol %u outside the table", relocation_index, section_index + 1, relocation->symbol_table_index);
+                return 0;
+            }
+            if (view->aux_symbols && view->aux_symbols[relocation->symbol_table_index]) {
+                add_error("relocation_aux_symbol", "relocation %u in section %u refers to an auxiliary symbol", relocation_index, section_index + 1);
+                return 0;
+            }
+            if (!bofbench_relocation_is_supported(relocation->type)) {
+                add_error("unsupported_relocation", "unsupported AMD64 relocation %s/0x%04x in section %u", bofbench_relocation_type_name(relocation->type), relocation->type, section_index + 1);
+                return 0;
+            }
+            width = relocation_width(relocation->type);
+            if ((size_t)relocation->virtual_address > view->section_sizes[section_index] || width > view->section_sizes[section_index] - (size_t)relocation->virtual_address) {
+                add_error("relocation_offset_range", "%s relocation at 0x%x needs %u bytes in section %u of size 0x%llx", bofbench_relocation_type_name(relocation->type), relocation->virtual_address, (unsigned)width, section_index + 1, (unsigned long long)view->section_sizes[section_index]);
+                return 0;
+            }
+        }
+    }
+    return 1;
 }
 
 static HMODULE load_symbol_library(const char *library) {
-    char dll[320];
-    snprintf(dll, sizeof(dll), "%s.dll", library);
+    char dll[MAX_SYMBOL_NAME + 8];
+    if (snprintf(dll, sizeof(dll), "%s.dll", library) < 0) return NULL;
     return LoadLibraryA(dll);
 }
 
 static uintptr_t alloc_near_data_ptr(uintptr_t target) {
     uint8_t *slot;
-    if (!g_stub_cursor || g_stub_cursor + 16 > g_stub_end) return 0;
+    if (!g_stub_cursor || !g_stub_end || g_stub_cursor > g_stub_end || (size_t)(g_stub_end - g_stub_cursor) < 16) return 0;
     slot = g_stub_cursor;
     memset(slot, 0, 16);
     memcpy(slot, &target, sizeof(target));
@@ -258,7 +533,7 @@ static uintptr_t alloc_near_data_ptr(uintptr_t target) {
 
 static uintptr_t alloc_near_jump_stub(uintptr_t target) {
     uint8_t *stub;
-    if (!g_stub_cursor || g_stub_cursor + 16 > g_stub_end) return 0;
+    if (!g_stub_cursor || !g_stub_end || g_stub_cursor > g_stub_end || (size_t)(g_stub_end - g_stub_cursor) < 16) return 0;
     stub = g_stub_cursor;
     memset(stub, 0x90, 16);
     stub[0] = 0x48;
@@ -272,50 +547,61 @@ static uintptr_t alloc_near_jump_stub(uintptr_t target) {
 
 static uintptr_t cache_external_value(const char *name, uintptr_t target, resolved_symbol *resolved, int *resolved_count) {
     uintptr_t value;
+    char *copy;
     if (!target) return 0;
-    value = bofbench_is_import_pointer_symbol(name) ? alloc_near_data_ptr(target) : alloc_near_jump_stub(target);
-    if (!value) {
-        add_line(g_error, &g_error_count, "external stub area exhausted while resolving %s", name);
+    if (*resolved_count >= MAX_RESOLVED_SYMBOLS) {
+        add_error("resolved_symbol_limit", "external symbol cache exceeds %u entries", MAX_RESOLVED_SYMBOLS);
         return 0;
     }
-    if (*resolved_count < 512) {
-        resolved[*resolved_count].name = _strdup(name);
-        resolved[*resolved_count].target = target;
-        resolved[*resolved_count].value = value;
-        (*resolved_count)++;
+    value = bofbench_is_import_pointer_symbol(name) ? alloc_near_data_ptr(target) : alloc_near_jump_stub(target);
+    if (!value) {
+        add_error("external_stub_limit", "external stub area exhausted while resolving %s", name);
+        return 0;
     }
+    copy = _strdup(name);
+    if (!copy) {
+        add_error("oom", "could not retain resolved symbol name");
+        return 0;
+    }
+    resolved[*resolved_count].name = copy;
+    resolved[*resolved_count].target = target;
+    resolved[*resolved_count].value = value;
+    (*resolved_count)++;
     return value;
 }
 
 static uintptr_t resolve_winapi_target(const char *name) {
-    char tmp[256];
-    char *func;
-    size_t i;
-    snprintf(tmp, sizeof(tmp), "%s", name);
-    func = (char *)bofbench_normalize_import(tmp);
-    char *dollar = strchr(func, '$');
+    char copy[MAX_SYMBOL_NAME + 1];
+    char *function;
+    char *dollar;
+    size_t index;
+    if (strlen(name) > MAX_SYMBOL_NAME) return 0;
+    snprintf(copy, sizeof(copy), "%s", name);
+    function = (char *)bofbench_normalize_import(copy);
+    dollar = strchr(function, '$');
     if (dollar) {
+        HMODULE module;
         *dollar = 0;
-        HMODULE mod = load_symbol_library(func);
-        if (!mod) return 0;
-        return (uintptr_t)GetProcAddress(mod, dollar + 1);
+        module = load_symbol_library(function);
+        if (!module) return 0;
+        return (uintptr_t)GetProcAddress(module, dollar + 1);
     }
-    for (i = 0; i < sizeof(bofbench_fallback_libraries) / sizeof(bofbench_fallback_libraries[0]); i++) {
-        HMODULE mod = load_symbol_library(bofbench_fallback_libraries[i]);
-        FARPROC p;
-        if (!mod) continue;
-        p = GetProcAddress(mod, func);
-        if (p) return (uintptr_t)p;
+    for (index = 0; index < sizeof(bofbench_fallback_libraries) / sizeof(bofbench_fallback_libraries[0]); index++) {
+        HMODULE module = load_symbol_library(bofbench_fallback_libraries[index]);
+        FARPROC procedure;
+        if (!module) continue;
+        procedure = GetProcAddress(module, function);
+        if (procedure) return (uintptr_t)procedure;
     }
     return 0;
 }
 
 static uintptr_t resolve_external(const char *name, resolved_symbol *resolved, int *resolved_count) {
-    int i;
+    int index;
     uintptr_t target = 0;
     const char *normalized = bofbench_normalize_import(name);
-    for (i = 0; i < *resolved_count; i++) {
-        if (strcmp(resolved[i].name, name) == 0) return resolved[i].value;
+    for (index = 0; index < *resolved_count; index++) {
+        if (strcmp(resolved[index].name, name) == 0) return resolved[index].value;
     }
 #define TRY_BEACON_API(api) if (!target && strcmp(normalized, #api) == 0) target = (uintptr_t)api;
     BOFBENCH_BEACON_API_LIST(TRY_BEACON_API)
@@ -324,125 +610,119 @@ static uintptr_t resolve_external(const char *name, resolved_symbol *resolved, i
     return cache_external_value(name, target, resolved, resolved_count);
 }
 
-static uintptr_t symbol_address(
-    uint32_t index,
-    coff_symbol *symbols,
-    uint32_t symbol_count,
-    char *string_table,
-    size_t string_table_size,
-    uint8_t **section_bases,
-    int section_count,
-    resolved_symbol *resolved,
-    int *resolved_count
-) {
-    char name_buf[64];
-    char *name;
-    coff_symbol *sym;
-    if (index >= symbol_count) return 0;
-    sym = &symbols[index];
-    name = symbol_name(sym, string_table, string_table_size, name_buf, sizeof(name_buf));
-    if (sym->section_number > 0 && sym->section_number <= section_count) {
-        return (uintptr_t)(section_bases[sym->section_number - 1] + sym->value);
+static uintptr_t symbol_address(const coff_view *view, uint32_t index, uint8_t **section_bases, resolved_symbol *resolved, int *resolved_count) {
+    char name[MAX_SYMBOL_NAME + 1];
+    coff_symbol *symbol;
+    if (index >= view->header->number_of_symbols || (view->aux_symbols && view->aux_symbols[index])) return 0;
+    symbol = &view->symbols[index];
+    if (!copy_symbol_name(symbol, view->string_table, view->string_table_size, name, sizeof(name))) return 0;
+    if (symbol->section_number > 0 && symbol->section_number <= (int16_t)view->header->number_of_sections) {
+        if (symbol->value > view->section_sizes[symbol->section_number - 1]) return 0;
+        return (uintptr_t)(section_bases[symbol->section_number - 1] + symbol->value);
     }
-    if (sym->section_number == SYM_UNDEFINED) {
-        return resolve_external(name, resolved, resolved_count);
-    }
+    if (symbol->section_number == SYM_UNDEFINED) return resolve_external(name, resolved, resolved_count);
     return 0;
 }
 
-static int apply_relocations(
-    uint8_t *image_base,
-    coff_section_header *sections,
-    int section_count,
-    coff_symbol *symbols,
-    uint32_t symbol_count,
-    char *string_table,
-    size_t string_table_size,
-    uint8_t **section_bases,
-    uint8_t *file_base,
-    size_t file_size,
-    resolved_symbol *resolved,
-    int *resolved_count
-) {
-    int si, ri;
-    for (si = 0; si < section_count; si++) {
-        coff_section_header *sec = &sections[si];
-        coff_relocation *rels = (coff_relocation *)(file_base + sec->pointer_to_relocations);
-        size_t reloc_bytes = (size_t)sec->number_of_relocations * sizeof(coff_relocation);
-        if (sec->number_of_relocations && ((size_t)sec->pointer_to_relocations > file_size || (size_t)sec->pointer_to_relocations + reloc_bytes > file_size)) {
-            add_line(g_error, &g_error_count, "relocation table for section %.*s is outside object bounds", 8, sec->name);
+static int apply_relocations(const coff_view *view, uint8_t *image_base, uint8_t **section_bases, resolved_symbol *resolved, int *resolved_count) {
+    uint32_t section_index;
+    for (section_index = 0; section_index < view->header->number_of_sections; section_index++) {
+        coff_section_header *section = &view->sections[section_index];
+        coff_relocation *relocations;
+        uint32_t relocation_index;
+        uint64_t relocation_bytes = (uint64_t)section->number_of_relocations * sizeof(coff_relocation);
+        if (section->number_of_relocations == 0) continue;
+        if (!range_within(view->file_size, section->pointer_to_relocations, relocation_bytes)) {
+            add_error("relocation_table_range", "relocation table for section %u is outside object bounds", section_index + 1);
             return 0;
         }
-        for (ri = 0; ri < sec->number_of_relocations; ri++) {
-            char sym_name_buf[128];
-            coff_relocation *rel = &rels[ri];
-            char *sym_name = relocation_symbol_name(rel, symbols, symbol_count, string_table, string_table_size, sym_name_buf, sizeof(sym_name_buf));
-            uint8_t *where = section_bases[si] + rel->virtual_address;
-            if (!bofbench_relocation_is_supported(rel->type)) {
-                add_line(
-                    g_error,
-                    &g_error_count,
-                    "unsupported AMD64 relocation %s/0x%04x for symbol %s in section %.*s+0x%x",
-                    bofbench_relocation_type_name(rel->type),
-                    rel->type,
-                    sym_name,
-                    8,
-                    sec->name,
-                    rel->virtual_address
-                );
+        relocations = (coff_relocation *)(view->file_base + section->pointer_to_relocations);
+        for (relocation_index = 0; relocation_index < section->number_of_relocations; relocation_index++) {
+            char symbol_name[MAX_SYMBOL_NAME + 1];
+            coff_relocation *relocation = &relocations[relocation_index];
+            size_t width = relocation_width(relocation->type);
+            uint8_t *where;
+            uintptr_t target = 0;
+            if ((size_t)relocation->virtual_address > view->section_sizes[section_index] || width > view->section_sizes[section_index] - (size_t)relocation->virtual_address) {
+                add_error("relocation_offset_range", "relocation %u in section %u writes outside the mapped section", relocation_index, section_index + 1);
                 return 0;
             }
-            uintptr_t target = symbol_address(rel->symbol_table_index, symbols, symbol_count, string_table, string_table_size, section_bases, section_count, resolved, resolved_count);
-            if (!target && rel->type != REL_AMD64_ABSOLUTE) {
-                add_line(
-                    g_error,
-                    &g_error_count,
-                    "unresolved symbol %s (index %u, relocation %s/0x%04x, section %.*s+0x%x)",
-                    sym_name,
-                    rel->symbol_table_index,
-                    bofbench_relocation_type_name(rel->type),
-                    rel->type,
-                    8,
-                    sec->name,
-                    rel->virtual_address
-                );
-                return 0;
+            if (!copy_symbol_name(&view->symbols[relocation->symbol_table_index], view->string_table, view->string_table_size, symbol_name, sizeof(symbol_name))) return 0;
+            where = section_bases[section_index] + relocation->virtual_address;
+            if (relocation->type != REL_AMD64_ABSOLUTE) {
+                target = symbol_address(view, relocation->symbol_table_index, section_bases, resolved, resolved_count);
+                if (!target) {
+                    add_error("unresolved_symbol", "unresolved symbol %s (index %u, relocation %s/0x%04x, section %.*s+0x%x)", symbol_name, relocation->symbol_table_index, bofbench_relocation_type_name(relocation->type), relocation->type, 8, section->name, relocation->virtual_address);
+                    return 0;
+                }
             }
-            switch (rel->type) {
+            switch (relocation->type) {
             case REL_AMD64_ABSOLUTE:
                 break;
-            case REL_AMD64_ADDR64:
-                *(uint64_t *)where = (uint64_t)(target + *(uint64_t *)where);
+            case REL_AMD64_ADDR64: {
+                uint64_t addend;
+                uint64_t value;
+                memcpy(&addend, where, sizeof(addend));
+                if (addend > UINT64_MAX - (uint64_t)target) {
+                    add_error("relocation_overflow", "ADDR64 relocation overflows for symbol %s", symbol_name);
+                    return 0;
+                }
+                value = (uint64_t)target + addend;
+                memcpy(where, &value, sizeof(value));
                 break;
-            case REL_AMD64_ADDR32:
-                *(uint32_t *)where = (uint32_t)(target + *(uint32_t *)where);
+            }
+            case REL_AMD64_ADDR32: {
+                uint32_t addend;
+                uint64_t value;
+                memcpy(&addend, where, sizeof(addend));
+                value = (uint64_t)target + addend;
+                if (value > UINT32_MAX) {
+                    add_error("relocation_overflow", "ADDR32 relocation overflows for symbol %s", symbol_name);
+                    return 0;
+                }
+                addend = (uint32_t)value;
+                memcpy(where, &addend, sizeof(addend));
                 break;
-            case REL_AMD64_ADDR32NB:
-                *(uint32_t *)where = (uint32_t)(target - (uintptr_t)image_base + *(uint32_t *)where);
+            }
+            case REL_AMD64_ADDR32NB: {
+                uint32_t addend;
+                uint64_t value;
+                if (target < (uintptr_t)image_base) {
+                    add_error("relocation_overflow", "ADDR32NB target precedes image for symbol %s", symbol_name);
+                    return 0;
+                }
+                memcpy(&addend, where, sizeof(addend));
+                value = (uint64_t)(target - (uintptr_t)image_base) + addend;
+                if (value > UINT32_MAX) {
+                    add_error("relocation_overflow", "ADDR32NB relocation overflows for symbol %s", symbol_name);
+                    return 0;
+                }
+                addend = (uint32_t)value;
+                memcpy(where, &addend, sizeof(addend));
                 break;
+            }
             case REL_AMD64_REL32:
             case REL_AMD64_REL32_1:
             case REL_AMD64_REL32_2:
             case REL_AMD64_REL32_3:
             case REL_AMD64_REL32_4:
             case REL_AMD64_REL32_5: {
-                int adjust = 4 + (rel->type - REL_AMD64_REL32);
-                int64_t disp = (int64_t)target + *(int32_t *)where - ((int64_t)(uintptr_t)where + adjust);
-                *(int32_t *)where = (int32_t)disp;
+                int32_t addend;
+                int32_t encoded;
+                int adjust = 4 + (relocation->type - REL_AMD64_REL32);
+                int64_t displacement;
+                memcpy(&addend, where, sizeof(addend));
+                displacement = (int64_t)target + addend - ((int64_t)(uintptr_t)where + adjust);
+                if (displacement < INT32_MIN || displacement > INT32_MAX) {
+                    add_error("relocation_overflow", "%s displacement overflows for symbol %s", bofbench_relocation_type_name(relocation->type), symbol_name);
+                    return 0;
+                }
+                encoded = (int32_t)displacement;
+                memcpy(where, &encoded, sizeof(encoded));
                 break;
             }
             default:
-                add_line(
-                    g_error,
-                    &g_error_count,
-                    "unsupported AMD64 relocation %s/0x%04x for symbol %s in section %.*s+0x%x",
-                    bofbench_relocation_type_name(rel->type),
-                    rel->type,
-                    sym_name,
-                    8,
-                    sec->name,
-                    rel->virtual_address
-                );
+                add_error("unsupported_relocation", "unsupported AMD64 relocation %s/0x%04x for symbol %s", bofbench_relocation_type_name(relocation->type), relocation->type, symbol_name);
                 return 0;
             }
         }
@@ -450,149 +730,174 @@ static int apply_relocations(
     return 1;
 }
 
-static void json_escape(const char *s) {
-    for (; s && *s; s++) {
-        switch (*s) {
+static void json_escape(const char *value) {
+    for (; value && *value; value++) {
+        switch (*value) {
         case '\\': printf("\\\\"); break;
         case '"': printf("\\\""); break;
         case '\n': printf("\\n"); break;
         case '\r': printf("\\r"); break;
         case '\t': printf("\\t"); break;
         default:
-            if ((unsigned char)*s < 0x20) printf("\\u%04x", (unsigned char)*s);
-            else putchar(*s);
+            if ((unsigned char)*value < 0x20) printf("\\u%04x", (unsigned char)*value);
+            else putchar(*value);
         }
     }
 }
 
 static void print_json(const char *object, const char *entry, const char *status, const char *exit_state) {
-    int i;
+    int index;
     printf("{\"object\":\""); json_escape(object); printf("\",");
     printf("\"entry\":\""); json_escape(entry); printf("\",");
     printf("\"status\":\"%s\",\"exit_state\":\"%s\",", status, exit_state);
+    printf("\"error_code\":\""); json_escape(g_error_code); printf("\",");
     printf("\"output\":[");
-    for (i = 0; i < g_output_count; i++) {
-        if (i) printf(",");
-        printf("\""); json_escape(g_output[i]); printf("\"");
+    for (index = 0; index < g_output_count; index++) {
+        if (index) printf(",");
+        printf("\""); json_escape(g_output[index]); printf("\"");
     }
     printf("],\"errors\":[");
-    for (i = 0; i < g_error_count; i++) {
-        if (i) printf(",");
-        printf("\""); json_escape(g_error[i]); printf("\"");
+    for (index = 0; index < g_error_count; index++) {
+        if (index) printf(",");
+        printf("\""); json_escape(g_error[index]); printf("\"");
     }
     printf("]}\n");
+    fflush(stdout);
 }
 
-static const char *arg_value(int argc, char **argv, const char *name) {
-    int i;
-    for (i = 1; i + 1 < argc; i++) {
-        if (strcmp(argv[i], name) == 0) return argv[i + 1];
+static const char *argument_value(int argc, char **argv, const char *name) {
+    int index;
+    for (index = 1; index + 1 < argc; index++) {
+        if (strcmp(argv[index], name) == 0) return argv[index + 1];
     }
     return NULL;
 }
 
 int main(int argc, char **argv) {
-    const char *object = arg_value(argc, argv, "--object");
-    const char *entry = arg_value(argc, argv, "--entry");
-    const char *arg_hex = arg_value(argc, argv, "--arg-hex");
+    const char *object = argument_value(argc, argv, "--object");
+    const char *entry = argument_value(argc, argv, "--entry");
+    const char *arg_hex = argument_value(argc, argv, "--arg-hex");
     size_t file_size = 0;
-    uint8_t *file_base = NULL;
-    coff_file_header *hdr;
-    coff_section_header *sections;
-    coff_symbol *symbols;
-    char *string_table;
-    size_t string_table_size = 0;
-    uint8_t *image = NULL;
-    uint8_t **section_bases = NULL;
-    size_t image_size = 0;
-    size_t section_image_size = 0;
-    size_t stub_size = 0x10000;
-    resolved_symbol resolved[512] = {0};
+    uint8_t *file_base;
+    coff_view view;
+    uint8_t *image;
+    uint8_t **section_bases;
+    uint8_t *cursor;
+    resolved_symbol resolved[MAX_RESOLVED_SYMBOLS] = {0};
     int resolved_count = 0;
-    unsigned char *args = NULL;
+    unsigned char *args;
     int args_len = 0;
-    int si;
+    uintptr_t entry_address = 0;
+    uint32_t entry_matches = 0;
+    uint32_t section_index;
+    uint32_t symbol_index;
 
     if (!object) object = "";
     if (!entry) entry = "go";
     if (!arg_hex) arg_hex = "";
-    file_base = (uint8_t *)read_file(object, &file_size);
-    if (!file_base || file_size < sizeof(coff_file_header)) {
-        add_line(g_error, &g_error_count, "could not read COFF object");
-        print_json(object, entry, "fail", "read_error");
-        return 1;
-    }
-    hdr = (coff_file_header *)file_base;
-    if (hdr->machine != MACHINE_AMD64) {
-        add_line(g_error, &g_error_count, "unsupported machine 0x%04x; expected AMD64", hdr->machine);
-        print_json(object, entry, "fail", "bad_arch");
-        return 1;
-    }
-    if (hdr->size_of_optional_header != 0) {
-        add_line(g_error, &g_error_count, "not a COFF object: optional header size is %u", hdr->size_of_optional_header);
-        print_json(object, entry, "fail", "bad_object");
-        return 1;
-    }
-    sections = (coff_section_header *)(file_base + sizeof(coff_file_header));
-    symbols = (coff_symbol *)(file_base + hdr->pointer_to_symbol_table);
-    string_table = (char *)(file_base + hdr->pointer_to_symbol_table + hdr->number_of_symbols * sizeof(coff_symbol));
-    if ((uint8_t *)string_table + 4 <= file_base + file_size) {
-        string_table_size = *(uint32_t *)string_table;
-    }
-    section_bases = (uint8_t **)calloc(hdr->number_of_sections, sizeof(uint8_t *));
-    if (!section_bases) {
-        print_json(object, entry, "fail", "oom");
-        return 1;
-    }
-    for (si = 0; si < hdr->number_of_sections; si++) {
-        size_t size = sections[si].size_of_raw_data ? sections[si].size_of_raw_data : 1;
-        section_image_size += (size + 0xfff) & ~((size_t)0xfff);
-    }
-    image_size = section_image_size + stub_size;
-    image = (uint8_t *)VirtualAlloc(NULL, image_size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (!image) {
-        add_line(g_error, &g_error_count, "VirtualAlloc failed: %lu", GetLastError());
-        print_json(object, entry, "fail", "alloc_error");
-        return 1;
-    }
-    uint8_t *cursor = image;
-    for (si = 0; si < hdr->number_of_sections; si++) {
-        size_t size = sections[si].size_of_raw_data;
-        section_bases[si] = cursor;
-        if (size && !(sections[si].characteristics & SECTION_CNT_UNINITIALIZED_DATA) && sections[si].pointer_to_raw_data + size <= file_size) {
-            memcpy(cursor, file_base + sections[si].pointer_to_raw_data, size);
-        }
-        cursor += (size + 0xfff) & ~((size_t)0xfff);
-    }
-    g_stub_cursor = image + section_image_size;
-    g_stub_end = image + image_size;
-    if (!apply_relocations(image, sections, hdr->number_of_sections, symbols, hdr->number_of_symbols, string_table, string_table_size, section_bases, file_base, file_size, resolved, &resolved_count)) {
-        print_json(object, entry, "fail", "relocation_error");
-        return 1;
-    }
-    uintptr_t entry_addr = 0;
-    for (uint32_t i = 0; i < hdr->number_of_symbols; i++) {
-        char name_buf[64];
-        char *name = symbol_name(&symbols[i], string_table, string_table_size, name_buf, sizeof(name_buf));
-        if (strcmp(name, entry) == 0) {
-            entry_addr = symbol_address(i, symbols, hdr->number_of_symbols, string_table, string_table_size, section_bases, hdr->number_of_sections, resolved, &resolved_count);
-            break;
-        }
-        i += symbols[i].number_of_aux_symbols;
-    }
-    if (!entry_addr) {
-        add_line(g_error, &g_error_count, "entrypoint not found: %s", entry);
-        print_json(object, entry, "fail", "entry_missing");
-        return 1;
-    }
-    args = decode_hex(arg_hex, &args_len);
-    if (!args && strlen(arg_hex) > 0) {
-        add_line(g_error, &g_error_count, "invalid arg hex");
+    if (strlen(entry) > MAX_SYMBOL_NAME) {
+        add_error("entry_name_limit", "entrypoint name exceeds the %u-byte loader limit", MAX_SYMBOL_NAME);
         print_json(object, entry, "fail", "arg_error");
         return 1;
     }
-    typedef void (*bof_entry)(char *, int);
-    ((bof_entry)entry_addr)((char *)args, args_len);
+    file_base = (uint8_t *)read_file(object, &file_size);
+    if (!file_base) {
+        print_json(object, entry, "fail", strcmp(g_error_code, "oom") == 0 ? "oom" : "read_error");
+        return 1;
+    }
+    if (file_size < sizeof(coff_file_header)) {
+        add_error("header_range", "file is too small for a COFF header");
+        print_json(object, entry, "fail", "validation_error");
+        return 1;
+    }
+    if (((coff_file_header *)file_base)->machine != MACHINE_AMD64) {
+        add_error("unsupported_machine", "unsupported machine 0x%04x; expected AMD64", ((coff_file_header *)file_base)->machine);
+        print_json(object, entry, "fail", "bad_arch");
+        return 1;
+    }
+    if (((coff_file_header *)file_base)->size_of_optional_header != 0) {
+        add_error("optional_header", "COFF object declares an unexpected %u-byte optional header", ((coff_file_header *)file_base)->size_of_optional_header);
+        print_json(object, entry, "fail", "bad_object");
+        return 1;
+    }
+    if (!validate_coff(file_base, file_size, &view)) {
+        print_json(object, entry, "fail", strcmp(g_error_code, "oom") == 0 ? "oom" : "validation_error");
+        return 1;
+    }
+    args = decode_hex(arg_hex, &args_len);
+    if (!args) {
+        print_json(object, entry, "fail", strcmp(g_error_code, "oom") == 0 ? "oom" : "arg_error");
+        return 1;
+    }
+    section_bases = (uint8_t **)calloc(view.header->number_of_sections, sizeof(uint8_t *));
+    if (!section_bases) {
+        add_error("oom", "could not allocate mapped-section table");
+        print_json(object, entry, "fail", "oom");
+        return 1;
+    }
+    image = (uint8_t *)VirtualAlloc(NULL, view.image_size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!image) {
+        add_error("virtual_alloc", "VirtualAlloc failed: %lu", GetLastError());
+        print_json(object, entry, "fail", "alloc_error");
+        return 1;
+    }
+    cursor = image;
+    for (section_index = 0; section_index < view.header->number_of_sections; section_index++) {
+        coff_section_header *section = &view.sections[section_index];
+        size_t aligned_size;
+        section_bases[section_index] = cursor;
+        if (section->size_of_raw_data > 0 && !(section->characteristics & SECTION_CNT_UNINITIALIZED_DATA)) {
+            memcpy(cursor, view.file_base + section->pointer_to_raw_data, section->size_of_raw_data);
+        }
+        size_t allocation_size = view.section_sizes[section_index] ? view.section_sizes[section_index] : 1;
+        if (!align_page(allocation_size, &aligned_size)) {
+            add_error("image_size_overflow", "section alignment overflow after validation");
+            print_json(object, entry, "fail", "validation_error");
+            return 1;
+        }
+        cursor += aligned_size;
+    }
+    g_stub_cursor = image + view.section_image_size;
+    g_stub_end = image + view.image_size;
+    if (!apply_relocations(&view, image, section_bases, resolved, &resolved_count)) {
+        print_json(object, entry, "fail", "relocation_error");
+        return 1;
+    }
+    for (symbol_index = 0; symbol_index < view.header->number_of_symbols;) {
+        coff_symbol *symbol = &view.symbols[symbol_index];
+        char name[MAX_SYMBOL_NAME + 1];
+        uint32_t next = symbol_index + 1u + symbol->number_of_aux_symbols;
+        if (!copy_symbol_name(symbol, view.string_table, view.string_table_size, name, sizeof(name))) {
+            print_json(object, entry, "fail", "validation_error");
+            return 1;
+        }
+        if (strcmp(name, entry) == 0) {
+            entry_matches++;
+            if (symbol->section_number > 0 && symbol->section_number <= (int16_t)view.header->number_of_sections && symbol->value < view.section_sizes[symbol->section_number - 1]) {
+                entry_address = symbol_address(&view, symbol_index, section_bases, resolved, &resolved_count);
+            }
+        }
+        symbol_index = next;
+    }
+    if (entry_matches > 1) {
+        add_error("entrypoint_ambiguous", "entrypoint %s resolves to %u symbols", entry, entry_matches);
+        print_json(object, entry, "fail", "entry_ambiguous");
+        return 1;
+    }
+    if (!entry_address) {
+        add_error("entrypoint_missing", "entrypoint not found or not executable: %s", entry);
+        print_json(object, entry, "fail", "entry_missing");
+        return 1;
+    }
+    if (!FlushInstructionCache(GetCurrentProcess(), image, view.image_size)) {
+        add_error("instruction_cache", "FlushInstructionCache failed: %lu", GetLastError());
+        print_json(object, entry, "fail", "loader_error");
+        return 1;
+    }
+    {
+        typedef void (*bof_entry)(char *, int);
+        ((bof_entry)entry_address)((char *)args, args_len);
+    }
     print_json(object, entry, "pass", "success");
     return 0;
 }

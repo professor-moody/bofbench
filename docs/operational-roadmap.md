@@ -50,12 +50,12 @@ Add native Windows execution CI, provenance-bearing releases, team validation, s
 
 ## Phase C: Runtime and Loader Hardening
 
-| Slice | Outcome | Acceptance gate |
-| --- | --- | --- |
-| 8. Loader input hardening | Validate all COFF ranges before pointer arithmetic; classify crash and timeout behavior. | Malformed and fuzz corpora never crash BOFBench or produce an unknown loader exit. |
-| 9. Loader memory model | Apply staged write/relocate/protect behavior and record mapped-section evidence. | Existing fixtures pass without blanket unexplained RWX behavior. |
-| 10. Capability expansion | Add only corpus-observed shims, imports, and relocations with fixtures. | Every capability has positive, negative, and real-object evidence. |
-| 11. Compiler/runtime matrix | Exercise supported MinGW/MSVC variants and optimization/object patterns. | Matrix failures are classified; x86 execution remains explicit until separately proven. |
+| Slice | Status | Outcome | Acceptance gate |
+| --- | --- | --- | --- |
+| 8. Loader input hardening | Complete | A centralized native COFF view validates resource limits, tables, strings, section copies, symbol/aux references, relocation widths/overflows, and entrypoint bounds before use; the Go parent bounds streams and classifies protocol errors, Windows exceptions, and timeouts with process evidence. | 29 targeted native malformed cases, 180 deterministic metadata mutations, analyzer fuzzing, access-violation and timeout probes, all first-party fixtures, the safe TrustedSec smoke, stage verification, and Windows lab smoke complete with zero unknown exits. |
+| 9. Loader memory model | Pending | Apply staged write/relocate/protect behavior and record mapped-section evidence. | Existing fixtures pass without blanket unexplained RWX behavior. |
+| 10. Capability expansion | Pending | Add only corpus-observed shims, imports, and relocations with fixtures. | Every capability has positive, negative, and real-object evidence. |
+| 11. Compiler/runtime matrix | Pending | Exercise supported MinGW/MSVC variants and optimization/object patterns. | Matrix failures are classified; x86 execution remains explicit until separately proven. |
 
 ## Phase D: Windows VM and Lab
 

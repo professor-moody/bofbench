@@ -44,7 +44,11 @@ The loader reports the unsupported AMD64 relocation type. Use `inspect` to see r
 
 ## Loader exits with `0xc0000005`
 
-This usually means the native loader crashed before it could emit a structured module failure. Check whether the object uses relocations or import patterns outside the current loader support. The loader includes near-image external call trampolines for standard AMD64 `REL32` calls, so a simple Beacon shim call should not crash.
+The parent now records this as `exit_state: "crash"`, `loader_error_code: "windows_exception"`, and `loader_process.exception_code: "0xc0000005"`. Review the event timeline to see whether preflight, load, and `entry_call` were reached. Structurally malformed objects should stop earlier with `validation_error`; an exception after `entry_call` usually belongs to module behavior, argument assumptions, or an unmodeled loader/runtime interaction.
+
+## Native validation error
+
+Inspect `loader_error_code` and the first error line. Codes identify the failed boundary directly, for example `section_data_range`, `string_table_range`, `aux_symbol_range`, `relocation_symbol_range`, or `relocation_offset_range`. The Go analysis/preflight report should normally expose the corresponding structural blocker before the native process is started; disagreement is a loader/analyzer parity bug worth preserving with the object and both reports.
 
 ## Unresolved symbol
 

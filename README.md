@@ -12,6 +12,7 @@ This version is convention-first and operator-shaped:
 - Static artifact analysis for Windows COFF, Linux ELF, and macOS Mach-O relocatable objects.
 - Analysis reports include bounded COFF structural diagnostics, toolchain and resolved-entrypoint evidence, section alignment/storage, runtime compatibility, the versioned loader-capability catalog, structured blockers/warnings, host requirements, and next run/test commands.
 - Real Windows x64 native execution is handled by `native/loader/bofbench-loader.exe`.
+- The native loader validates all bounded COFF tables, strings, section copies, and relocation writes before use; the parent captures bounded streams and classifies Windows exceptions and timeouts explicitly.
 - Run and test reports include normalized runtime event timelines for load, args, entry calls, output/errors, and terminal state.
 - Persisted JSON carries versioned schema, run lineage, tool build identity, host metadata, and relevant source/object/loader/configuration fingerprints.
 - Stage manifests are versioned and carry SHA-256/size records for every packaged file; directories and ZIPs can be verified after handoff.

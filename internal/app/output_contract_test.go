@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"bofbench/internal/config"
+	"bofbench/internal/loader"
 	runtimesvc "bofbench/internal/runtime"
 )
 
@@ -30,6 +31,30 @@ func TestApplyOutputChecks(t *testing.T) {
 	}
 	if got := lastTerminalEvent(res); got.Message != "exit_state=output_contract_failed" {
 		t.Fatalf("terminal event not updated: %+v", res.Events)
+	}
+}
+
+func TestRunMarkdownIncludesLoaderProcessEvidence(t *testing.T) {
+	exitCode := 3221225477
+	markdown := runMarkdown(runtimesvc.Result{
+		Object:          "crash.o",
+		Kind:            "coff",
+		Runtime:         "windows-coff",
+		Entry:           "go",
+		Status:          "fail",
+		ExitState:       "crash",
+		LoaderErrorCode: "windows_exception",
+		LoaderProcess: &loader.ProcessEvidence{
+			ExitCode:        &exitCode,
+			ExceptionCode:   "0xc0000005",
+			Stderr:          []string{"native stderr"},
+			StdoutTruncated: true,
+		},
+	}, nil)
+	for _, want := range []string{"Loader error code: `windows_exception`", "Windows exception: `0xc0000005`", "Loader Process Streams", "native stderr", "stdout=true"} {
+		if !strings.Contains(markdown, want) {
+			t.Fatalf("run Markdown missing %q:\n%s", want, markdown)
+		}
 	}
 }
 

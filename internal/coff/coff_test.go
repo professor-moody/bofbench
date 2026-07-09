@@ -41,6 +41,43 @@ func TestInspectMalformedCOFFDiagnostics(t *testing.T) {
 			},
 		},
 		{
+			name: "initialized section missing data",
+			code: "section_data_missing",
+			make: func(t *testing.T, path string) {
+				createMockFixture(t, path, nil)
+				mutateFixture(t, path, func(b []byte) {
+					binary.LittleEndian.PutUint32(b[28:32], 8)
+					binary.LittleEndian.PutUint32(b[36:40], 0)
+				})
+			},
+		},
+		{
+			name: "mapped image limit",
+			code: "image_size_limit",
+			make: func(t *testing.T, path string) {
+				createMockFixture(t, path, nil)
+				mutateFixture(t, path, func(b []byte) {
+					binary.LittleEndian.PutUint32(b[36:40], ^uint32(0))
+					binary.LittleEndian.PutUint32(b[56:60], binary.LittleEndian.Uint32(b[56:60])|0x80)
+				})
+			},
+		},
+		{
+			name: "relocation count limit",
+			code: "relocation_count_limit",
+			make: func(t *testing.T, path string) {
+				const sections = 17
+				b := make([]byte, 20+sections*40)
+				binary.LittleEndian.PutUint16(b[0:2], MachineX64)
+				binary.LittleEndian.PutUint16(b[2:4], sections)
+				for index := 0; index < sections; index++ {
+					offset := 20 + index*40
+					binary.LittleEndian.PutUint16(b[offset+32:offset+34], ^uint16(0))
+				}
+				writeFixture(t, path, b)
+			},
+		},
+		{
 			name: "reserved section alignment",
 			code: "section_alignment_reserved",
 			make: func(t *testing.T, path string) {
@@ -155,6 +192,24 @@ func TestInspectMalformedCOFFDiagnostics(t *testing.T) {
 				t.Fatalf("expected %s diagnostic: valid=%t diagnostics=%+v", test.code, file.LayoutValid, file.Diagnostics)
 			}
 		})
+	}
+}
+
+func TestInspectRejectsFileAboveResourceLimitWithoutReadingIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oversized.o")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxCOFFFileSize + 1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Inspect(path); err == nil {
+		t.Fatal("expected oversized COFF object rejection")
 	}
 }
 
@@ -289,4 +344,28 @@ func TestInspectRelocationsFromRealCOFF(t *testing.T) {
 
 func osWriteFile(path string, b []byte) error {
 	return os.WriteFile(path, b, 0o644)
+}
+
+func FuzzInspectCOFFNeverPanics(f *testing.F) {
+	seedPath := filepath.Join(f.TempDir(), "seed.o")
+	if err := CreateMockObject(seedPath, "x64", "go", []string{"BeaconPrintf"}); err != nil {
+		f.Fatal(err)
+	}
+	valid, err := os.ReadFile(seedPath)
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add([]byte{})
+	f.Add(make([]byte, 20))
+	f.Add(valid)
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) > 1<<20 {
+			t.Skip()
+		}
+		path := filepath.Join(t.TempDir(), "fuzz.o")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = Inspect(path)
+	})
 }

@@ -1,0 +1,5 @@
+name = "crash"
+entry = "go"
+args = []
+expect_exit = "crash"
+timeout_ms = 2000

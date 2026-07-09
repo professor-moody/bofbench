@@ -12,6 +12,7 @@ This page captures the current design review so future work starts from evidence
 - Run and test reports now include a normalized event timeline across runtime types.
 - Persisted evidence uses shared schema/tool/host/run headers with lineage and relevant object, loader, configuration, and lab fingerprints.
 - Builds use strict typed configuration, explicit MinGW/MSVC profiles, deterministic defaults, structured diagnostics, compiler provenance, and optional byte-for-byte rebuild gates; failures persist the same evidence contract.
+- The Windows loader independently validates bounded COFF views and relocation writes; malformed/mutation corpora, bounded process streams, and exception/timeout classification keep terminal states explicit.
 - Windows lab smoke and summary evidence are available through the main CLI.
 - Stage packages include objects, manifests, analysis reports, and latest run/test reports when available.
 - Stage manifests are versioned, hash every packaged file, and can be verified in directory or ZIP form.
@@ -21,7 +22,7 @@ This page captures the current design review so future work starts from evidence
 ## Main Gaps
 
 - The Windows loader has useful fixture coverage now, but still needs broader real-world import and relocation validation against larger BOF sets.
-- Build and analysis evidence are now predictive; the next reliability gap is hardening native loader behavior against malformed inputs and crash classes.
+- Loader input handling is bounded; the next native reliability gap is replacing blanket RWX mapping with staged write/relocate/protect behavior and mapped-section evidence.
 - The TUI is now a triage surface; next improvement is optional command execution or clipboard integration.
 - Windows lab setup has repeatable smoke and summary commands; next improvement is richer bootstrap for toolchain installation and optional debugger setup.
 - Staging integrity is now machine-verifiable; real Cobalt Strike and Sliver import/execution validation remains environment-gated work.

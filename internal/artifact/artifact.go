@@ -380,7 +380,7 @@ func analyzeCOFF(path, entry string, a Analysis) (Analysis, error) {
 	for _, section := range info.Sections {
 		a.Sections = append(a.Sections, Section{
 			Name:          section.Name,
-			Size:          uint64(section.Size),
+			Size:          uint64(section.MappedSize),
 			Relocations:   len(section.Relocations),
 			Flags:         coffFlags(section),
 			Alignment:     section.Alignment,
@@ -423,8 +423,8 @@ func analyzeCOFF(path, entry string, a Analysis) (Analysis, error) {
 		if int(match.SectionNumber) <= len(info.Sections) {
 			section := info.Sections[match.SectionNumber-1]
 			a.EntrypointSection = section.Name
-			if section.Size == 0 || match.Value >= section.Size {
-				a.COFFDiagnostics = append(a.COFFDiagnostics, coff.Diagnostic{Severity: "error", Code: "entrypoint_offset_range", Detail: fmt.Sprintf("entrypoint offset 0x%x is outside section size 0x%x", match.Value, section.Size), Section: section.Name, Symbol: match.Name})
+			if section.MappedSize == 0 || match.Value >= section.MappedSize {
+				a.COFFDiagnostics = append(a.COFFDiagnostics, coff.Diagnostic{Severity: "error", Code: "entrypoint_offset_range", Detail: fmt.Sprintf("entrypoint offset 0x%x is outside mapped section size 0x%x", match.Value, section.MappedSize), Section: section.Name, Symbol: match.Name})
 			} else {
 				a.EntrypointOK = true
 			}

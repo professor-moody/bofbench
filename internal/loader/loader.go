@@ -17,14 +17,25 @@ type Request struct {
 }
 
 type Result struct {
-	Object     string   `json:"object"`
-	Entry      string   `json:"entry"`
-	Status     string   `json:"status"`
-	ExitState  string   `json:"exit_state"`
-	Output     []string `json:"output,omitempty"`
-	Errors     []string `json:"errors,omitempty"`
-	DurationMS int64    `json:"duration_ms"`
-	Loader     string   `json:"loader,omitempty"`
+	Object     string           `json:"object"`
+	Entry      string           `json:"entry"`
+	Status     string           `json:"status"`
+	ExitState  string           `json:"exit_state"`
+	ErrorCode  string           `json:"error_code,omitempty"`
+	Output     []string         `json:"output,omitempty"`
+	Errors     []string         `json:"errors,omitempty"`
+	DurationMS int64            `json:"duration_ms"`
+	Loader     string           `json:"loader,omitempty"`
+	Process    *ProcessEvidence `json:"process,omitempty"`
+}
+
+type ProcessEvidence struct {
+	ExitCode        *int     `json:"exit_code,omitempty"`
+	ExceptionCode   string   `json:"exception_code,omitempty"`
+	Stdout          []string `json:"stdout,omitempty"`
+	Stderr          []string `json:"stderr,omitempty"`
+	StdoutTruncated bool     `json:"stdout_truncated,omitempty"`
+	StderrTruncated bool     `json:"stderr_truncated,omitempty"`
 }
 
 func (r Result) WriteJSON(path string) error {

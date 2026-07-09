@@ -24,6 +24,7 @@ go build -o work\bin\bofbench.exe .\cmd\bofbench
 .\work\bin\bofbench.exe test .\testdata\bofs\bss_reloc --runtime windows-coff
 .\work\bin\bofbench.exe test .\testdata\bofs\callback_ptr --runtime windows-coff
 .\work\bin\bofbench.exe test .\testdata\bofs\parser_all --runtime windows-coff
+.\work\bin\bofbench.exe test .\testdata\bofs\crash --runtime windows-coff
 .\work\bin\bofbench.exe stage .\dist\hello.x64.o --target raw
 .\work\bin\bofbench.exe stage verify .\stage\hello-raw.zip --format json
 .\work\bin\bofbench.exe fetch trustedsec-sa
@@ -53,7 +54,7 @@ The underlying script can still be run directly:
 powershell -ExecutionPolicy Bypass -File .\scripts\windows-lab-smoke.ps1 -RepoRoot C:\bofbench -Select 'whoami,ipconfig,env'
 ```
 
-The script writes `runs\<timestamp>-lab-smoke\lab-smoke.json` with each step, status, duration, and error text. It verifies the generated loader-capability contract, requires an explicit MSVC `/Brepro` build with deterministic workspace path mapping to reproduce byte-for-byte and carry complete compiler provenance, covers positive fixtures and expected negative fixtures (`unresolved`, `timeout`), runs the selected x64 gate plus a report-only x64/x86 architecture matrix, and then runs the arsenal smoke.
+The script writes `runs\<timestamp>-lab-smoke\lab-smoke.json` with each step, status, duration, and error text. It rebuilds the native loader from the current source, verifies the generated capability contract, runs the 29-case/180-mutation loader hardening corpus, requires an explicit MSVC `/Brepro` build with deterministic workspace path mapping, covers positive fixtures and expected negative fixtures (`unresolved`, `crash`, `timeout`), runs the selected x64 gate plus a report-only x64/x86 architecture matrix, and then runs the arsenal smoke.
 
 The summary also carries the shared evidence header and fingerprints the lab environment: Windows version/architecture, PowerShell, Go, compiler path, machine identity, and SHA-256 for the BOFBench and loader binaries.
 
@@ -69,6 +70,7 @@ Fixture coverage:
 | `callback_ptr` | relocated function pointer invocation |
 | `parser_all` | `BeaconDataShort`, `BeaconDataLength`, `BeaconOutput`, and binary arg extraction |
 | `unresolved` | expected unresolved-symbol failure |
+| `crash` | expected access violation with captured process exit and `0xc0000005` exception code |
 | `timeout` | expected timeout handling |
 
 Expected successful output states:

@@ -15,3 +15,5 @@ x86_64-w64-mingw32-gcc -O2 -Wall -Wextra -o bofbench-loader.exe loader.c
 ```
 
 Copy `bofbench-loader.exe` next to the `bofbench` binary or set `BOFBENCH_LOADER` to its path.
+
+The loader validates COFF section/data/relocation/symbol/string ranges and resource limits before mapping or relocation. Failures are emitted as one-line JSON with a stable `exit_state` and `error_code`; the Go parent separately classifies process timeouts and Windows exception codes.

@@ -63,7 +63,7 @@ Run directory allocation is collision-safe even when identical operations start 
 - Builds persist `build.json` beside `build.log` for success and failure. Records include source tree/file, configuration, compiler binary, and output fingerprints; build mode, working directory, relevant environment, exact command, exit code, typed diagnostics, and failure text.
 - Reproducibility-gated builds retain the first and second object size/SHA-256 plus the comparison method and verdict. `non_reproducible` is a failing build state, not a warning.
 - Arsenal `source.json` records a deterministic content-tree fingerprint in addition to URL/ref metadata.
-- Runtime reports record object, loader, and test-configuration fingerprints.
+- Runtime reports record object, loader, and test-configuration fingerprints. Windows results also carry the native loader error code plus bounded process exit/exception/stdout/stderr evidence, including stream-truncation flags.
 - Loader preflight reports record the capability-catalog version, artifact hashes, root tree fingerprint, structured blockers/warnings, architecture/status/toolchain/argument dimensions, and configuration fingerprints when sidecar arguments are present.
 - Stage manifests record every packaged file's size and SHA-256.
 - Windows lab summaries record BOFBench and loader SHA-256 plus Windows, architecture, PowerShell, Go, compiler, and machine identity.

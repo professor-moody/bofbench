@@ -126,6 +126,8 @@ For ELF and Mach-O objects on matching hosts, `run` links a tiny native harness 
 
 `result.json` and `result.md` include a normalized event timeline with `artifact`, `arg_pack`, `load`, `entry_call`, output/error, and terminal events. The same event schema is used by `test`, including output-contract failures.
 
+For `windows-coff`, reports also include the native loader's stable `loader_error_code` and bounded `loader_process` evidence: exit code, Windows exception code, non-protocol stdout/stderr, and truncation state. Malformed objects are rejected by both preflight and the native loader's independent validation boundary.
+
 ## `test`
 
 Run configured payload or arsenal tests. Without a matching native runtime, this still analyzes and writes a report:

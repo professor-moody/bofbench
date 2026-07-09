@@ -40,6 +40,8 @@ type Result struct {
 	Entry               string                    `json:"entry"`
 	Status              string                    `json:"status"`
 	ExitState           string                    `json:"exit_state"`
+	LoaderErrorCode     string                    `json:"loader_error_code,omitempty"`
+	LoaderProcess       *loader.ProcessEvidence   `json:"loader_process,omitempty"`
 	Output              []string                  `json:"output,omitempty"`
 	Errors              []string                  `json:"errors,omitempty"`
 	Events              []Event                   `json:"events,omitempty"`
@@ -96,6 +98,8 @@ func Run(req Request) (Result, error) {
 		out.Entry = res.Entry
 		out.Status = res.Status
 		out.ExitState = res.ExitState
+		out.LoaderErrorCode = res.ErrorCode
+		out.LoaderProcess = res.Process
 		out.Output = res.Output
 		out.Errors = res.Errors
 		out.DurationMS = res.DurationMS
@@ -205,7 +209,11 @@ func finalizeEvents(res *Result, start time.Time) {
 	case "timeout":
 		addTimedEvent(res, start, "timeout", res.Status, "loader timed out")
 	case "crash":
-		addTimedEvent(res, start, "crash", res.Status, "runner reported crash")
+		message := "runner reported crash"
+		if res.LoaderProcess != nil && res.LoaderProcess.ExceptionCode != "" {
+			message += " exception=" + res.LoaderProcess.ExceptionCode
+		}
+		addTimedEvent(res, start, "crash", res.Status, message)
 	default:
 		addTimedEvent(res, start, "exit", res.Status, fmt.Sprintf("exit_state=%s", res.ExitState))
 	}
@@ -250,7 +258,7 @@ func loadMessage(res Result) string {
 
 func shouldMarkEntryCall(res Result) bool {
 	switch res.ExitState {
-	case "loader_missing", "requires_windows", "requires_linux", "requires_darwin", "requires_wine", "wrong_artifact", "unknown_runtime", "not_implemented", "bad_entry", "compiler_missing", "link_error", "relocation_error", "preflight_blocked", "analysis_error":
+	case "loader_missing", "loader_start_error", "requires_windows", "requires_linux", "requires_darwin", "requires_wine", "wrong_artifact", "unknown_runtime", "not_implemented", "bad_entry", "compiler_missing", "link_error", "relocation_error", "validation_error", "bad_object", "bad_arch", "read_error", "entry_missing", "entry_ambiguous", "arg_error", "oom", "alloc_error", "loader_error", "loader_protocol_error", "loader_output_limit", "preflight_blocked", "analysis_error":
 		return false
 	default:
 		return res.Entry != ""

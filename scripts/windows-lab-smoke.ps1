@@ -56,8 +56,24 @@ $steps.Add((Invoke-Step "generated capability contract" {
     go run ./cmd/capgen -check -out native/loader/capabilities.generated.h
 }))
 
+$steps.Add((Invoke-Step "native loader build" {
+    $msvc = Get-Command cl -ErrorAction SilentlyContinue
+    $mingw = Get-Command x86_64-w64-mingw32-gcc -ErrorAction SilentlyContinue
+    if ($msvc) {
+        & $msvc.Source /nologo /O2 /W4 /Fe:native\loader\bofbench-loader.exe native\loader\loader.c
+    } elseif ($mingw) {
+        & $mingw.Source -O2 -Wall -Wextra -o native\loader\bofbench-loader.exe native\loader\loader.c
+    } else {
+        throw "no compiler is available to build the native loader"
+    }
+}))
+
 $steps.Add((Invoke-Step "go test" {
     go test ./...
+}))
+
+$steps.Add((Invoke-Step "native loader malformed corpus" {
+    go test ./internal/loader -run 'TestNativeLoader|TestLoaderRun' -v -count=1
 }))
 
 $steps.Add((Invoke-Step "build cli" {
@@ -95,6 +111,7 @@ $steps.Add((Invoke-Step "fixture build" {
     & $BofbenchExe build .\testdata\bofs\callback_ptr
     & $BofbenchExe build .\testdata\bofs\parser_all
     & $BofbenchExe build .\testdata\bofs\unresolved
+    & $BofbenchExe build .\testdata\bofs\crash
     & $BofbenchExe build .\testdata\bofs\timeout
 }))
 
@@ -128,6 +145,17 @@ $steps.Add((Invoke-Step "fixture test parser_all" {
 
 $steps.Add((Invoke-Step "negative fixture unresolved" {
     & $BofbenchExe test .\testdata\bofs\unresolved --runtime windows-coff
+}))
+
+$steps.Add((Invoke-Step "negative fixture crash" {
+    $crashEvidence = & $BofbenchExe test .\testdata\bofs\crash --runtime windows-coff | ConvertFrom-Json
+    if ($crashEvidence.exit_state -ne "crash" -or $crashEvidence.loader_error_code -ne "windows_exception") {
+        throw "crash fixture was not classified as a Windows exception"
+    }
+    if (!$crashEvidence.loader_process.exception_code) {
+        throw "crash fixture is missing its exception code"
+    }
+    $crashEvidence | ConvertTo-Json -Depth 8
 }))
 
 $steps.Add((Invoke-Step "negative fixture timeout" {
