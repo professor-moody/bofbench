@@ -1,7 +1,7 @@
 {
   "schema": "bofbench.loader-capabilities",
   "schema_version": 1,
-  "catalog_version": "windows-coff-x64/v2",
+  "catalog_version": "windows-coff-x64/v3",
   "runtime": "windows-coff",
   "format": "COFF",
   "machine": {
@@ -38,6 +38,11 @@
   ],
   "import_pointer_prefixes": ["__imp__", "__imp_", "_imp__"],
   "dynamic_import_separator": "$",
+  "symbol_imports": [
+    {"symbol": "FreeLibrary", "library": "kernel32"},
+    {"symbol": "GetProcAddress", "library": "kernel32"},
+    {"symbol": "LoadLibraryA", "library": "kernel32"}
+  ],
   "fallback_libraries": [
     "kernel32",
     "advapi32",

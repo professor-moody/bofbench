@@ -62,9 +62,9 @@ Markdown reports cap relocation rows for readability. JSON reports retain the st
 
 ## Loader Compatibility
 
-Windows COFF analysis includes `loader_compatibility` with a catalog version, overall status, and structured `blockers` and `warnings`. Hard blockers include unsupported architecture, missing entrypoint, unsupported or unknown relocation codes, unsupported Beacon APIs, and malformed `LIBRARY$API` imports. Plain externals that the loader can only search for across its fallback DLL set are reported as `fallback_lookup` warnings.
+Windows COFF analysis includes `loader_compatibility` with a catalog version, overall status, and structured `blockers` and `warnings`. Hard blockers include unsupported architecture, missing or non-executable entrypoints, unsupported or unknown relocation codes, unsupported Beacon APIs, and malformed `LIBRARY$API` imports. The capability catalog maps corpus-proven unqualified imports to a specific DLL; other plain externals that the loader can only search for across its fallback DLL set remain `fallback_lookup` warnings.
 
-The analyzer, runtime gate, and native loader all consume `internal/capability/windows_coff.json`; the native loader consumes its generated C header. Import-pointer prefixes are evaluated longest-first, so `__imp__BeaconPrintf` is normalized to `BeaconPrintf` consistently in Go and C.
+The analyzer, runtime gate, and native loader all consume `internal/capability/windows_coff.json`; the native loader consumes its generated C header. Import-pointer prefixes are evaluated longest-first, so `__imp__BeaconPrintf` is normalized to `BeaconPrintf` consistently in Go and C. Catalog v3 directly maps the pinned corpus's `FreeLibrary`, `GetProcAddress`, and `LoadLibraryA` symbols to Kernel32 instead of treating them as heuristic fallback lookups.
 
 Use `preflight` for an execution-free gate or an arsenal-wide matrix. A hard blocker exits nonzero; `--strict` also fails runtime-lookup warnings.
 

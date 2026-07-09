@@ -79,8 +79,11 @@ The Windows lab smoke exercises the loader with small benign BOFs under `testdat
 | `bss_reloc` | zero-filled uninitialized-data section mapping |
 | `callback_ptr` | function pointer relocation and call-through |
 | `parser_all` | short parsing, binary extraction, length tracking, and `BeaconOutput` |
+| `import_resolver` | catalog-declared plain Kernel32 import lookup for `LoadLibraryA`, `GetProcAddress`, and `FreeLibrary` |
 | `unresolved` | unresolved external failure report |
 | `crash` | isolated access violation and exception-code evidence |
 | `timeout` | timeout report |
 
 The Windows-only hardening corpus also invokes the native executable directly with 30 targeted malformed or invalid layouts and 180 deterministic metadata mutations. It requires valid JSON and a known error code for every case. `FuzzInspectCOFFNeverPanics` provides the matching Go analyzer fuzz target.
+
+Capability expansion uses three kinds of proof. `import_resolver` is the minimal positive fixture, an undeclared symbol remains a negative `fallback_lookup` case, and the Windows lab relocates the pinned TrustedSec `nslookup.x64.o` through every import before deliberately requesting a missing entrypoint. Reaching only `entrypoint_missing` proves that the real object's imports resolved without invoking its BOF entrypoint.

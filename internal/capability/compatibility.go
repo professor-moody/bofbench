@@ -135,6 +135,9 @@ func AssessWindowsCOFF(input COFFInput) Compatibility {
 				}
 				continue
 			}
+			if _, declared := catalog.LibraryForSymbol(normalized); declared {
+				continue
+			}
 			result.Warnings = append(result.Warnings, Issue{
 				Category: "fallback_lookup",
 				Detail:   "symbol requires runtime lookup across the loader fallback libraries",

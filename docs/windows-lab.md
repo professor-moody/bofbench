@@ -54,7 +54,7 @@ The underlying script can still be run directly:
 powershell -ExecutionPolicy Bypass -File .\scripts\windows-lab-smoke.ps1 -RepoRoot C:\bofbench -Select 'whoami,ipconfig,env'
 ```
 
-The script writes `runs\<timestamp>-lab-smoke\lab-smoke.json` with each step, status, duration, and error text. It rebuilds the native loader from the current source, verifies the generated capability contract, runs the 30-case/180-mutation loader hardening corpus, requires an explicit MSVC `/Brepro` build with deterministic workspace path mapping, proves that the hello fixture has execute/read code and stubs with no writable/executable section, preserves the same memory evidence through the crash fixture, covers the other positive and expected negative fixtures (`unresolved`, `timeout`), runs the selected x64 gate plus a report-only x64/x86 architecture matrix, and then runs the arsenal smoke.
+The script writes `runs\<timestamp>-lab-smoke\lab-smoke.json` with each step, status, duration, and error text. It rebuilds the native loader from the current source, verifies the generated capability contract, runs the 30-case/180-mutation loader hardening corpus, requires an explicit MSVC `/Brepro` build with deterministic workspace path mapping, proves that the hello fixture has execute/read code and stubs with no writable/executable section, preserves the same memory evidence through the crash fixture, executes the catalog-declared plain-import fixture, relocates a pinned real `nslookup` object without calling its entrypoint, covers the other positive and expected negative fixtures (`unresolved`, `timeout`), runs the selected x64 gate plus a report-only x64/x86 architecture matrix, and then runs the arsenal smoke.
 
 The summary also carries the shared evidence header and fingerprints the lab environment: Windows version/architecture, PowerShell, Go, compiler path, machine identity, and SHA-256 for the BOFBench and loader binaries.
 
@@ -69,6 +69,7 @@ Fixture coverage:
 | `bss_reloc` | zero-filled uninitialized `.bss` section handling |
 | `callback_ptr` | relocated function pointer invocation |
 | `parser_all` | `BeaconDataShort`, `BeaconDataLength`, `BeaconOutput`, and binary arg extraction |
+| `import_resolver` | explicit Kernel32 mapping for `LoadLibraryA`, `GetProcAddress`, and `FreeLibrary` |
 | `unresolved` | expected unresolved-symbol failure |
 | `crash` | expected access violation with captured process exit and `0xc0000005` exception code |
 | `timeout` | expected timeout handling |

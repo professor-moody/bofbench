@@ -33,6 +33,12 @@ func NativeHeader(c Catalog) ([]byte, error) {
 		fmt.Fprintf(&b, "    %s,\n", strconv.Quote(library))
 	}
 	b.WriteString("};\n\n")
+	b.WriteString("typedef struct { const char *symbol; const char *library; } bofbench_symbol_import;\n")
+	b.WriteString("static const bofbench_symbol_import bofbench_symbol_imports[] = {\n")
+	for _, item := range c.SymbolImports {
+		fmt.Fprintf(&b, "    {%s, %s},\n", strconv.Quote(item.Symbol), strconv.Quote(item.Library))
+	}
+	b.WriteString("};\n\n")
 	b.WriteString("static const char *bofbench_relocation_type_name(uint16_t type) {\n    switch (type) {\n")
 	for _, relocation := range c.SortedRelocations() {
 		fmt.Fprintf(&b, "    case REL_AMD64_%s: return %s;\n", relocation.Name, strconv.Quote(relocation.Name))
@@ -50,6 +56,13 @@ func NativeHeader(c Catalog) ([]byte, error) {
 		fmt.Fprintf(&b, "    if (strncmp(name, %s, %d) == 0) return name + %d;\n", strconv.Quote(prefix), len(prefix), len(prefix))
 	}
 	b.WriteString("    return name;\n}\n\n")
+	b.WriteString("static const char *bofbench_symbol_import_library(const char *name) {\n")
+	b.WriteString("    size_t index;\n")
+	b.WriteString("    const char *normalized = bofbench_normalize_import(name);\n")
+	b.WriteString("    for (index = 0; index < sizeof(bofbench_symbol_imports) / sizeof(bofbench_symbol_imports[0]); index++) {\n")
+	b.WriteString("        if (strcmp(normalized, bofbench_symbol_imports[index].symbol) == 0) return bofbench_symbol_imports[index].library;\n")
+	b.WriteString("    }\n")
+	b.WriteString("    return NULL;\n}\n\n")
 	b.WriteString("static int bofbench_is_import_pointer_symbol(const char *name) {\n")
 	for _, prefix := range c.ImportPointerPrefixes {
 		fmt.Fprintf(&b, "    if (strncmp(name, %s, %d) == 0) return 1;\n", strconv.Quote(prefix), len(prefix))

@@ -20,19 +20,20 @@ var windowsCOFFJSON []byte
 //go:generate go run ../../cmd/capgen -out ../../native/loader/capabilities.generated.h
 
 type Catalog struct {
-	Schema                 string       `json:"schema"`
-	SchemaVersion          int          `json:"schema_version"`
-	CatalogVersion         string       `json:"catalog_version"`
-	Runtime                string       `json:"runtime"`
-	Format                 string       `json:"format"`
-	Machine                Machine      `json:"machine"`
-	DefaultEntrypoint      string       `json:"default_entrypoint"`
-	SectionFlags           SectionFlags `json:"section_flags"`
-	Relocations            []Relocation `json:"relocations"`
-	BeaconAPIs             []string     `json:"beacon_apis"`
-	ImportPointerPrefixes  []string     `json:"import_pointer_prefixes"`
-	DynamicImportSeparator string       `json:"dynamic_import_separator"`
-	FallbackLibraries      []string     `json:"fallback_libraries"`
+	Schema                 string         `json:"schema"`
+	SchemaVersion          int            `json:"schema_version"`
+	CatalogVersion         string         `json:"catalog_version"`
+	Runtime                string         `json:"runtime"`
+	Format                 string         `json:"format"`
+	Machine                Machine        `json:"machine"`
+	DefaultEntrypoint      string         `json:"default_entrypoint"`
+	SectionFlags           SectionFlags   `json:"section_flags"`
+	Relocations            []Relocation   `json:"relocations"`
+	BeaconAPIs             []string       `json:"beacon_apis"`
+	ImportPointerPrefixes  []string       `json:"import_pointer_prefixes"`
+	DynamicImportSeparator string         `json:"dynamic_import_separator"`
+	SymbolImports          []SymbolImport `json:"symbol_imports"`
+	FallbackLibraries      []string       `json:"fallback_libraries"`
 }
 
 type Machine struct {
@@ -50,6 +51,11 @@ type Relocation struct {
 	Code      uint16 `json:"code"`
 	Supported bool   `json:"supported"`
 	Detail    string `json:"detail"`
+}
+
+type SymbolImport struct {
+	Symbol  string `json:"symbol"`
+	Library string `json:"library"`
 }
 
 func WindowsCOFF() Catalog {
@@ -76,7 +82,7 @@ func (c Catalog) Validate() error {
 	if c.SectionFlags.UninitializedData != 0x00000080 {
 		return fmt.Errorf("catalog uninitialized-data section flag must be 0x00000080")
 	}
-	if c.DefaultEntrypoint == "" || len(c.Relocations) == 0 || len(c.BeaconAPIs) == 0 || len(c.FallbackLibraries) == 0 {
+	if c.DefaultEntrypoint == "" || len(c.Relocations) == 0 || len(c.BeaconAPIs) == 0 || len(c.SymbolImports) == 0 || len(c.FallbackLibraries) == 0 {
 		return fmt.Errorf("catalog capability lists are incomplete")
 	}
 	if c.DynamicImportSeparator != "$" {
@@ -115,6 +121,16 @@ func (c Catalog) Validate() error {
 		}
 		seenLibraries[library] = true
 	}
+	seenSymbols := map[string]bool{}
+	for _, item := range c.SymbolImports {
+		if !identifier.MatchString(item.Symbol) || seenSymbols[item.Symbol] {
+			return fmt.Errorf("invalid or duplicate symbol import %q", item.Symbol)
+		}
+		if !identifier.MatchString(item.Library) || item.Library != strings.ToLower(item.Library) || !seenLibraries[item.Library] {
+			return fmt.Errorf("symbol import %q uses undeclared fallback library %q", item.Symbol, item.Library)
+		}
+		seenSymbols[item.Symbol] = true
+	}
 	return nil
 }
 
@@ -144,6 +160,16 @@ func (c Catalog) NormalizeImport(name string) (normalized string, importPointer 
 		}
 	}
 	return name, false
+}
+
+func (c Catalog) LibraryForSymbol(name string) (string, bool) {
+	name, _ = c.NormalizeImport(name)
+	for _, item := range c.SymbolImports {
+		if item.Symbol == name {
+			return item.Library, true
+		}
+	}
+	return "", false
 }
 
 func (c Catalog) SortedRelocations() []Relocation {

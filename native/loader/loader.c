@@ -606,6 +606,14 @@ static uintptr_t resolve_winapi_target(const char *name) {
         if (!module) return 0;
         return (uintptr_t)GetProcAddress(module, dollar + 1);
     }
+    {
+        const char *library = bofbench_symbol_import_library(function);
+        if (library) {
+            HMODULE module = load_symbol_library(library);
+            if (!module) return 0;
+            return (uintptr_t)GetProcAddress(module, function);
+        }
+    }
     for (index = 0; index < sizeof(bofbench_fallback_libraries) / sizeof(bofbench_fallback_libraries[0]); index++) {
         HMODULE module = load_symbol_library(bofbench_fallback_libraries[index]);
         FARPROC procedure;

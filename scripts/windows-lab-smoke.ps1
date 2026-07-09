@@ -110,6 +110,7 @@ $steps.Add((Invoke-Step "fixture build" {
     & $BofbenchExe build .\testdata\bofs\bss_reloc
     & $BofbenchExe build .\testdata\bofs\callback_ptr
     & $BofbenchExe build .\testdata\bofs\parser_all
+    & $BofbenchExe build .\testdata\bofs\import_resolver
     & $BofbenchExe build .\testdata\bofs\unresolved
     & $BofbenchExe build .\testdata\bofs\crash
     & $BofbenchExe build .\testdata\bofs\timeout
@@ -163,6 +164,10 @@ $steps.Add((Invoke-Step "fixture test parser_all" {
     & $BofbenchExe test .\testdata\bofs\parser_all --runtime windows-coff
 }))
 
+$steps.Add((Invoke-Step "fixture test import_resolver" {
+    & $BofbenchExe test .\testdata\bofs\import_resolver --runtime windows-coff
+}))
+
 $steps.Add((Invoke-Step "negative fixture unresolved" {
     & $BofbenchExe test .\testdata\bofs\unresolved --runtime windows-coff
 }))
@@ -196,6 +201,25 @@ if (!$SkipFetch -and !(Test-Path "arsenal\trustedsec-sa")) {
         & $BofbenchExe fetch trustedsec-sa
     }))
 }
+
+$steps.Add((Invoke-Step "trustedsec real-object import resolution" {
+    $previousNativePreference = $PSNativeCommandUseErrorActionPreference
+    $PSNativeCommandUseErrorActionPreference = $false
+    try {
+        $nativeOutput = & .\native\loader\bofbench-loader.exe --object .\arsenal\trustedsec-sa\SA\nslookup\nslookup.x64.o --entry __bofbench_missing_probe --arg-hex ""
+        $nativeExitCode = $LASTEXITCODE
+    } finally {
+        $PSNativeCommandUseErrorActionPreference = $previousNativePreference
+    }
+    $nativeEvidence = $nativeOutput | ConvertFrom-Json
+    if ($nativeExitCode -eq 0 -or $nativeEvidence.exit_state -ne "entry_missing" -or $nativeEvidence.error_code -ne "entrypoint_missing") {
+        throw "real nslookup object did not resolve all imports before the missing-entry probe"
+    }
+    if (@($nativeEvidence.errors | Where-Object { $_ -like "unresolved symbol*" }).Count -ne 0) {
+        throw "real nslookup object retained an unresolved import"
+    }
+    $nativeEvidence | ConvertTo-Json -Depth 8
+}))
 
 $steps.Add((Invoke-Step "trustedsec loader preflight" {
     & $BofbenchExe preflight .\arsenal\trustedsec-sa --select $Select

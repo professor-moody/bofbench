@@ -10,7 +10,7 @@ import (
 
 func TestWindowsCOFFCatalogAndNormalization(t *testing.T) {
 	catalog := WindowsCOFF()
-	if catalog.CatalogVersion != "windows-coff-x64/v2" || catalog.Machine.Code != 0x8664 || catalog.SectionFlags.UninitializedData != 0x80 {
+	if catalog.CatalogVersion != "windows-coff-x64/v3" || catalog.Machine.Code != 0x8664 || catalog.SectionFlags.UninitializedData != 0x80 {
 		t.Fatalf("catalog identity = %+v", catalog)
 	}
 	for _, name := range []string{"BeaconDataParse", "BeaconDataInt", "BeaconDataShort", "BeaconDataLength", "BeaconDataExtract", "BeaconPrintf", "BeaconOutput"} {
@@ -23,6 +23,14 @@ func TestWindowsCOFFCatalogAndNormalization(t *testing.T) {
 	}
 	if normalized, pointer := catalog.NormalizeImport("__imp__BeaconPrintf"); normalized != "BeaconPrintf" || !pointer {
 		t.Fatalf("normalization = %q pointer=%t", normalized, pointer)
+	}
+	for _, name := range []string{"FreeLibrary", "GetProcAddress", "LoadLibraryA"} {
+		if library, ok := catalog.LibraryForSymbol("__imp_" + name); !ok || library != "kernel32" {
+			t.Fatalf("symbol import %s = %q declared=%t", name, library, ok)
+		}
+	}
+	if _, ok := catalog.LibraryForSymbol("MissingExternal"); ok {
+		t.Fatal("undeclared plain symbol reported as declared")
 	}
 	if relocation, declared := catalog.RelocationByCode(0x000c); !declared || relocation.Name != "SECREL" || relocation.Supported {
 		t.Fatalf("SECREL capability = %+v declared=%t", relocation, declared)
@@ -51,6 +59,8 @@ int main(void) {
     if (!bofbench_is_import_pointer_symbol("__imp__BeaconPrintf")) return 2;
     if (!bofbench_relocation_is_supported(REL_AMD64_REL32)) return 3;
     if (bofbench_relocation_is_supported(REL_AMD64_SECREL)) return 4;
+    if (strcmp(bofbench_symbol_import_library("__imp_LoadLibraryA"), "kernel32") != 0) return 5;
+    if (bofbench_symbol_import_library("MissingExternal") != NULL) return 6;
     return 0;
 }
 `
@@ -80,7 +90,7 @@ func TestGeneratedNativeHeaderIsCurrent(t *testing.T) {
 	if string(got) != string(want) {
 		t.Fatalf("%s is stale; run go generate ./internal/capability", path)
 	}
-	for _, text := range []string{"REL_AMD64_SECREL", "SECTION_CNT_UNINITIALIZED_DATA", "BOFBENCH_BEACON_API_LIST", "bofbench_normalize_import", "__imp__"} {
+	for _, text := range []string{"REL_AMD64_SECREL", "SECTION_CNT_UNINITIALIZED_DATA", "BOFBENCH_BEACON_API_LIST", "bofbench_normalize_import", "bofbench_symbol_import_library", "LoadLibraryA", "__imp__"} {
 		if !strings.Contains(string(got), text) {
 			t.Fatalf("generated header missing %q", text)
 		}

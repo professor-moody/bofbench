@@ -1,0 +1,6 @@
+name = "import_resolver"
+entry = "go"
+args = []
+expect = ["plain kernel32 imports resolved"]
+forbid = ["failed"]
+timeout_ms = 5000

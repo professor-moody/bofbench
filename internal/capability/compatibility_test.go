@@ -10,7 +10,7 @@ func TestAssessWindowsCOFFSupported(t *testing.T) {
 		Relocations: []RelocationUse{
 			{Code: 0x0004, Name: "REL32", Section: ".text", Symbol: "BeaconPrintf"},
 		},
-		Unresolved: []string{"__imp__BeaconPrintf", "KERNEL32$VirtualAlloc"},
+		Unresolved: []string{"__imp__BeaconPrintf", "KERNEL32$VirtualAlloc", "__imp_FreeLibrary", "__imp_GetProcAddress", "__imp_LoadLibraryA"},
 	})
 	if !result.Compatible || result.Status != "compatible" || len(result.Blockers) != 0 || len(result.Warnings) != 0 {
 		t.Fatalf("compatibility = %+v", result)

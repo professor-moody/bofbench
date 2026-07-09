@@ -3,7 +3,7 @@
 #define BOFBENCH_CAPABILITIES_GENERATED_H
 
 #define BOFBENCH_CAPABILITY_SCHEMA_VERSION 1
-#define BOFBENCH_CAPABILITY_CATALOG_VERSION "windows-coff-x64/v2"
+#define BOFBENCH_CAPABILITY_CATALOG_VERSION "windows-coff-x64/v3"
 #define MACHINE_AMD64 0x8664
 #define SECTION_CNT_UNINITIALIZED_DATA 0x00000080
 #define REL_AMD64_ABSOLUTE 0x0000
@@ -41,6 +41,13 @@ static const char *const bofbench_fallback_libraries[] = {
     "shell32",
     "ntdll",
     "msvcrt",
+};
+
+typedef struct { const char *symbol; const char *library; } bofbench_symbol_import;
+static const bofbench_symbol_import bofbench_symbol_imports[] = {
+    {"FreeLibrary", "kernel32"},
+    {"GetProcAddress", "kernel32"},
+    {"LoadLibraryA", "kernel32"},
 };
 
 static const char *bofbench_relocation_type_name(uint16_t type) {
@@ -84,6 +91,15 @@ static const char *bofbench_normalize_import(const char *name) {
     if (strncmp(name, "__imp_", 6) == 0) return name + 6;
     if (strncmp(name, "_imp__", 6) == 0) return name + 6;
     return name;
+}
+
+static const char *bofbench_symbol_import_library(const char *name) {
+    size_t index;
+    const char *normalized = bofbench_normalize_import(name);
+    for (index = 0; index < sizeof(bofbench_symbol_imports) / sizeof(bofbench_symbol_imports[0]); index++) {
+        if (strcmp(normalized, bofbench_symbol_imports[index].symbol) == 0) return bofbench_symbol_imports[index].library;
+    }
+    return NULL;
 }
 
 static int bofbench_is_import_pointer_symbol(const char *name) {
