@@ -17,6 +17,7 @@ import (
 type nativeCorpusCase struct {
 	name      string
 	data      []byte
+	entry     string
 	exitState string
 	errorCode string
 }
@@ -74,11 +75,18 @@ func TestNativeLoaderRejectsMalformedCorpusWithoutUnknownTermination(t *testing.
 			binary.LittleEndian.PutUint16(value[relocationOffset+8:relocationOffset+10], 0xffff)
 		}), exitState: "validation_error", errorCode: "unsupported_relocation"},
 		{name: "relocation_offset_range", data: mutateNative(relocated, func(value []byte) { binary.LittleEndian.PutUint32(value[relocationOffset:relocationOffset+4], 99) }), exitState: "validation_error", errorCode: "relocation_offset_range"},
+		{name: "entrypoint_nonexecutable", data: mutateNative(base, func(value []byte) {
+			binary.LittleEndian.PutUint32(value[56:60], binary.LittleEndian.Uint32(value[56:60])&^uint32(0x20000000))
+		}), entry: "go", exitState: "entry_invalid", errorCode: "entrypoint_section_nonexec"},
 	}
 
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			result := runNativeCorpusCase(t, loaderPath, test.data, "__missing_entry__")
+			entry := test.entry
+			if entry == "" {
+				entry = "__missing_entry__"
+			}
+			result := runNativeCorpusCase(t, loaderPath, test.data, entry)
 			if result.ExitState != test.exitState || result.ErrorCode != test.errorCode {
 				t.Fatalf("result = %+v, want exit=%s code=%s", result, test.exitState, test.errorCode)
 			}
@@ -87,8 +95,11 @@ func TestNativeLoaderRejectsMalformedCorpusWithoutUnknownTermination(t *testing.
 
 	t.Run("valid_sanity", func(t *testing.T) {
 		result := runNativeCorpusCase(t, loaderPath, base, "go")
-		if result.Status != "pass" || result.ExitState != "success" {
+		if result.Status != "pass" || result.ExitState != "success" || result.Memory == nil || result.Memory.InitialProtection != "readwrite" || result.Memory.StubRegion.Protection != "execute_read" || result.Memory.WritableExecutableSections != 0 {
 			t.Fatalf("valid object = %+v", result)
+		}
+		if len(result.Memory.Sections) != 1 || result.Memory.Sections[0].Protection != "execute_read" {
+			t.Fatalf("valid object section memory = %+v", result.Memory)
 		}
 	})
 }
@@ -135,7 +146,7 @@ func TestLoaderRunClassifiesWindowsException(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected loader process exception")
 	}
-	if result.Status != "fail" || result.ExitState != "crash" || result.ErrorCode != "windows_exception" || result.Process == nil || result.Process.ExceptionCode != "0xc0000005" {
+	if result.Status != "fail" || result.ExitState != "crash" || result.ErrorCode != "windows_exception" || result.Process == nil || result.Process.ExceptionCode != "0xc0000005" || result.Memory == nil || result.Memory.StubRegion.Protection != "execute_read" {
 		t.Fatalf("crash classification = %+v err=%v", result, err)
 	}
 }
@@ -154,7 +165,7 @@ func TestLoaderRunClassifiesTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected loader timeout")
 	}
-	if result.Status != "fail" || result.ExitState != "timeout" || result.ErrorCode != "loader_timeout" || result.Process == nil {
+	if result.Status != "fail" || result.ExitState != "timeout" || result.ErrorCode != "loader_timeout" || result.Process == nil || result.Memory == nil || result.Memory.StubRegion.Protection != "execute_read" {
 		t.Fatalf("timeout classification = %+v err=%v", result, err)
 	}
 }

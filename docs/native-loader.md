@@ -5,14 +5,15 @@ The native loader is a Windows x64 executable built from `native/loader/loader.c
 It implements the first real execution path:
 
 - parse COFF file headers,
-- map sections into executable memory,
+- map sections into writable memory for loading and relocation,
 - zero-fill COFF uninitialized-data sections such as `.bss`,
 - apply AMD64 relocations,
 - resolve Beacon compatibility symbols,
 - resolve common WinAPI imports,
 - allocate near-image trampolines/import slots for external references,
+- apply per-section memory protection before execution,
 - call the requested BOF entrypoint as `go(char *args, int len)`,
-- emit JSON with output, errors, and exit state.
+- emit JSON with output, errors, exit state, and the mapped-memory evidence.
 
 ## Validation Boundary
 
@@ -29,7 +30,13 @@ Hard limits bound resource use: 256 MiB object files, 512 MiB mapped images, 16 
 
 The Go parent retains the last 4 MiB of each loader process stream, parses the final JSON protocol line, records the process exit code, and distinguishes a timeout from a Windows exception such as `0xc0000005`. A malformed-object or process-protocol failure therefore cannot silently collapse into an unknown terminal state.
 
-Section memory is still allocated RWX during map/relocate/execute. Staged write/relocate/protect behavior is the next memory-model slice.
+## Memory Protection Model
+
+The loader reserves the complete image as read/write, copies and zero-fills sections, applies relocations, and resolves external stubs before granting execute permission. It then derives each section's final protection from the COFF execute/read/write characteristics and changes the page-aligned region with `VirtualProtect`. Typical code becomes execute/read, writable data remains read/write, read-only data becomes read-only, and the external stub region becomes execute/read. A section is execute/read/write only when the input object explicitly declares both execute and write characteristics; the report counts those sections rather than hiding them.
+
+The requested entrypoint must resolve inside a section marked executable. The native loader rejects a direct invocation with `entry_invalid` / `entrypoint_section_nonexec`, while normal CLI runs are stopped earlier by loader compatibility preflight.
+
+Immediately before the entrypoint call, the loader flushes the instruction cache and emits a `memory_protect` protocol event. This preserves the initial protection, final section ranges and protections, stub range, and writable/executable count even if the BOF later crashes or times out. The same evidence appears under `loader_memory` in `result.json` and under **Loader Memory** in `result.md`.
 
 Build with MinGW-w64:
 
@@ -76,4 +83,4 @@ The Windows lab smoke exercises the loader with small benign BOFs under `testdat
 | `crash` | isolated access violation and exception-code evidence |
 | `timeout` | timeout report |
 
-The Windows-only hardening corpus also invokes the native executable directly with 29 targeted malformed layouts and 180 deterministic metadata mutations. It requires valid JSON and a known error code for every case. `FuzzInspectCOFFNeverPanics` provides the matching Go analyzer fuzz target.
+The Windows-only hardening corpus also invokes the native executable directly with 30 targeted malformed or invalid layouts and 180 deterministic metadata mutations. It requires valid JSON and a known error code for every case. `FuzzInspectCOFFNeverPanics` provides the matching Go analyzer fuzz target.

@@ -40,6 +40,14 @@ func TestDecodeLoaderOutputUsesFinalJSONLine(t *testing.T) {
 	}
 }
 
+func TestDecodeLoaderOutputPreservesMemoryProtocolEvent(t *testing.T) {
+	var result Result
+	prefix, decoded := decodeLoaderOutput([]byte("{\"protocol_event\":\"memory_protect\",\"memory\":{\"initial_protection\":\"readwrite\",\"sections\":[{\"index\":1,\"name\":\".text\",\"protection\":\"execute_read\"}],\"stub_region\":{\"protection\":\"execute_read\"}}}\n"), &result)
+	if decoded || len(prefix) != 0 || result.Memory == nil || len(result.Memory.Sections) != 1 || result.Memory.Sections[0].Protection != "execute_read" {
+		t.Fatalf("memory event result = %+v prefix=%#v decoded=%t", result, prefix, decoded)
+	}
+}
+
 func TestWindowsExceptionClassification(t *testing.T) {
 	code, crashed := windowsExceptionCode(int(int32(-1073741819)))
 	if !crashed || code != "0xc0000005" {

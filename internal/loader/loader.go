@@ -27,6 +27,7 @@ type Result struct {
 	DurationMS int64            `json:"duration_ms"`
 	Loader     string           `json:"loader,omitempty"`
 	Process    *ProcessEvidence `json:"process,omitempty"`
+	Memory     *MemoryEvidence  `json:"memory,omitempty"`
 }
 
 type ProcessEvidence struct {
@@ -36,6 +37,29 @@ type ProcessEvidence struct {
 	Stderr          []string `json:"stderr,omitempty"`
 	StdoutTruncated bool     `json:"stdout_truncated,omitempty"`
 	StderrTruncated bool     `json:"stderr_truncated,omitempty"`
+}
+
+type MemoryEvidence struct {
+	InitialProtection          string                  `json:"initial_protection"`
+	Sections                   []SectionMemoryEvidence `json:"sections"`
+	StubRegion                 RegionMemoryEvidence    `json:"stub_region"`
+	WritableExecutableSections int                     `json:"writable_executable_sections"`
+}
+
+type SectionMemoryEvidence struct {
+	Index           int    `json:"index"`
+	Name            string `json:"name"`
+	Offset          uint64 `json:"offset"`
+	MappedSize      uint64 `json:"mapped_size"`
+	AllocationSize  uint64 `json:"allocation_size"`
+	Characteristics uint32 `json:"characteristics"`
+	Protection      string `json:"protection"`
+}
+
+type RegionMemoryEvidence struct {
+	Offset         uint64 `json:"offset"`
+	AllocationSize uint64 `json:"allocation_size"`
+	Protection     string `json:"protection"`
 }
 
 func (r Result) WriteJSON(path string) error {

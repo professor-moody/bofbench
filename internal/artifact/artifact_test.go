@@ -22,7 +22,7 @@ func TestAnalyzeCOFF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Kind != KindCOFF || a.Arch != "x64" || !a.EntrypointOK {
+	if a.Kind != KindCOFF || a.Arch != "x64" || !a.EntrypointOK || !a.EntrypointExecutable {
 		t.Fatalf("unexpected analysis: %+v", a)
 	}
 	if a.Schema != evidence.SchemaAnalysis || a.SchemaVersion != evidence.ContractVersion || a.Tool.Name != "bofbench" || a.Host.OS == "" {
@@ -140,6 +140,29 @@ func TestAnalyzeCOFFLoaderPreflight(t *testing.T) {
 		if a.LoaderCompatibility == nil || !a.LoaderCompatibility.Compatible || a.LoaderCompatibility.Status != "compatible_runtime_lookup" || len(a.LoaderCompatibility.Warnings) != 1 {
 			t.Fatalf("loader compatibility = %+v", a.LoaderCompatibility)
 		}
+	})
+
+	t.Run("non-executable entrypoint", func(t *testing.T) {
+		obj := filepath.Join(t.TempDir(), "nonexec.o")
+		if err := coff.CreateMockObject(obj, "x64", "go", nil); err != nil {
+			t.Fatal(err)
+		}
+		value, err := os.ReadFile(obj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		binary.LittleEndian.PutUint32(value[56:60], binary.LittleEndian.Uint32(value[56:60])&^uint32(0x20000000))
+		if err := os.WriteFile(obj, value, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		a, err := Analyze(obj, "go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !a.EntrypointOK || a.EntrypointExecutable {
+			t.Fatalf("entrypoint evidence = found:%t executable:%t", a.EntrypointOK, a.EntrypointExecutable)
+		}
+		assertLoaderIssue(t, a, "entrypoint_nonexecutable")
 	})
 
 	t.Run("long import pointer prefix", func(t *testing.T) {
@@ -283,24 +306,25 @@ func TestAnalyzeMSVCCOFFWhenCompilerAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Kind != KindCOFF || !a.EntrypointOK || (a.Toolchain.Family != "msvc-coff" && a.Toolchain.Family != "msvc") {
+	if a.Kind != KindCOFF || !a.EntrypointOK || !a.EntrypointExecutable || (a.Toolchain.Family != "msvc-coff" && a.Toolchain.Family != "msvc") {
 		t.Fatalf("MSVC analysis = kind=%s entry=%t toolchain=%+v diagnostics=%+v", a.Kind, a.EntrypointOK, a.Toolchain, a.COFFDiagnostics)
 	}
 }
 
 func TestCompareAnalysis(t *testing.T) {
 	baseline := Analysis{
-		Path:         "old.o",
-		Kind:         KindCOFF,
-		Arch:         "x64",
-		Entrypoint:   "go",
-		EntrypointOK: true,
-		Size:         100,
-		SHA256:       "old",
-		Relocations:  1,
-		Imports:      []Import{{Symbol: "BeaconPrintf", Category: "beacon_api"}},
-		Findings:     []Finding{{Severity: "info", Category: "string", Detail: "old", Evidence: "old"}},
-		Sections:     []Section{{Name: ".text", Size: 10, Relocations: 1, Flags: "R-X"}},
+		Path:                 "old.o",
+		Kind:                 KindCOFF,
+		Arch:                 "x64",
+		Entrypoint:           "go",
+		EntrypointOK:         true,
+		EntrypointExecutable: true,
+		Size:                 100,
+		SHA256:               "old",
+		Relocations:          1,
+		Imports:              []Import{{Symbol: "BeaconPrintf", Category: "beacon_api"}},
+		Findings:             []Finding{{Severity: "info", Category: "string", Detail: "old", Evidence: "old"}},
+		Sections:             []Section{{Name: ".text", Size: 10, Relocations: 1, Flags: "R-X"}},
 	}
 	current := baseline
 	current.Path = "new.o"
@@ -322,6 +346,11 @@ func TestCompareAnalysis(t *testing.T) {
 	}
 	if !strings.Contains(DiffMarkdown(diff), "Analysis Diff") {
 		t.Fatal("diff markdown missing title")
+	}
+	current.EntrypointExecutable = false
+	diff = CompareAnalysis(baseline, current)
+	if !diff.Summary.EntrypointChanged || !hasDiffChange(diff.Changes, "entrypoint", "executable") {
+		t.Fatalf("entrypoint protection change missing: %+v", diff)
 	}
 }
 
@@ -499,6 +528,15 @@ func hasImport(a Analysis, symbol, category string) bool {
 func hasFinding(a Analysis, category string) bool {
 	for _, finding := range a.Findings {
 		if finding.Category == category {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDiffChange(changes []DiffChange, category, change string) bool {
+	for _, item := range changes {
+		if item.Category == category && item.Change == change {
 			return true
 		}
 	}

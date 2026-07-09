@@ -42,6 +42,7 @@ type Result struct {
 	ExitState           string                    `json:"exit_state"`
 	LoaderErrorCode     string                    `json:"loader_error_code,omitempty"`
 	LoaderProcess       *loader.ProcessEvidence   `json:"loader_process,omitempty"`
+	LoaderMemory        *loader.MemoryEvidence    `json:"loader_memory,omitempty"`
 	Output              []string                  `json:"output,omitempty"`
 	Errors              []string                  `json:"errors,omitempty"`
 	Events              []Event                   `json:"events,omitempty"`
@@ -100,6 +101,7 @@ func Run(req Request) (Result, error) {
 		out.ExitState = res.ExitState
 		out.LoaderErrorCode = res.ErrorCode
 		out.LoaderProcess = res.Process
+		out.LoaderMemory = res.Memory
 		out.Output = res.Output
 		out.Errors = res.Errors
 		out.DurationMS = res.DurationMS
@@ -183,6 +185,9 @@ func finalizeEvents(res *Result, start time.Time) {
 			res.LoaderFingerprint = &fingerprint
 		}
 	}
+	if res.LoaderMemory != nil {
+		addTimedEvent(res, start, "memory_protect", "pass", fmt.Sprintf("sections=%d rwx=%d stubs=%s", len(res.LoaderMemory.Sections), res.LoaderMemory.WritableExecutableSections, res.LoaderMemory.StubRegion.Protection))
+	}
 	loadStatus := "pass"
 	if res.Status != "pass" {
 		loadStatus = res.Status
@@ -258,7 +263,7 @@ func loadMessage(res Result) string {
 
 func shouldMarkEntryCall(res Result) bool {
 	switch res.ExitState {
-	case "loader_missing", "loader_start_error", "requires_windows", "requires_linux", "requires_darwin", "requires_wine", "wrong_artifact", "unknown_runtime", "not_implemented", "bad_entry", "compiler_missing", "link_error", "relocation_error", "validation_error", "bad_object", "bad_arch", "read_error", "entry_missing", "entry_ambiguous", "arg_error", "oom", "alloc_error", "loader_error", "loader_protocol_error", "loader_output_limit", "preflight_blocked", "analysis_error":
+	case "loader_missing", "loader_start_error", "requires_windows", "requires_linux", "requires_darwin", "requires_wine", "wrong_artifact", "unknown_runtime", "not_implemented", "bad_entry", "compiler_missing", "link_error", "relocation_error", "validation_error", "bad_object", "bad_arch", "read_error", "entry_missing", "entry_ambiguous", "entry_invalid", "arg_error", "oom", "alloc_error", "protect_error", "loader_error", "loader_protocol_error", "loader_output_limit", "preflight_blocked", "analysis_error":
 		return false
 	default:
 		return res.Entry != ""

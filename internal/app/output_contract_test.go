@@ -58,6 +58,34 @@ func TestRunMarkdownIncludesLoaderProcessEvidence(t *testing.T) {
 	}
 }
 
+func TestRunMarkdownIncludesLoaderMemoryEvidence(t *testing.T) {
+	markdown := runMarkdown(runtimesvc.Result{
+		LoaderMemory: &loader.MemoryEvidence{
+			InitialProtection:          "readwrite",
+			WritableExecutableSections: 0,
+			Sections: []loader.SectionMemoryEvidence{{
+				Index:           0,
+				Name:            ".text",
+				Offset:          0x1000,
+				MappedSize:      144,
+				AllocationSize:  4096,
+				Characteristics: 0x60500020,
+				Protection:      "execute_read",
+			}},
+			StubRegion: loader.RegionMemoryEvidence{
+				Offset:         0x2000,
+				AllocationSize: 4096,
+				Protection:     "execute_read",
+			},
+		},
+	}, nil)
+	for _, want := range []string{"Loader Memory", "Initial protection: `readwrite`", "Writable/executable sections: `0`", "`.text`", "`0x60500020`", "Stub Region", "Protection: `execute_read`"} {
+		if !strings.Contains(markdown, want) {
+			t.Fatalf("run Markdown missing %q:\n%s", want, markdown)
+		}
+	}
+}
+
 func TestApplyExpectedResult(t *testing.T) {
 	res := runtimesvc.Result{Status: "fail", ExitState: "relocation_error"}
 	expected, err := applyExpectedResult(&res, config.Project{ExpectedExit: "relocation_error"})

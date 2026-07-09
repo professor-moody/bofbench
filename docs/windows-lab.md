@@ -54,7 +54,7 @@ The underlying script can still be run directly:
 powershell -ExecutionPolicy Bypass -File .\scripts\windows-lab-smoke.ps1 -RepoRoot C:\bofbench -Select 'whoami,ipconfig,env'
 ```
 
-The script writes `runs\<timestamp>-lab-smoke\lab-smoke.json` with each step, status, duration, and error text. It rebuilds the native loader from the current source, verifies the generated capability contract, runs the 29-case/180-mutation loader hardening corpus, requires an explicit MSVC `/Brepro` build with deterministic workspace path mapping, covers positive fixtures and expected negative fixtures (`unresolved`, `crash`, `timeout`), runs the selected x64 gate plus a report-only x64/x86 architecture matrix, and then runs the arsenal smoke.
+The script writes `runs\<timestamp>-lab-smoke\lab-smoke.json` with each step, status, duration, and error text. It rebuilds the native loader from the current source, verifies the generated capability contract, runs the 30-case/180-mutation loader hardening corpus, requires an explicit MSVC `/Brepro` build with deterministic workspace path mapping, proves that the hello fixture has execute/read code and stubs with no writable/executable section, preserves the same memory evidence through the crash fixture, covers the other positive and expected negative fixtures (`unresolved`, `timeout`), runs the selected x64 gate plus a report-only x64/x86 architecture matrix, and then runs the arsenal smoke.
 
 The summary also carries the shared evidence header and fingerprints the lab environment: Windows version/architecture, PowerShell, Go, compiler path, machine identity, and SHA-256 for the BOFBench and loader binaries.
 

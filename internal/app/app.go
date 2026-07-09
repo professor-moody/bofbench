@@ -1282,6 +1282,15 @@ func runMarkdown(res runtimesvc.Result, items []argpack.Item) string {
 			fmt.Fprintf(&b, "| `%dms` | `%s` | `%s` | %s |\n", event.TimeMS, event.Type, event.Status, escapeMarkdownTable(event.Message))
 		}
 	}
+	if res.LoaderMemory != nil {
+		fmt.Fprintf(&b, "\n## Loader Memory\n\n- Initial protection: `%s`\n", res.LoaderMemory.InitialProtection)
+		fmt.Fprintf(&b, "- Writable/executable sections: `%d`\n", res.LoaderMemory.WritableExecutableSections)
+		b.WriteString("\n### Sections\n\n| Index | Name | Offset | Mapped | Allocation | Characteristics | Protection |\n| ---: | --- | ---: | ---: | ---: | ---: | --- |\n")
+		for _, section := range res.LoaderMemory.Sections {
+			fmt.Fprintf(&b, "| %d | `%s` | `0x%x` | %d | %d | `0x%08x` | `%s` |\n", section.Index, escapeMarkdownTable(section.Name), section.Offset, section.MappedSize, section.AllocationSize, section.Characteristics, section.Protection)
+		}
+		fmt.Fprintf(&b, "\n### Stub Region\n\n- Offset: `0x%x`\n- Allocation: `%d`\n- Protection: `%s`\n", res.LoaderMemory.StubRegion.Offset, res.LoaderMemory.StubRegion.AllocationSize, res.LoaderMemory.StubRegion.Protection)
+	}
 	if res.LoaderProcess != nil && (len(res.LoaderProcess.Stdout) > 0 || len(res.LoaderProcess.Stderr) > 0) {
 		fmt.Fprintf(&b, "\n## Loader Process Streams\n\n### Stdout\n\n%s\n\n### Stderr\n\n%s\n", strings.Join(res.LoaderProcess.Stdout, "\n"), strings.Join(res.LoaderProcess.Stderr, "\n"))
 	}

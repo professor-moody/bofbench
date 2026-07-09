@@ -116,7 +116,27 @@ $steps.Add((Invoke-Step "fixture build" {
 }))
 
 $steps.Add((Invoke-Step "fixture run hello" {
-    & $BofbenchExe run .\dist\hello.x64.o --runtime windows-coff
+    $helloEvidence = & $BofbenchExe run .\dist\hello.x64.o --runtime windows-coff | ConvertFrom-Json
+    if ($helloEvidence.status -ne "pass" -or $helloEvidence.exit_state -ne "success") {
+        throw "hello fixture did not complete successfully"
+    }
+    if ($helloEvidence.loader_memory.initial_protection -ne "readwrite") {
+        throw "hello fixture did not record a read/write relocation phase"
+    }
+    if ($helloEvidence.loader_memory.stub_region.protection -ne "execute_read") {
+        throw "hello fixture stub region is not execute/read"
+    }
+    if ($helloEvidence.loader_memory.writable_executable_sections -ne 0) {
+        throw "hello fixture contains a writable/executable section"
+    }
+    $sectionProtections = @($helloEvidence.loader_memory.sections | ForEach-Object { $_.protection })
+    if ($sectionProtections -notcontains "execute_read") {
+        throw "hello fixture has no execute/read code section"
+    }
+    if ($sectionProtections -contains "execute_readwrite") {
+        throw "hello fixture retained an execute/read/write section"
+    }
+    $helloEvidence | ConvertTo-Json -Depth 10
 }))
 
 $steps.Add((Invoke-Step "fixture run arg_echo" {
@@ -155,7 +175,10 @@ $steps.Add((Invoke-Step "negative fixture crash" {
     if (!$crashEvidence.loader_process.exception_code) {
         throw "crash fixture is missing its exception code"
     }
-    $crashEvidence | ConvertTo-Json -Depth 8
+    if (!$crashEvidence.loader_memory -or $crashEvidence.loader_memory.initial_protection -ne "readwrite") {
+        throw "crash fixture is missing pre-entry memory-protection evidence"
+    }
+    $crashEvidence | ConvertTo-Json -Depth 10
 }))
 
 $steps.Add((Invoke-Step "negative fixture timeout" {

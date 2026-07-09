@@ -54,6 +54,7 @@ The first implemented event vocabulary is intentionally small:
 | `artifact` | object type and path were detected |
 | `arg_pack` | CLI tokens were packed or normalized for the runtime |
 | `load` | loader, linker, or harness setup reached a terminal state |
+| `memory_protect` | Windows sections and external stubs reached their final protections |
 | `entry_call` | configured entrypoint was invoked or attempted |
 | `beacon_output` | captured output line from Beacon-compatible output or native stdout |
 | `beacon_error` | captured error line from loader, linker, stderr, or setup failure |
@@ -81,6 +82,8 @@ Windows COFF results preserve native-loader failure evidence separately from Bea
 ```
 
 `loader_process.stdout` and `stderr` contain non-protocol process lines when present. Each stream is tail-bounded to 4 MiB and reports a truncation flag. Invalid or incomplete loader JSON, process-start failures, exit-status mismatches, output-limit failures, validation failures, crashes, and timeouts have separate exit/error codes. `result.md` renders the same process evidence.
+
+Successful protection also adds `loader_memory`. It records the initial read/write allocation, every mapped section's offset, size, COFF characteristics and final protection, the execute/read stub region, and the count of sections explicitly marked writable and executable. The loader emits this as a pre-entry protocol event, so crash and timeout reports retain the map even when no final native JSON result is possible.
 
 ## Linked Native Object Runners
 

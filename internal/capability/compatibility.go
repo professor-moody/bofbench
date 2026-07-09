@@ -7,12 +7,13 @@ import (
 )
 
 type COFFInput struct {
-	Arch         string
-	Entrypoint   string
-	EntrypointOK bool
-	LayoutIssues []LayoutIssue
-	Relocations  []RelocationUse
-	Unresolved   []string
+	Arch                 string
+	Entrypoint           string
+	EntrypointOK         bool
+	EntrypointExecutable *bool
+	LayoutIssues         []LayoutIssue
+	Relocations          []RelocationUse
+	Unresolved           []string
 }
 
 type LayoutIssue struct {
@@ -80,6 +81,13 @@ func AssessWindowsCOFF(input COFFInput) Compatibility {
 		result.Blockers = append(result.Blockers, Issue{
 			Category: "missing_entrypoint",
 			Detail:   fmt.Sprintf("entrypoint %q is not defined by the object", emptyAs(input.Entrypoint, catalog.DefaultEntrypoint)),
+			Symbol:   emptyAs(input.Entrypoint, catalog.DefaultEntrypoint),
+		})
+	}
+	if input.EntrypointExecutable != nil && !*input.EntrypointExecutable {
+		result.Blockers = append(result.Blockers, Issue{
+			Category: "entrypoint_nonexecutable",
+			Detail:   fmt.Sprintf("entrypoint %q belongs to a non-executable section", emptyAs(input.Entrypoint, catalog.DefaultEntrypoint)),
 			Symbol:   emptyAs(input.Entrypoint, catalog.DefaultEntrypoint),
 		})
 	}
@@ -186,14 +194,16 @@ func issuePriority(category string) int {
 		return 0
 	case "missing_entrypoint":
 		return 2
+	case "entrypoint_nonexecutable":
+		return 3
 	case "malformed_object":
 		return 1
 	case "unsupported_relocation":
-		return 3
-	case "unsupported_beacon_api":
 		return 4
-	case "malformed_dynamic_import":
+	case "unsupported_beacon_api":
 		return 5
+	case "malformed_dynamic_import":
+		return 6
 	default:
 		return 9
 	}

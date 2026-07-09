@@ -65,7 +65,7 @@ func CompareAnalysis(baseline, current Analysis) DiffReport {
 			HashChanged:             baseline.SHA256 != current.SHA256,
 			SizeDelta:               current.Size - baseline.Size,
 			RelocationsDelta:        current.Relocations - baseline.Relocations,
-			EntrypointChanged:       baseline.EntrypointOK != current.EntrypointOK || baseline.Entrypoint != current.Entrypoint || baseline.EntrypointSymbol != current.EntrypointSymbol || baseline.EntrypointSection != current.EntrypointSection || baseline.EntrypointOffset != current.EntrypointOffset,
+			EntrypointChanged:       baseline.EntrypointOK != current.EntrypointOK || baseline.EntrypointExecutable != current.EntrypointExecutable || baseline.Entrypoint != current.Entrypoint || baseline.EntrypointSymbol != current.EntrypointSymbol || baseline.EntrypointSection != current.EntrypointSection || baseline.EntrypointOffset != current.EntrypointOffset,
 			ActiveFindingsDelta:     currentFindings.Active - baselineFindings.Active,
 			SuppressedFindingsDelta: currentFindings.Suppressed - baselineFindings.Suppressed,
 		},
@@ -78,6 +78,9 @@ func CompareAnalysis(baseline, current Analysis) DiffReport {
 	}
 	if baseline.EntrypointOK != current.EntrypointOK {
 		report.Changes = append(report.Changes, DiffChange{Category: "entrypoint", Name: current.Entrypoint, Change: "changed", Before: fmt.Sprintf("%t", baseline.EntrypointOK), After: fmt.Sprintf("%t", current.EntrypointOK)})
+	}
+	if baseline.EntrypointExecutable != current.EntrypointExecutable {
+		report.Changes = append(report.Changes, DiffChange{Category: "entrypoint", Name: current.Entrypoint, Change: "executable", Before: fmt.Sprintf("%t", baseline.EntrypointExecutable), After: fmt.Sprintf("%t", current.EntrypointExecutable)})
 	}
 	if baseline.EntrypointSymbol != current.EntrypointSymbol || baseline.EntrypointSection != current.EntrypointSection || baseline.EntrypointOffset != current.EntrypointOffset {
 		report.Changes = append(report.Changes, DiffChange{Category: "entrypoint", Name: current.Entrypoint, Change: "location", Before: entrypointSummary(baseline), After: entrypointSummary(current)})
@@ -114,7 +117,7 @@ func normalizedFindingSummary(analysis Analysis) FindingSummary {
 }
 
 func entrypointSummary(analysis Analysis) string {
-	return fmt.Sprintf("symbol=%s section=%s offset=0x%x", analysis.EntrypointSymbol, analysis.EntrypointSection, analysis.EntrypointOffset)
+	return fmt.Sprintf("symbol=%s section=%s offset=0x%x executable=%t", analysis.EntrypointSymbol, analysis.EntrypointSection, analysis.EntrypointOffset, analysis.EntrypointExecutable)
 }
 
 func DiffMarkdown(report DiffReport) string {

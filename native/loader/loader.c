@@ -20,6 +20,9 @@
 #define MAX_SYMBOL_NAME 1024
 #define PAGE_SIZE 0x1000u
 #define STUB_SIZE 0x10000u
+#define SECTION_MEM_EXECUTE 0x20000000u
+#define SECTION_MEM_READ 0x40000000u
+#define SECTION_MEM_WRITE 0x80000000u
 
 #pragma pack(push, 1)
 typedef struct {
@@ -93,6 +96,16 @@ typedef struct {
     size_t image_size;
 } coff_view;
 
+typedef struct {
+    uint32_t index;
+    char name[9];
+    size_t offset;
+    size_t mapped_size;
+    size_t allocation_size;
+    uint32_t characteristics;
+    const char *protection;
+} memory_section_record;
+
 static char g_output[128][4096];
 static int g_output_count = 0;
 static char g_error[128][4096];
@@ -100,6 +113,13 @@ static int g_error_count = 0;
 static char g_error_code[64];
 static uint8_t *g_stub_cursor = NULL;
 static uint8_t *g_stub_end = NULL;
+static memory_section_record g_memory_sections[MAX_SECTIONS];
+static uint32_t g_memory_section_count = 0;
+static size_t g_stub_offset = 0;
+static size_t g_stub_allocation_size = 0;
+static const char *g_stub_protection = "";
+static uint32_t g_writable_executable_sections = 0;
+static int g_memory_ready = 0;
 
 static void add_error(const char *code, const char *fmt, ...) {
     va_list ap;
@@ -730,6 +750,79 @@ static int apply_relocations(const coff_view *view, uint8_t *image_base, uint8_t
     return 1;
 }
 
+static DWORD section_protection(uint32_t characteristics) {
+    int executable = (characteristics & SECTION_MEM_EXECUTE) != 0;
+    int readable = (characteristics & SECTION_MEM_READ) != 0;
+    int writable = (characteristics & SECTION_MEM_WRITE) != 0;
+    if (executable && writable) return PAGE_EXECUTE_READWRITE;
+    if (executable && readable) return PAGE_EXECUTE_READ;
+    if (executable) return PAGE_EXECUTE;
+    if (writable) return PAGE_READWRITE;
+    return PAGE_READONLY;
+}
+
+static const char *protection_name(DWORD protection) {
+    switch (protection) {
+    case PAGE_EXECUTE: return "execute";
+    case PAGE_EXECUTE_READ: return "execute_read";
+    case PAGE_EXECUTE_READWRITE: return "execute_readwrite";
+    case PAGE_READWRITE: return "readwrite";
+    case PAGE_READONLY: return "readonly";
+    case PAGE_NOACCESS: return "noaccess";
+    default: return "unknown";
+    }
+}
+
+static void copy_section_name(const coff_section_header *section, char name[9]) {
+    size_t length = 8;
+    const uint8_t *zero = (const uint8_t *)memchr(section->name, 0, 8);
+    if (zero) length = (size_t)(zero - section->name);
+    memcpy(name, section->name, length);
+    name[length] = 0;
+}
+
+static int protect_image(const coff_view *view, uint8_t *image, uint8_t **section_bases) {
+    uint32_t section_index;
+    DWORD previous;
+    g_memory_section_count = 0;
+    g_writable_executable_sections = 0;
+    for (section_index = 0; section_index < view->header->number_of_sections; section_index++) {
+        coff_section_header *section = &view->sections[section_index];
+        size_t allocation_size = view->section_sizes[section_index] ? view->section_sizes[section_index] : 1;
+        size_t aligned_size;
+        DWORD protection = section_protection(section->characteristics);
+        memory_section_record *record;
+        if (!align_page(allocation_size, &aligned_size)) {
+            add_error("image_size_overflow", "section protection alignment overflow");
+            return 0;
+        }
+        if (!VirtualProtect(section_bases[section_index], aligned_size, protection, &previous)) {
+            add_error("section_protect", "VirtualProtect failed for section %u: %lu", section_index + 1, GetLastError());
+            return 0;
+        }
+        record = &g_memory_sections[g_memory_section_count++];
+        record->index = section_index + 1;
+        copy_section_name(section, record->name);
+        record->offset = (size_t)(section_bases[section_index] - image);
+        record->mapped_size = view->section_sizes[section_index];
+        record->allocation_size = aligned_size;
+        record->characteristics = section->characteristics;
+        record->protection = protection_name(protection);
+        if ((section->characteristics & SECTION_MEM_EXECUTE) && (section->characteristics & SECTION_MEM_WRITE)) {
+            g_writable_executable_sections++;
+        }
+    }
+    if (!VirtualProtect(image + view->section_image_size, STUB_SIZE, PAGE_EXECUTE_READ, &previous)) {
+        add_error("stub_protect", "VirtualProtect failed for external stub region: %lu", GetLastError());
+        return 0;
+    }
+    g_stub_offset = view->section_image_size;
+    g_stub_allocation_size = STUB_SIZE;
+    g_stub_protection = protection_name(PAGE_EXECUTE_READ);
+    g_memory_ready = 1;
+    return 1;
+}
+
 static void json_escape(const char *value) {
     for (; value && *value; value++) {
         switch (*value) {
@@ -745,12 +838,44 @@ static void json_escape(const char *value) {
     }
 }
 
+static void print_memory_json(void) {
+    uint32_t index;
+    printf("{\"initial_protection\":\"readwrite\",\"sections\":[");
+    for (index = 0; index < g_memory_section_count; index++) {
+        memory_section_record *record = &g_memory_sections[index];
+        if (index) printf(",");
+        printf("{\"index\":%u,\"name\":\"", record->index); json_escape(record->name);
+        printf("\",\"offset\":%llu,\"mapped_size\":%llu,\"allocation_size\":%llu,\"characteristics\":%u,\"protection\":\"%s\"}",
+            (unsigned long long)record->offset,
+            (unsigned long long)record->mapped_size,
+            (unsigned long long)record->allocation_size,
+            record->characteristics,
+            record->protection);
+    }
+    printf("],\"stub_region\":{\"offset\":%llu,\"allocation_size\":%llu,\"protection\":\"%s\"},\"writable_executable_sections\":%u}",
+        (unsigned long long)g_stub_offset,
+        (unsigned long long)g_stub_allocation_size,
+        g_stub_protection,
+        g_writable_executable_sections);
+}
+
+static void print_memory_event(void) {
+    if (!g_memory_ready) return;
+    printf("{\"protocol_event\":\"memory_protect\",\"memory\":");
+    print_memory_json();
+    printf("}\n");
+    fflush(stdout);
+}
+
 static void print_json(const char *object, const char *entry, const char *status, const char *exit_state) {
     int index;
     printf("{\"object\":\""); json_escape(object); printf("\",");
     printf("\"entry\":\""); json_escape(entry); printf("\",");
     printf("\"status\":\"%s\",\"exit_state\":\"%s\",", status, exit_state);
     printf("\"error_code\":\""); json_escape(g_error_code); printf("\",");
+    if (g_memory_ready) {
+        printf("\"memory\":"); print_memory_json(); printf(",");
+    }
     printf("\"output\":[");
     for (index = 0; index < g_output_count; index++) {
         if (index) printf(",");
@@ -789,6 +914,7 @@ int main(int argc, char **argv) {
     int args_len = 0;
     uintptr_t entry_address = 0;
     uint32_t entry_matches = 0;
+    int entry_nonexecutable = 0;
     uint32_t section_index;
     uint32_t symbol_index;
 
@@ -835,7 +961,7 @@ int main(int argc, char **argv) {
         print_json(object, entry, "fail", "oom");
         return 1;
     }
-    image = (uint8_t *)VirtualAlloc(NULL, view.image_size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    image = (uint8_t *)VirtualAlloc(NULL, view.image_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!image) {
         add_error("virtual_alloc", "VirtualAlloc failed: %lu", GetLastError());
         print_json(object, entry, "fail", "alloc_error");
@@ -874,7 +1000,11 @@ int main(int argc, char **argv) {
         if (strcmp(name, entry) == 0) {
             entry_matches++;
             if (symbol->section_number > 0 && symbol->section_number <= (int16_t)view.header->number_of_sections && symbol->value < view.section_sizes[symbol->section_number - 1]) {
-                entry_address = symbol_address(&view, symbol_index, section_bases, resolved, &resolved_count);
+                if (!(view.sections[symbol->section_number - 1].characteristics & SECTION_MEM_EXECUTE)) {
+                    entry_nonexecutable = 1;
+                } else {
+                    entry_address = symbol_address(&view, symbol_index, section_bases, resolved, &resolved_count);
+                }
             }
         }
         symbol_index = next;
@@ -884,9 +1014,18 @@ int main(int argc, char **argv) {
         print_json(object, entry, "fail", "entry_ambiguous");
         return 1;
     }
+    if (entry_nonexecutable) {
+        add_error("entrypoint_section_nonexec", "entrypoint %s belongs to a non-executable section", entry);
+        print_json(object, entry, "fail", "entry_invalid");
+        return 1;
+    }
     if (!entry_address) {
         add_error("entrypoint_missing", "entrypoint not found or not executable: %s", entry);
         print_json(object, entry, "fail", "entry_missing");
+        return 1;
+    }
+    if (!protect_image(&view, image, section_bases)) {
+        print_json(object, entry, "fail", "protect_error");
         return 1;
     }
     if (!FlushInstructionCache(GetCurrentProcess(), image, view.image_size)) {
@@ -894,6 +1033,7 @@ int main(int argc, char **argv) {
         print_json(object, entry, "fail", "loader_error");
         return 1;
     }
+    print_memory_event();
     {
         typedef void (*bof_entry)(char *, int);
         ((bof_entry)entry_address)((char *)args, args_len);

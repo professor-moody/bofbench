@@ -71,6 +71,19 @@ func TestAssessWindowsCOFFFallbackLookupWarning(t *testing.T) {
 	}
 }
 
+func TestAssessWindowsCOFFNonExecutableEntrypoint(t *testing.T) {
+	executable := false
+	result := AssessWindowsCOFF(COFFInput{
+		Arch:                 "x64",
+		Entrypoint:           "go",
+		EntrypointOK:         true,
+		EntrypointExecutable: &executable,
+	})
+	if result.Compatible || result.Status != "entrypoint_nonexecutable" || !hasIssue(result.Blockers, "entrypoint_nonexecutable") {
+		t.Fatalf("compatibility = %+v", result)
+	}
+}
+
 func hasIssue(issues []Issue, category string) bool {
 	for _, issue := range issues {
 		if issue.Category == category {

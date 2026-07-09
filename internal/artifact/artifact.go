@@ -34,34 +34,35 @@ const (
 
 type Analysis struct {
 	evidence.Header
-	Path                string                    `json:"path"`
-	Kind                Kind                      `json:"kind"`
-	Arch                string                    `json:"arch,omitempty"`
-	Format              string                    `json:"format,omitempty"`
-	Toolchain           ToolchainInfo             `json:"toolchain,omitempty"`
-	Entrypoint          string                    `json:"entrypoint,omitempty"`
-	EntrypointSymbol    string                    `json:"entrypoint_symbol,omitempty"`
-	EntrypointSection   string                    `json:"entrypoint_section,omitempty"`
-	EntrypointOffset    uint32                    `json:"entrypoint_offset,omitempty"`
-	EntrypointOK        bool                      `json:"entrypoint_ok"`
-	Size                int64                     `json:"size"`
-	SHA256              string                    `json:"sha256,omitempty"`
-	Sections            []Section                 `json:"sections,omitempty"`
-	Symbols             []Symbol                  `json:"symbols,omitempty"`
-	Unresolved          []string                  `json:"unresolved,omitempty"`
-	Imports             []Import                  `json:"imports,omitempty"`
-	Strings             []String                  `json:"strings,omitempty"`
-	Findings            []Finding                 `json:"findings,omitempty"`
-	FindingSummary      FindingSummary            `json:"finding_summary"`
-	Suppressions        []string                  `json:"suppressions,omitempty"`
-	Relocations         int                       `json:"relocations"`
-	RelocationDetails   []Relocation              `json:"relocation_details,omitempty"`
-	COFFDiagnostics     []coff.Diagnostic         `json:"coff_diagnostics,omitempty"`
-	LoaderCompatibility *capability.Compatibility `json:"loader_compatibility,omitempty"`
-	Runtime             RuntimeInfo               `json:"runtime_compatibility,omitempty"`
-	GeneratedAt         string                    `json:"generated_at"`
-	Warnings            []string                  `json:"warnings,omitempty"`
-	AnalyzerNotes       []string                  `json:"analyzer_notes,omitempty"`
+	Path                 string                    `json:"path"`
+	Kind                 Kind                      `json:"kind"`
+	Arch                 string                    `json:"arch,omitempty"`
+	Format               string                    `json:"format,omitempty"`
+	Toolchain            ToolchainInfo             `json:"toolchain,omitempty"`
+	Entrypoint           string                    `json:"entrypoint,omitempty"`
+	EntrypointSymbol     string                    `json:"entrypoint_symbol,omitempty"`
+	EntrypointSection    string                    `json:"entrypoint_section,omitempty"`
+	EntrypointOffset     uint32                    `json:"entrypoint_offset,omitempty"`
+	EntrypointOK         bool                      `json:"entrypoint_ok"`
+	EntrypointExecutable bool                      `json:"entrypoint_executable"`
+	Size                 int64                     `json:"size"`
+	SHA256               string                    `json:"sha256,omitempty"`
+	Sections             []Section                 `json:"sections,omitempty"`
+	Symbols              []Symbol                  `json:"symbols,omitempty"`
+	Unresolved           []string                  `json:"unresolved,omitempty"`
+	Imports              []Import                  `json:"imports,omitempty"`
+	Strings              []String                  `json:"strings,omitempty"`
+	Findings             []Finding                 `json:"findings,omitempty"`
+	FindingSummary       FindingSummary            `json:"finding_summary"`
+	Suppressions         []string                  `json:"suppressions,omitempty"`
+	Relocations          int                       `json:"relocations"`
+	RelocationDetails    []Relocation              `json:"relocation_details,omitempty"`
+	COFFDiagnostics      []coff.Diagnostic         `json:"coff_diagnostics,omitempty"`
+	LoaderCompatibility  *capability.Compatibility `json:"loader_compatibility,omitempty"`
+	Runtime              RuntimeInfo               `json:"runtime_compatibility,omitempty"`
+	GeneratedAt          string                    `json:"generated_at"`
+	Warnings             []string                  `json:"warnings,omitempty"`
+	AnalyzerNotes        []string                  `json:"analyzer_notes,omitempty"`
 }
 
 type Section struct {
@@ -267,7 +268,7 @@ func Markdown(a Analysis) string {
 	}
 	fmt.Fprintf(&b, "- Entry `%s`: `%t`\n", a.Entrypoint, a.EntrypointOK)
 	if a.EntrypointSymbol != "" {
-		fmt.Fprintf(&b, "- Entry symbol: `%s` in `%s` at `0x%x`\n", a.EntrypointSymbol, a.EntrypointSection, a.EntrypointOffset)
+		fmt.Fprintf(&b, "- Entry symbol: `%s` in `%s` at `0x%x` (executable: `%t`)\n", a.EntrypointSymbol, a.EntrypointSection, a.EntrypointOffset, a.EntrypointExecutable)
 	}
 	fmt.Fprintf(&b, "- Size: `%d`\n", a.Size)
 	fmt.Fprintf(&b, "- Relocations: `%d`\n\n", a.Relocations)
@@ -428,6 +429,7 @@ func analyzeCOFF(path, entry string, a Analysis) (Analysis, error) {
 			} else {
 				a.EntrypointOK = true
 			}
+			a.EntrypointExecutable = section.Executable
 			if !section.Executable {
 				a.COFFDiagnostics = append(a.COFFDiagnostics, coff.Diagnostic{Severity: "warning", Code: "entrypoint_section_nonexec", Detail: "entrypoint is defined in a non-executable section", Section: section.Name, Symbol: match.Name})
 			}
@@ -626,13 +628,19 @@ func assessLoaderCompatibility(a Analysis) capability.Compatibility {
 			Symbol:  relocation.Symbol,
 		})
 	}
+	var entrypointExecutable *bool
+	if a.EntrypointOK {
+		value := a.EntrypointExecutable
+		entrypointExecutable = &value
+	}
 	return capability.AssessWindowsCOFF(capability.COFFInput{
-		Arch:         a.Arch,
-		Entrypoint:   a.Entrypoint,
-		EntrypointOK: a.EntrypointOK,
-		LayoutIssues: layoutIssues,
-		Relocations:  relocations,
-		Unresolved:   a.Unresolved,
+		Arch:                 a.Arch,
+		Entrypoint:           a.Entrypoint,
+		EntrypointOK:         a.EntrypointOK,
+		EntrypointExecutable: entrypointExecutable,
+		LayoutIssues:         layoutIssues,
+		Relocations:          relocations,
+		Unresolved:           a.Unresolved,
 	})
 }
 

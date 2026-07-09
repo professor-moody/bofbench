@@ -54,20 +54,49 @@ func decodeLoaderOutput(output []byte, result *Result) ([]string, bool) {
 	if len(trimmed) == 0 {
 		return nil, false
 	}
-	if json.Unmarshal(trimmed, result) == nil {
-		return nil, true
-	}
 	lines := bytes.Split(trimmed, []byte{'\n'})
-	for index := len(lines) - 1; index >= 0; index-- {
+	rawLines := make([][]byte, 0, len(lines))
+	decoded := false
+	var eventMemory *MemoryEvidence
+	for index := 0; index < len(lines); index++ {
 		candidate := bytes.TrimSpace(lines[index])
-		if len(candidate) == 0 || candidate[0] != '{' {
+		if len(candidate) == 0 {
 			continue
 		}
-		if json.Unmarshal(candidate, result) == nil {
-			return processLines(bytes.Join(lines[:index], []byte{'\n'})), true
+		if candidate[0] != '{' {
+			rawLines = append(rawLines, candidate)
+			continue
+		}
+		var envelope struct {
+			ProtocolEvent string          `json:"protocol_event"`
+			Status        string          `json:"status"`
+			ExitState     string          `json:"exit_state"`
+			Memory        *MemoryEvidence `json:"memory"`
+		}
+		if json.Unmarshal(candidate, &envelope) != nil {
+			rawLines = append(rawLines, candidate)
+			continue
+		}
+		if envelope.ProtocolEvent != "" {
+			if envelope.ProtocolEvent == "memory_protect" && envelope.Memory != nil {
+				eventMemory = envelope.Memory
+			}
+			continue
+		}
+		if envelope.Status == "" && envelope.ExitState == "" {
+			rawLines = append(rawLines, candidate)
+			continue
+		}
+		var decodedResult Result
+		if json.Unmarshal(candidate, &decodedResult) == nil {
+			*result = decodedResult
+			decoded = true
 		}
 	}
-	return processLines(trimmed), false
+	if result.Memory == nil {
+		result.Memory = eventMemory
+	}
+	return processLines(bytes.Join(rawLines, []byte{'\n'})), decoded
 }
 
 func processLines(value []byte) []string {

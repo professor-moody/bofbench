@@ -41,6 +41,15 @@ func Run(req Request) (Result, error) {
 		exitCode := cmd.ProcessState.ExitCode()
 		process.ExitCode = &exitCode
 	}
+	exceptionCode := ""
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if exception, crashed := windowsExceptionCode(exitErr.ExitCode()); crashed {
+				exceptionCode = exception
+			}
+		}
+	}
 	if cmd.ProcessState == nil && err != nil {
 		res := NewResult(req, "setup_error", "loader_start_error", start)
 		res.Loader = path
@@ -51,10 +60,13 @@ func Run(req Request) (Result, error) {
 	}
 	if ctx.Err() != nil {
 		res := NewResult(req, "fail", "timeout", start)
+		var partial Result
+		prefix, _ := decodeLoaderOutput(stdout.Bytes(), &partial)
 		res.Loader = path
 		res.ErrorCode = "loader_timeout"
 		res.Process = process
-		process.Stdout = processLines(stdout.Bytes())
+		res.Memory = partial.Memory
+		process.Stdout = prefix
 		res.Errors = []string{"loader timed out"}
 		if process.StdoutTruncated || process.StderrTruncated {
 			res.Errors = append(res.Errors, "loader process output was truncated")
@@ -64,26 +76,17 @@ func Run(req Request) (Result, error) {
 	var res Result
 	resultErr := err
 	prefix, decoded := decodeLoaderOutput(stdout.Bytes(), &res)
+	memory := res.Memory
 	protocolValid := decoded
 	process.Stdout = prefix
 	if !decoded {
 		res = NewResult(req, "fail", "loader_protocol_error", start)
+		res.Memory = memory
 		res.ErrorCode = "invalid_loader_json"
-		process.Stdout = processLines(stdout.Bytes())
+		process.Stdout = prefix
 		res.Errors = append([]string(nil), process.Stderr...)
 		res.Errors = append(res.Errors, process.Stdout...)
-		if err != nil {
-			var exitErr *exec.ExitError
-			if errors.As(err, &exitErr) {
-				if exception, crashed := windowsExceptionCode(exitErr.ExitCode()); crashed {
-					res.ExitState = "crash"
-					res.ErrorCode = "windows_exception"
-					process.ExceptionCode = exception
-					res.Errors = append(res.Errors, "loader terminated with Windows exception "+exception)
-				}
-			}
-		}
-		if len(res.Errors) == 0 {
+		if len(res.Errors) == 0 && exceptionCode == "" {
 			res.Errors = []string{"loader did not emit a valid JSON result"}
 		}
 		if resultErr == nil {
@@ -92,12 +95,14 @@ func Run(req Request) (Result, error) {
 	} else if res.Status == "" || res.ExitState == "" {
 		protocolValid = false
 		res = NewResult(req, "fail", "loader_protocol_error", start)
+		res.Memory = memory
 		res.ErrorCode = "incomplete_loader_json"
 		res.Errors = []string{"loader JSON result is missing status or exit_state"}
 		resultErr = errors.New(res.Errors[0])
 	} else if res.Status != "pass" && res.Status != "fail" && res.Status != "setup_error" {
 		protocolValid = false
 		res = NewResult(req, "fail", "loader_protocol_error", start)
+		res.Memory = memory
 		res.ErrorCode = "invalid_loader_status"
 		res.Errors = []string{"loader JSON result has an invalid status"}
 		resultErr = errors.New(res.Errors[0])
@@ -127,6 +132,14 @@ func Run(req Request) (Result, error) {
 			res.ExitState = "loader_output_limit"
 			res.ErrorCode = "process_output_truncated"
 		}
+	}
+	if exceptionCode != "" {
+		res.Status = "fail"
+		res.ExitState = "crash"
+		res.ErrorCode = "windows_exception"
+		process.ExceptionCode = exceptionCode
+		res.Errors = append(res.Errors, "loader terminated with Windows exception "+exceptionCode)
+		resultErr = err
 	}
 	return res, resultErr
 }
