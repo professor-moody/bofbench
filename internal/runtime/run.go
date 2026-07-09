@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"bofbench/internal/artifact"
+	"bofbench/internal/capability"
 	"bofbench/internal/evidence"
 	"bofbench/internal/loader"
 )
@@ -29,20 +30,21 @@ type Request struct {
 
 type Result struct {
 	evidence.Header
-	ObjectFingerprint *evidence.FileFingerprint `json:"object_fingerprint,omitempty"`
-	LoaderFingerprint *evidence.FileFingerprint `json:"loader_fingerprint,omitempty"`
-	ConfigFingerprint *evidence.FileFingerprint `json:"config_fingerprint,omitempty"`
-	Object            string                    `json:"object"`
-	Kind              string                    `json:"kind"`
-	Runtime           string                    `json:"runtime"`
-	Entry             string                    `json:"entry"`
-	Status            string                    `json:"status"`
-	ExitState         string                    `json:"exit_state"`
-	Output            []string                  `json:"output,omitempty"`
-	Errors            []string                  `json:"errors,omitempty"`
-	Events            []Event                   `json:"events,omitempty"`
-	DurationMS        int64                     `json:"duration_ms"`
-	Loader            string                    `json:"loader,omitempty"`
+	ObjectFingerprint   *evidence.FileFingerprint `json:"object_fingerprint,omitempty"`
+	LoaderFingerprint   *evidence.FileFingerprint `json:"loader_fingerprint,omitempty"`
+	ConfigFingerprint   *evidence.FileFingerprint `json:"config_fingerprint,omitempty"`
+	LoaderCompatibility *capability.Compatibility `json:"loader_compatibility,omitempty"`
+	Object              string                    `json:"object"`
+	Kind                string                    `json:"kind"`
+	Runtime             string                    `json:"runtime"`
+	Entry               string                    `json:"entry"`
+	Status              string                    `json:"status"`
+	ExitState           string                    `json:"exit_state"`
+	Output              []string                  `json:"output,omitempty"`
+	Errors              []string                  `json:"errors,omitempty"`
+	Events              []Event                   `json:"events,omitempty"`
+	DurationMS          int64                     `json:"duration_ms"`
+	Loader              string                    `json:"loader,omitempty"`
 }
 
 type Event struct {
@@ -71,6 +73,23 @@ func Run(req Request) (Result, error) {
 		if kind != artifact.KindCOFF {
 			return fail(base, "wrong_artifact", fmt.Errorf("windows-coff requires COFF artifact, got %s", kind), start)
 		}
+		analysis, analyzeErr := artifact.Analyze(req.Path, req.Entry)
+		if analyzeErr != nil {
+			return fail(base, "analysis_error", fmt.Errorf("loader preflight analysis: %w", analyzeErr), start)
+		}
+		base.LoaderCompatibility = analysis.LoaderCompatibility
+		if analysis.LoaderCompatibility == nil {
+			return fail(base, "analysis_error", errors.New("loader preflight analysis did not produce a compatibility result"), start)
+		}
+		if !analysis.LoaderCompatibility.Compatible {
+			addTimedEvent(&base, start, "preflight", "blocked", compatibilityMessage(*analysis.LoaderCompatibility))
+			return fail(base, "preflight_blocked", fmt.Errorf("loader preflight blocked: %s", compatibilityMessage(*analysis.LoaderCompatibility)), start)
+		}
+		preflightStatus := "pass"
+		if len(analysis.LoaderCompatibility.Warnings) > 0 {
+			preflightStatus = "warn"
+		}
+		addTimedEvent(&base, start, "preflight", preflightStatus, compatibilityMessage(*analysis.LoaderCompatibility))
 		res, err := loader.Run(loader.Request{Object: req.Path, Entry: req.Entry, ArgHex: req.ArgHex, TimeoutMS: req.TimeoutMS})
 		out := base
 		out.Object = res.Object
@@ -231,7 +250,7 @@ func loadMessage(res Result) string {
 
 func shouldMarkEntryCall(res Result) bool {
 	switch res.ExitState {
-	case "loader_missing", "requires_windows", "requires_linux", "requires_darwin", "requires_wine", "wrong_artifact", "unknown_runtime", "not_implemented", "bad_entry", "compiler_missing", "link_error", "relocation_error":
+	case "loader_missing", "requires_windows", "requires_linux", "requires_darwin", "requires_wine", "wrong_artifact", "unknown_runtime", "not_implemented", "bad_entry", "compiler_missing", "link_error", "relocation_error", "preflight_blocked", "analysis_error":
 		return false
 	default:
 		return res.Entry != ""
@@ -253,7 +272,7 @@ func SelectRuntime(kind artifact.Kind) string {
 
 func fail(base Result, exit string, err error, start time.Time) (Result, error) {
 	base.Status = "setup_error"
-	if exit == "not_implemented" || exit == "wrong_artifact" || exit == "unknown_runtime" {
+	if exit == "not_implemented" || exit == "wrong_artifact" || exit == "unknown_runtime" || exit == "preflight_blocked" || exit == "analysis_error" {
 		base.Status = "fail"
 	}
 	base.ExitState = exit
@@ -261,6 +280,27 @@ func fail(base Result, exit string, err error, start time.Time) (Result, error) 
 	base.DurationMS = time.Since(start).Milliseconds()
 	finalizeEvents(&base, start)
 	return base, err
+}
+
+func compatibilityMessage(compatibility capability.Compatibility) string {
+	issues := compatibility.Blockers
+	if len(issues) == 0 {
+		issues = compatibility.Warnings
+	}
+	if len(issues) == 0 {
+		return compatibility.Status
+	}
+	parts := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		value := issue.Category
+		if issue.Symbol != "" {
+			value += ": " + issue.Symbol
+		} else if issue.Relocation != "" {
+			value += ": " + issue.Relocation
+		}
+		parts = append(parts, value)
+	}
+	return strings.Join(parts, "; ")
 }
 
 var cIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)

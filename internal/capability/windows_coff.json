@@ -1,0 +1,52 @@
+{
+  "schema": "bofbench.loader-capabilities",
+  "schema_version": 1,
+  "catalog_version": "windows-coff-x64/v1",
+  "runtime": "windows-coff",
+  "format": "COFF",
+  "machine": {
+    "name": "AMD64",
+    "arch": "x64",
+    "code": 34404
+  },
+  "default_entrypoint": "go",
+  "relocations": [
+    {"name": "ABSOLUTE", "code": 0, "supported": true, "detail": "no relocation"},
+    {"name": "ADDR64", "code": 1, "supported": true, "detail": "64-bit virtual address"},
+    {"name": "ADDR32", "code": 2, "supported": true, "detail": "32-bit virtual address"},
+    {"name": "ADDR32NB", "code": 3, "supported": true, "detail": "32-bit image-relative address"},
+    {"name": "REL32", "code": 4, "supported": true, "detail": "32-bit relative displacement"},
+    {"name": "REL32_1", "code": 5, "supported": true, "detail": "REL32 with one-byte adjustment"},
+    {"name": "REL32_2", "code": 6, "supported": true, "detail": "REL32 with two-byte adjustment"},
+    {"name": "REL32_3", "code": 7, "supported": true, "detail": "REL32 with three-byte adjustment"},
+    {"name": "REL32_4", "code": 8, "supported": true, "detail": "REL32 with four-byte adjustment"},
+    {"name": "REL32_5", "code": 9, "supported": true, "detail": "REL32 with five-byte adjustment"},
+    {"name": "SECTION", "code": 11, "supported": false, "detail": "section-index relocations are not implemented"},
+    {"name": "SECREL", "code": 12, "supported": false, "detail": "section-relative relocations are not implemented"}
+  ],
+  "beacon_apis": [
+    "BeaconDataParse",
+    "BeaconDataInt",
+    "BeaconDataShort",
+    "BeaconDataLength",
+    "BeaconDataExtract",
+    "BeaconPrintf",
+    "BeaconOutput"
+  ],
+  "import_pointer_prefixes": ["__imp__", "__imp_", "_imp__"],
+  "dynamic_import_separator": "$",
+  "fallback_libraries": [
+    "kernel32",
+    "advapi32",
+    "user32",
+    "netapi32",
+    "wtsapi32",
+    "iphlpapi",
+    "ws2_32",
+    "secur32",
+    "ole32",
+    "shell32",
+    "ntdll",
+    "msvcrt"
+  ]
+}

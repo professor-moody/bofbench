@@ -61,7 +61,7 @@ bofbench inspect ./dist/whoami.x64.o
 ```
 
 `inspect` supports COFF, ELF, Mach-O, and unknown artifact detection.
-It includes runtime compatibility, sections, imports, findings, unresolved symbols, and a short visible-string preview.
+It includes runtime compatibility, Windows loader preflight status, sections, imports, findings, unresolved symbols, and a short visible-string preview.
 
 ## `analyze`
 
@@ -74,7 +74,22 @@ bofbench analyze ./dist/whoami.x64.o --baseline runs/<old-analysis>/analysis.jso
 ```
 
 Outputs land in `runs/<timestamp>-analysis-*/analysis.json` and `analysis.md`.
-Reports include runtime compatibility, import classification, relocation details, visible strings, review findings, and optional baseline diffs. See [Analysis Reports](analysis.md).
+Reports include runtime compatibility, loader-catalog identity, structured compatibility blockers/warnings, import classification, numeric relocation details, visible strings, review findings, and optional baseline diffs. See [Analysis Reports](analysis.md).
+
+## `preflight`
+
+Predict whether one artifact or an arsenal selection can be loaded by the current Windows x64 COFF loader without executing it:
+
+```sh
+bofbench preflight ./dist/whoami.x64.o
+bofbench preflight arsenal/trustedsec-sa --select whoami,ipconfig,env
+bofbench preflight arsenal/trustedsec-sa --format json
+bofbench preflight arsenal/trustedsec-sa --format md --strict
+```
+
+The command writes `preflight.json` and `preflight.md` under `runs/<timestamp>-preflight-*/`. It classifies architecture, entrypoint, relocation, Beacon API, dynamic-import syntax, and fallback-library lookup behavior from the same versioned catalog used to generate the native C loader header.
+
+Hard blockers and analysis failures exit nonzero. Runtime fallback lookups are warnings by default and become a failing gate with `--strict`. `--select` accepts a comma-separated arsenal subset; `--format` accepts `text`, `json`, or `md`.
 
 ## `run`
 
@@ -87,6 +102,8 @@ bofbench run ./fixtures/native.o --runtime auto --args z:hello
 ```
 
 `--runtime auto` maps COFF to `windows-coff`, ELF to `linux-elf`, and Mach-O to `darwin-macho`.
+
+The `windows-coff` runtime runs the same loader preflight first and refuses incompatible artifacts before starting the native loader. The native loader independently enforces its generated capability header.
 
 For ELF and Mach-O objects on matching hosts, `run` links a tiny native harness with `cc` and calls `entry(argc, argv)`. Token values after `--args` become argv values. For Windows COFF BOFs, tokens are packed into Beacon-compatible args and passed to `go(char *args, int len)`.
 

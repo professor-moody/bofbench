@@ -5,19 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include "capabilities.generated.h"
 
-#define MACHINE_AMD64 0x8664
 #define SYM_UNDEFINED 0
-#define REL_AMD64_ABSOLUTE 0x0000
-#define REL_AMD64_ADDR64 0x0001
-#define REL_AMD64_ADDR32 0x0002
-#define REL_AMD64_ADDR32NB 0x0003
-#define REL_AMD64_REL32 0x0004
-#define REL_AMD64_REL32_1 0x0005
-#define REL_AMD64_REL32_2 0x0006
-#define REL_AMD64_REL32_3 0x0007
-#define REL_AMD64_REL32_4 0x0008
-#define REL_AMD64_REL32_5 0x0009
 
 #pragma pack(push, 1)
 typedef struct {
@@ -234,22 +224,6 @@ static char *symbol_name(coff_symbol *sym, char *string_table, size_t string_tab
     return buf;
 }
 
-static const char *relocation_type_name(uint16_t type) {
-    switch (type) {
-    case REL_AMD64_ABSOLUTE: return "ABSOLUTE";
-    case REL_AMD64_ADDR64: return "ADDR64";
-    case REL_AMD64_ADDR32: return "ADDR32";
-    case REL_AMD64_ADDR32NB: return "ADDR32NB";
-    case REL_AMD64_REL32: return "REL32";
-    case REL_AMD64_REL32_1: return "REL32_1";
-    case REL_AMD64_REL32_2: return "REL32_2";
-    case REL_AMD64_REL32_3: return "REL32_3";
-    case REL_AMD64_REL32_4: return "REL32_4";
-    case REL_AMD64_REL32_5: return "REL32_5";
-    default: return "UNKNOWN";
-    }
-}
-
 static char *relocation_symbol_name(
     coff_relocation *rel,
     coff_symbol *symbols,
@@ -266,25 +240,10 @@ static char *relocation_symbol_name(
     return symbol_name(&symbols[rel->symbol_table_index], string_table, string_table_size, buf, buflen);
 }
 
-static char *strip_import_prefix(char *name) {
-    if (strncmp(name, "__imp_", 6) == 0) return name + 6;
-    if (strncmp(name, "__imp__", 7) == 0) return name + 7;
-    return name;
-}
-
-static const char *normalized_import_name(const char *name, char *buf, size_t buflen) {
-    snprintf(buf, buflen, "%s", name);
-    return strip_import_prefix(buf);
-}
-
 static HMODULE load_symbol_library(const char *library) {
     char dll[320];
     snprintf(dll, sizeof(dll), "%s.dll", library);
     return LoadLibraryA(dll);
-}
-
-static int is_import_pointer_symbol(const char *name) {
-    return strncmp(name, "__imp_", 6) == 0 || strncmp(name, "__imp__", 7) == 0;
 }
 
 static uintptr_t alloc_near_data_ptr(uintptr_t target) {
@@ -314,7 +273,7 @@ static uintptr_t alloc_near_jump_stub(uintptr_t target) {
 static uintptr_t cache_external_value(const char *name, uintptr_t target, resolved_symbol *resolved, int *resolved_count) {
     uintptr_t value;
     if (!target) return 0;
-    value = is_import_pointer_symbol(name) ? alloc_near_data_ptr(target) : alloc_near_jump_stub(target);
+    value = bofbench_is_import_pointer_symbol(name) ? alloc_near_data_ptr(target) : alloc_near_jump_stub(target);
     if (!value) {
         add_line(g_error, &g_error_count, "external stub area exhausted while resolving %s", name);
         return 0;
@@ -329,12 +288,11 @@ static uintptr_t cache_external_value(const char *name, uintptr_t target, resolv
 }
 
 static uintptr_t resolve_winapi_target(const char *name) {
-    const char *libs[] = {"kernel32", "advapi32", "user32", "netapi32", "wtsapi32", "iphlpapi", "ws2_32", "secur32", "ole32", "shell32", "ntdll", "msvcrt"};
     char tmp[256];
     char *func;
     size_t i;
     snprintf(tmp, sizeof(tmp), "%s", name);
-    func = strip_import_prefix(tmp);
+    func = (char *)bofbench_normalize_import(tmp);
     char *dollar = strchr(func, '$');
     if (dollar) {
         *dollar = 0;
@@ -342,8 +300,8 @@ static uintptr_t resolve_winapi_target(const char *name) {
         if (!mod) return 0;
         return (uintptr_t)GetProcAddress(mod, dollar + 1);
     }
-    for (i = 0; i < sizeof(libs) / sizeof(libs[0]); i++) {
-        HMODULE mod = load_symbol_library(libs[i]);
+    for (i = 0; i < sizeof(bofbench_fallback_libraries) / sizeof(bofbench_fallback_libraries[0]); i++) {
+        HMODULE mod = load_symbol_library(bofbench_fallback_libraries[i]);
         FARPROC p;
         if (!mod) continue;
         p = GetProcAddress(mod, func);
@@ -355,19 +313,14 @@ static uintptr_t resolve_winapi_target(const char *name) {
 static uintptr_t resolve_external(const char *name, resolved_symbol *resolved, int *resolved_count) {
     int i;
     uintptr_t target = 0;
-    char normalized_buf[256];
-    const char *normalized = normalized_import_name(name, normalized_buf, sizeof(normalized_buf));
+    const char *normalized = bofbench_normalize_import(name);
     for (i = 0; i < *resolved_count; i++) {
         if (strcmp(resolved[i].name, name) == 0) return resolved[i].value;
     }
-    if (strcmp(normalized, "BeaconDataParse") == 0) target = (uintptr_t)BeaconDataParse;
-    else if (strcmp(normalized, "BeaconDataInt") == 0) target = (uintptr_t)BeaconDataInt;
-    else if (strcmp(normalized, "BeaconDataShort") == 0) target = (uintptr_t)BeaconDataShort;
-    else if (strcmp(normalized, "BeaconDataLength") == 0) target = (uintptr_t)BeaconDataLength;
-    else if (strcmp(normalized, "BeaconDataExtract") == 0) target = (uintptr_t)BeaconDataExtract;
-    else if (strcmp(normalized, "BeaconPrintf") == 0) target = (uintptr_t)BeaconPrintf;
-    else if (strcmp(normalized, "BeaconOutput") == 0) target = (uintptr_t)BeaconOutput;
-    else target = resolve_winapi_target(name);
+#define TRY_BEACON_API(api) if (!target && strcmp(normalized, #api) == 0) target = (uintptr_t)api;
+    BOFBENCH_BEACON_API_LIST(TRY_BEACON_API)
+#undef TRY_BEACON_API
+    if (!target) target = resolve_winapi_target(name);
     return cache_external_value(name, target, resolved, resolved_count);
 }
 
@@ -425,6 +378,20 @@ static int apply_relocations(
             coff_relocation *rel = &rels[ri];
             char *sym_name = relocation_symbol_name(rel, symbols, symbol_count, string_table, string_table_size, sym_name_buf, sizeof(sym_name_buf));
             uint8_t *where = section_bases[si] + rel->virtual_address;
+            if (!bofbench_relocation_is_supported(rel->type)) {
+                add_line(
+                    g_error,
+                    &g_error_count,
+                    "unsupported AMD64 relocation %s/0x%04x for symbol %s in section %.*s+0x%x",
+                    bofbench_relocation_type_name(rel->type),
+                    rel->type,
+                    sym_name,
+                    8,
+                    sec->name,
+                    rel->virtual_address
+                );
+                return 0;
+            }
             uintptr_t target = symbol_address(rel->symbol_table_index, symbols, symbol_count, string_table, string_table_size, section_bases, section_count, resolved, resolved_count);
             if (!target && rel->type != REL_AMD64_ABSOLUTE) {
                 add_line(
@@ -433,7 +400,7 @@ static int apply_relocations(
                     "unresolved symbol %s (index %u, relocation %s/0x%04x, section %.*s+0x%x)",
                     sym_name,
                     rel->symbol_table_index,
-                    relocation_type_name(rel->type),
+                    bofbench_relocation_type_name(rel->type),
                     rel->type,
                     8,
                     sec->name,
@@ -469,7 +436,7 @@ static int apply_relocations(
                     g_error,
                     &g_error_count,
                     "unsupported AMD64 relocation %s/0x%04x for symbol %s in section %.*s+0x%x",
-                    relocation_type_name(rel->type),
+                    bofbench_relocation_type_name(rel->type),
                     rel->type,
                     sym_name,
                     8,

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"bofbench/internal/capability"
 	"bofbench/internal/coff"
 	"bofbench/internal/evidence"
 	"bofbench/internal/runlog"
@@ -32,26 +33,27 @@ const (
 
 type Analysis struct {
 	evidence.Header
-	Path              string       `json:"path"`
-	Kind              Kind         `json:"kind"`
-	Arch              string       `json:"arch,omitempty"`
-	Format            string       `json:"format,omitempty"`
-	Entrypoint        string       `json:"entrypoint,omitempty"`
-	EntrypointOK      bool         `json:"entrypoint_ok"`
-	Size              int64        `json:"size"`
-	SHA256            string       `json:"sha256,omitempty"`
-	Sections          []Section    `json:"sections,omitempty"`
-	Symbols           []Symbol     `json:"symbols,omitempty"`
-	Unresolved        []string     `json:"unresolved,omitempty"`
-	Imports           []Import     `json:"imports,omitempty"`
-	Strings           []String     `json:"strings,omitempty"`
-	Findings          []Finding    `json:"findings,omitempty"`
-	Relocations       int          `json:"relocations"`
-	RelocationDetails []Relocation `json:"relocation_details,omitempty"`
-	Runtime           RuntimeInfo  `json:"runtime_compatibility,omitempty"`
-	GeneratedAt       string       `json:"generated_at"`
-	Warnings          []string     `json:"warnings,omitempty"`
-	AnalyzerNotes     []string     `json:"analyzer_notes,omitempty"`
+	Path                string                    `json:"path"`
+	Kind                Kind                      `json:"kind"`
+	Arch                string                    `json:"arch,omitempty"`
+	Format              string                    `json:"format,omitempty"`
+	Entrypoint          string                    `json:"entrypoint,omitempty"`
+	EntrypointOK        bool                      `json:"entrypoint_ok"`
+	Size                int64                     `json:"size"`
+	SHA256              string                    `json:"sha256,omitempty"`
+	Sections            []Section                 `json:"sections,omitempty"`
+	Symbols             []Symbol                  `json:"symbols,omitempty"`
+	Unresolved          []string                  `json:"unresolved,omitempty"`
+	Imports             []Import                  `json:"imports,omitempty"`
+	Strings             []String                  `json:"strings,omitempty"`
+	Findings            []Finding                 `json:"findings,omitempty"`
+	Relocations         int                       `json:"relocations"`
+	RelocationDetails   []Relocation              `json:"relocation_details,omitempty"`
+	LoaderCompatibility *capability.Compatibility `json:"loader_compatibility,omitempty"`
+	Runtime             RuntimeInfo               `json:"runtime_compatibility,omitempty"`
+	GeneratedAt         string                    `json:"generated_at"`
+	Warnings            []string                  `json:"warnings,omitempty"`
+	AnalyzerNotes       []string                  `json:"analyzer_notes,omitempty"`
 }
 
 type Section struct {
@@ -88,10 +90,11 @@ type Finding struct {
 }
 
 type Relocation struct {
-	Section string `json:"section"`
-	Offset  uint64 `json:"offset"`
-	Type    string `json:"type"`
-	Symbol  string `json:"symbol,omitempty"`
+	Section string  `json:"section"`
+	Offset  uint64  `json:"offset"`
+	Type    string  `json:"type"`
+	Code    *uint16 `json:"code,omitempty"`
+	Symbol  string  `json:"symbol,omitempty"`
 }
 
 type RuntimeInfo struct {
@@ -230,6 +233,23 @@ func Markdown(a Analysis) string {
 		}
 		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%s` | %s |\n\n", a.Runtime.Runtime, a.Runtime.Status, host, required, escapeTable(next))
 	}
+	if a.LoaderCompatibility != nil {
+		compatibility := a.LoaderCompatibility
+		fmt.Fprintf(&b, "## Loader Preflight\n\n- Catalog: `%s`\n- Status: `%s`\n- Compatible: `%t`\n", compatibility.CatalogVersion, compatibility.Status, compatibility.Compatible)
+		if len(compatibility.Blockers) > 0 {
+			b.WriteString("\n### Blockers\n\n| Category | Symbol | Relocation | Detail |\n| --- | --- | --- | --- |\n")
+			for _, issue := range compatibility.Blockers {
+				fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | %s |\n", issue.Category, escapeTable(issue.Symbol), escapeTable(issue.Relocation), escapeTable(issue.Detail))
+			}
+		}
+		if len(compatibility.Warnings) > 0 {
+			b.WriteString("\n### Preflight Warnings\n\n| Category | Symbol | Detail |\n| --- | --- | --- |\n")
+			for _, issue := range compatibility.Warnings {
+				fmt.Fprintf(&b, "| `%s` | `%s` | %s |\n", issue.Category, escapeTable(issue.Symbol), escapeTable(issue.Detail))
+			}
+		}
+		b.WriteString("\n")
+	}
 	if len(a.Findings) > 0 {
 		b.WriteString("## Findings\n\n| Severity | Category | Detail | Evidence |\n| --- | --- | --- | --- |\n")
 		for _, finding := range a.Findings {
@@ -296,10 +316,12 @@ func analyzeCOFF(path, entry string, a Analysis) (Analysis, error) {
 		})
 		a.Relocations += len(section.Relocations)
 		for _, rel := range section.Relocations {
+			code := rel.Type
 			a.RelocationDetails = append(a.RelocationDetails, Relocation{
 				Section: rel.Section,
 				Offset:  uint64(rel.VirtualAddress),
 				Type:    rel.TypeName,
+				Code:    &code,
 				Symbol:  rel.SymbolName,
 			})
 		}
@@ -319,6 +341,10 @@ func analyzeCOFF(path, entry string, a Analysis) (Analysis, error) {
 }
 
 func finishAnalysis(path string, a *Analysis) {
+	if a.Kind == KindCOFF {
+		compatibility := assessLoaderCompatibility(*a)
+		a.LoaderCompatibility = &compatibility
+	}
 	a.Runtime = runtimeInfo(*a)
 	if !a.EntrypointOK && a.Entrypoint != "" && a.Kind != KindUnknown {
 		a.Warnings = append(a.Warnings, fmt.Sprintf("entrypoint %q was not found", a.Entrypoint))
@@ -360,13 +386,16 @@ func runtimeInfo(a Analysis) RuntimeInfo {
 		info.RequiredArch = "amd64"
 		info.RunCommand = fmt.Sprintf("bofbench run %s --runtime windows-coff", a.Path)
 		info.TestCommand = fmt.Sprintf("bofbench test %s --runtime windows-coff", a.Path)
-		if a.Arch != "" && a.Arch != "x64" {
-			info.Status = "unsupported_arch"
-			info.Note = "windows-coff native execution currently supports x64 COFF objects"
+		if a.LoaderCompatibility != nil && !a.LoaderCompatibility.Compatible {
+			info.Status = a.LoaderCompatibility.Status
+			info.Note = fmt.Sprintf("loader preflight found %d blocking compatibility issue(s)", len(a.LoaderCompatibility.Blockers))
 			return info
 		}
 		if goruntime.GOOS == "windows" && goruntime.GOARCH == "amd64" {
 			info.Status = "runnable"
+			if a.LoaderCompatibility != nil && len(a.LoaderCompatibility.Warnings) > 0 {
+				info.Status = "runnable_with_runtime_lookup"
+			}
 			info.CanRun = true
 			info.Note = "native Windows COFF loader can run this artifact on the current host"
 			return info
@@ -426,9 +455,7 @@ func archMatches(required, host string) bool {
 
 func classifyImport(symbol string) Import {
 	original := symbol
-	symbol = strings.TrimPrefix(symbol, "__imp_")
-	symbol = strings.TrimPrefix(symbol, "_imp__")
-	symbol = strings.TrimPrefix(symbol, "__imp__")
+	symbol, _ = capability.WindowsCOFF().NormalizeImport(symbol)
 	imp := Import{Symbol: original, Category: "external"}
 	if strings.HasPrefix(symbol, "Beacon") {
 		imp.Category = "beacon_api"
@@ -449,6 +476,28 @@ func classifyImport(symbol string) Import {
 	}
 	imp.API = trimmed
 	return imp
+}
+
+func assessLoaderCompatibility(a Analysis) capability.Compatibility {
+	relocations := make([]capability.RelocationUse, 0, len(a.RelocationDetails))
+	for _, relocation := range a.RelocationDetails {
+		if relocation.Code == nil {
+			continue
+		}
+		relocations = append(relocations, capability.RelocationUse{
+			Code:    *relocation.Code,
+			Name:    relocation.Type,
+			Section: relocation.Section,
+			Symbol:  relocation.Symbol,
+		})
+	}
+	return capability.AssessWindowsCOFF(capability.COFFInput{
+		Arch:         a.Arch,
+		Entrypoint:   a.Entrypoint,
+		EntrypointOK: a.EntrypointOK,
+		Relocations:  relocations,
+		Unresolved:   a.Unresolved,
+	})
 }
 
 func importFindings(imp Import) []Finding {

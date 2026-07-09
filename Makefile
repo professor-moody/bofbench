@@ -1,9 +1,15 @@
 BIN := work/bin/bofbench
 WINBIN := work/bin/bofbench.exe
 
-.PHONY: test build build-windows native-loader docs doctor release clean
+.PHONY: generate verify-generated test build build-windows native-loader docs doctor release clean
 
-test:
+generate:
+	go generate ./internal/capability
+
+verify-generated:
+	go run ./cmd/capgen -check -out native/loader/capabilities.generated.h
+
+test: verify-generated
 	go test ./...
 
 build:
@@ -12,7 +18,7 @@ build:
 build-windows:
 	GOOS=windows GOARCH=amd64 go build -o $(WINBIN) ./cmd/bofbench
 
-native-loader:
+native-loader: verify-generated
 	$(MAKE) -C native/loader clean all
 
 docs:

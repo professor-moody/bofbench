@@ -18,10 +18,12 @@ import (
 	"bofbench/internal/arsenal"
 	"bofbench/internal/artifact"
 	"bofbench/internal/buildsys"
+	"bofbench/internal/capability"
 	"bofbench/internal/config"
 	"bofbench/internal/doctor"
 	"bofbench/internal/evidence"
 	"bofbench/internal/lab"
+	preflightsvc "bofbench/internal/preflight"
 	"bofbench/internal/runlog"
 	runtimesvc "bofbench/internal/runtime"
 	"bofbench/internal/stage"
@@ -101,6 +103,7 @@ func rootCommand(stdout, stderr io.Writer) *cobra.Command {
 		buildCommand(stdout),
 		inspectCommand(stdout),
 		analyzeCommand(stdout),
+		preflightCommand(stdout),
 		runCommand(stdout),
 		testCommand(stdout),
 		stageCommand(stdout),
@@ -318,6 +321,56 @@ func analyzeCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&entry, "entry", "go", "entrypoint symbol")
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json or md")
 	cmd.Flags().StringVar(&baselinePath, "baseline", "", "previous analysis.json to diff against")
+	return cmd
+}
+
+func preflightCommand(stdout io.Writer) *cobra.Command {
+	var selectList string
+	var entry string
+	var format string
+	var strict bool
+	cmd := &cobra.Command{
+		Use:   "preflight <artifact|arsenal>",
+		Short: "Predict Windows COFF loader compatibility without execution",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "text" && format != "json" && format != "md" && format != "markdown" {
+				return fmt.Errorf("unknown preflight format %q", format)
+			}
+			persisted, err := preflightsvc.Run(preflightsvc.Options{
+				Path:       args[0],
+				Select:     selectList,
+				Entrypoint: entry,
+			})
+			if err != nil {
+				return err
+			}
+			switch format {
+			case "text":
+				fmt.Fprint(stdout, preflightsvc.Text(persisted.Report))
+				fmt.Fprintf(stdout, "reports: %s %s\n", persisted.JSONPath, persisted.MDPath)
+			case "json":
+				if err := printJSON(stdout, struct {
+					Report   preflightsvc.Report `json:"report"`
+					JSONPath string              `json:"json_path"`
+					MDPath   string              `json:"md_path"`
+				}{Report: persisted.Report, JSONPath: persisted.JSONPath, MDPath: persisted.MDPath}); err != nil {
+					return err
+				}
+			case "md", "markdown":
+				fmt.Fprint(stdout, preflightsvc.Markdown(persisted.Report))
+				fmt.Fprintf(stdout, "\nreports: %s %s\n", persisted.JSONPath, persisted.MDPath)
+			}
+			if persisted.Report.HasProblems(strict) {
+				return codedError{code: 1, err: fmt.Errorf("loader preflight gate failed with status %s", persisted.Report.Status)}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&selectList, "select", "", "comma-separated arsenal selection")
+	cmd.Flags().StringVar(&entry, "entry", "go", "entrypoint symbol")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, or md")
+	cmd.Flags().BoolVar(&strict, "strict", false, "fail on runtime-lookup warnings as well as blockers")
 	return cmd
 }
 
@@ -734,6 +787,15 @@ func testArsenal(stdout io.Writer, root string, entries []arsenal.Entry, selectL
 			failed = true
 			continue
 		}
+		if a.Kind == artifact.KindCOFF && a.LoaderCompatibility != nil && !a.LoaderCompatibility.Compatible {
+			itemResult.Status = "fail"
+			itemResult.Phase = "preflight"
+			itemResult.Error = appCompatibilityMessage(*a.LoaderCompatibility)
+			fmt.Fprintf(stdout, "%s: preflight fail: %s\n", item.Name, itemResult.Error)
+			report.Results = append(report.Results, itemResult)
+			failed = true
+			continue
+		}
 		selectedRuntime := runtimeName
 		if selectedRuntime == "" || selectedRuntime == "auto" {
 			selectedRuntime = runtimesvc.SelectRuntime(a.Kind)
@@ -837,6 +899,27 @@ func testArsenal(stdout io.Writer, root string, entries []arsenal.Entry, selectL
 		return codedError{code: 1, err: fmt.Errorf("one or more arsenal tests failed")}
 	}
 	return nil
+}
+
+func appCompatibilityMessage(compatibility capability.Compatibility) string {
+	issues := compatibility.Blockers
+	if len(issues) == 0 {
+		issues = compatibility.Warnings
+	}
+	if len(issues) == 0 {
+		return compatibility.Status
+	}
+	parts := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		value := issue.Category
+		if issue.Symbol != "" {
+			value += ": " + issue.Symbol
+		} else if issue.Relocation != "" {
+			value += ": " + issue.Relocation
+		}
+		parts = append(parts, value)
+	}
+	return strings.Join(parts, "; ")
 }
 
 func summarizeArsenalResults(results []arsenalTestResult) arsenalTestSummary {
@@ -1016,6 +1099,25 @@ func printAnalysis(w io.Writer, a artifact.Analysis) {
 		}
 		if a.Runtime.Note != "" {
 			fmt.Fprintf(w, "  note: %s\n", a.Runtime.Note)
+		}
+	}
+	if a.LoaderCompatibility != nil {
+		compatibility := a.LoaderCompatibility
+		fmt.Fprintf(w, "loader preflight:\n")
+		fmt.Fprintf(w, "  catalog=%s status=%s compatible=%s blockers=%d warnings=%d\n", compatibility.CatalogVersion, compatibility.Status, yesNo(compatibility.Compatible), len(compatibility.Blockers), len(compatibility.Warnings))
+		for _, issue := range compatibility.Blockers {
+			fmt.Fprintf(w, "  blocker %-28s %s", issue.Category, issue.Detail)
+			if issue.Symbol != "" {
+				fmt.Fprintf(w, " (%s)", issue.Symbol)
+			}
+			fmt.Fprintln(w)
+		}
+		for _, issue := range compatibility.Warnings {
+			fmt.Fprintf(w, "  warning %-28s %s", issue.Category, issue.Detail)
+			if issue.Symbol != "" {
+				fmt.Fprintf(w, " (%s)", issue.Symbol)
+			}
+			fmt.Fprintln(w)
 		}
 	}
 	if len(a.Findings) > 0 {

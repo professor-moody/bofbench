@@ -19,6 +19,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Verify generated loader capabilities
+        shell: bash
+        run: go run ./cmd/capgen -check -out native/loader/capabilities.generated.h
       - name: Test
         run: go test ./...
       - name: Build CLI
@@ -34,6 +37,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - run: go run ./cmd/capgen -check -out native/loader/capabilities.generated.h
       - run: GOOS=windows GOARCH=amd64 go build -o bofbench.exe ./cmd/bofbench
 
   native-loader:
@@ -41,6 +45,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go run ./cmd/capgen -check -out native/loader/capabilities.generated.h
       - run: sudo apt-get update && sudo apt-get install -y mingw-w64
       - run: make -C native/loader clean all
 

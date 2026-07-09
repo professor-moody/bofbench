@@ -45,6 +45,9 @@ func TestAnalyzeCOFF(t *testing.T) {
 	if a.Runtime.Runtime != "windows-coff" || a.Runtime.RequiredOS != "windows" || a.Runtime.RequiredArch != "amd64" {
 		t.Fatalf("unexpected runtime compatibility: %+v", a.Runtime)
 	}
+	if a.LoaderCompatibility == nil || !a.LoaderCompatibility.Compatible || a.LoaderCompatibility.Status != "compatible" {
+		t.Fatalf("unexpected loader compatibility: %+v", a.LoaderCompatibility)
+	}
 	if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
 		if !a.Runtime.CanRun || a.Runtime.Status != "runnable" {
 			t.Fatalf("expected runnable on Windows amd64: %+v", a.Runtime)
@@ -59,6 +62,91 @@ func TestAnalyzeCOFF(t *testing.T) {
 	if !strings.Contains(md, "## Findings") || !strings.Contains(md, "## Imports") || !strings.Contains(md, "VirtualAlloc") {
 		t.Fatalf("markdown missing richer analysis:\n%s", md)
 	}
+}
+
+func TestAnalyzeCOFFLoaderPreflight(t *testing.T) {
+	t.Run("unsupported Beacon API", func(t *testing.T) {
+		obj := filepath.Join(t.TempDir(), "beacon.o")
+		if err := coff.CreateMockObject(obj, "x64", "go", []string{"BeaconFormatAlloc"}); err != nil {
+			t.Fatal(err)
+		}
+		a, err := Analyze(obj, "go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertLoaderIssue(t, a, "unsupported_beacon_api")
+		if a.Runtime.Status != "unsupported_beacon_api" || a.Runtime.CanRun {
+			t.Fatalf("runtime should honor preflight blocker: %+v", a.Runtime)
+		}
+	})
+
+	t.Run("unsupported relocation", func(t *testing.T) {
+		obj := filepath.Join(t.TempDir(), "secrel.o")
+		if err := coff.CreateMockObjectWithRelocations(obj, "x64", "go", []string{"BeaconPrintf"}, []coff.MockRelocation{{Symbol: "BeaconPrintf", Type: 0x000c}}); err != nil {
+			t.Fatal(err)
+		}
+		a, err := Analyze(obj, "go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertLoaderIssue(t, a, "unsupported_relocation")
+		if len(a.RelocationDetails) != 1 || a.RelocationDetails[0].Code == nil || *a.RelocationDetails[0].Code != 0x000c || a.RelocationDetails[0].Type != "SECREL" {
+			t.Fatalf("relocation evidence = %+v", a.RelocationDetails)
+		}
+	})
+
+	t.Run("unsupported architecture", func(t *testing.T) {
+		obj := filepath.Join(t.TempDir(), "x86.o")
+		if err := coff.CreateMockObject(obj, "x86", "go", nil); err != nil {
+			t.Fatal(err)
+		}
+		a, err := Analyze(obj, "go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertLoaderIssue(t, a, "unsupported_arch")
+	})
+
+	t.Run("fallback lookup warning", func(t *testing.T) {
+		obj := filepath.Join(t.TempDir(), "lookup.o")
+		if err := coff.CreateMockObject(obj, "x64", "go", []string{"MissingExternal"}); err != nil {
+			t.Fatal(err)
+		}
+		a, err := Analyze(obj, "go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a.LoaderCompatibility == nil || !a.LoaderCompatibility.Compatible || a.LoaderCompatibility.Status != "compatible_runtime_lookup" || len(a.LoaderCompatibility.Warnings) != 1 {
+			t.Fatalf("loader compatibility = %+v", a.LoaderCompatibility)
+		}
+	})
+
+	t.Run("long import pointer prefix", func(t *testing.T) {
+		obj := filepath.Join(t.TempDir(), "pointer.o")
+		if err := coff.CreateMockObject(obj, "x64", "go", []string{"__imp__BeaconPrintf"}); err != nil {
+			t.Fatal(err)
+		}
+		a, err := Analyze(obj, "go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !hasImport(a, "__imp__BeaconPrintf", "beacon_api") || a.LoaderCompatibility == nil || !a.LoaderCompatibility.Compatible {
+			t.Fatalf("pointer import analysis = imports=%+v compatibility=%+v", a.Imports, a.LoaderCompatibility)
+		}
+	})
+}
+
+func assertLoaderIssue(t *testing.T, a Analysis, category string) {
+	t.Helper()
+	if a.LoaderCompatibility == nil || a.LoaderCompatibility.Compatible {
+		t.Fatalf("expected loader blocker %s: %+v", category, a.LoaderCompatibility)
+	}
+	for _, issue := range a.LoaderCompatibility.Blockers {
+		if issue.Category == category {
+			return
+		}
+	}
+	t.Fatalf("missing loader blocker %s: %+v", category, a.LoaderCompatibility.Blockers)
 }
 
 func TestAnalyzeCOFFRelocationDetailsWhenCompilerAvailable(t *testing.T) {

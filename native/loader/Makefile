@@ -5,7 +5,7 @@ CFLAGS ?= -O2 -Wall -Wextra
 
 all: bofbench-loader.exe
 
-bofbench-loader.exe: loader.c
+bofbench-loader.exe: loader.c capabilities.generated.h
 	$(CC) $(CFLAGS) -o $@ loader.c
 
 clean:

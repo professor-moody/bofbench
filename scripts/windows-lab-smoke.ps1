@@ -52,6 +52,10 @@ New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 
 $steps = New-Object System.Collections.Generic.List[object]
 
+$steps.Add((Invoke-Step "generated capability contract" {
+    go run ./cmd/capgen -check -out native/loader/capabilities.generated.h
+}))
+
 $steps.Add((Invoke-Step "go test" {
     go test ./...
 }))
@@ -118,6 +122,10 @@ if (!$SkipFetch -and !(Test-Path "arsenal\trustedsec-sa")) {
         & $BofbenchExe fetch trustedsec-sa
     }))
 }
+
+$steps.Add((Invoke-Step "trustedsec loader preflight" {
+    & $BofbenchExe preflight .\arsenal\trustedsec-sa --select $Select
+}))
 
 $steps.Add((Invoke-Step "trustedsec arsenal smoke" {
     & $BofbenchExe test .\arsenal\trustedsec-sa --select $Select --runtime windows-coff --timeout $TimeoutMS

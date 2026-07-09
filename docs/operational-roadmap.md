@@ -37,16 +37,16 @@ Add native Windows execution CI, provenance-bearing releases, team validation, s
 | 0. Baseline freeze | Complete | Establish the recovered tree, source-control boundary, baseline commit, and tag. | A clean checkout reproduces tests, builds, loader, docs, and releases. |
 | 1. Input and package safety | Complete | Transactional acquisition, safe ZIP handling, bounded downloads, versioned stage manifests, and directory/ZIP verification. | Adversarial archives are rejected without replacing an existing arsenal; all target packages verify in directory/ZIP form locally and Windows lab smoke passes. |
 | 2. Evidence contracts | Complete | Shared schema/tool/host/run headers, lineage, collision-safe run IDs, build persistence, and object/loader/config/source/lab fingerprints are implemented. | Contract/legacy tests, release metadata inspection, and fingerprinted Windows lab smoke pass. |
-| 3. Capability registry | Pending | One source of truth for architectures, relocations, Beacon shims, import conventions, and runtimes. | Analyzer claims cannot disagree with declared loader capabilities. |
+| 3. Capability registry | Complete | A versioned JSON catalog generates the native C header and drives Go analysis/runtime decisions for machine, relocation, Beacon shim, import-prefix, dynamic-import, and fallback-library behavior. | Catalog validation, generated-file freshness, compiled C-helper parity, native loader build, and Windows smoke pass. |
 
 ## Phase B: Predictive Analysis and Builds
 
-| Slice | Outcome | Acceptance gate |
-| --- | --- | --- |
-| 4. Loader compatibility preflight | Report runnable, unsupported architecture/relocation/API/external, host-required, and unknown states with evidence. | Every pinned-corpus object is classified before execution. |
-| 5. BOF analyzer depth | Strengthen normalization, CRT/entry/section/alignment/range checks, suppression, and baselines. | MinGW, MSVC, malformed, stripped, and unusual-section goldens are explained. |
-| 6. Arsenal-wide analysis | Batch inventory and compatibility matrices by architecture, blocker, runtime, and argument needs. | One command produces complete JSON and Markdown corpus evidence. |
-| 7. Reproducible builds | Strict configuration parsing, compiler profiles, structured diagnostics, toolchain metadata, and artifact comparison. | Every build success or failure records enough evidence to reproduce or explain it. |
+| Slice | Status | Outcome | Acceptance gate |
+| --- | --- | --- | --- |
+| 4. Loader compatibility preflight | Complete | `inspect`, `analyze`, `preflight`, `run`, and `test` report or enforce compatible, runtime-lookup, architecture, entrypoint, relocation, Beacon API, and dynamic-import states with structured evidence. | All 64 pinned TrustedSec x64 objects classify before execution: 57 compatible, 7 runtime-lookup warnings, 0 blocked, and 0 analysis failures; Windows preflight and native smoke pass. |
+| 5. BOF analyzer depth | Pending | Strengthen normalization, CRT/entry/section/alignment/range checks, suppression, and baselines. | MinGW, MSVC, malformed, stripped, and unusual-section goldens are explained. |
+| 6. Arsenal-wide analysis | In progress | `preflight <arsenal>` produces selected or full JSON/Markdown compatibility matrices with source-tree and object fingerprints; cross-architecture and argument-recipe dimensions remain. | One command produces complete JSON and Markdown corpus evidence. |
+| 7. Reproducible builds | Pending | Strict configuration parsing, compiler profiles, structured diagnostics, toolchain metadata, and artifact comparison. | Every build success or failure records enough evidence to reproduce or explain it. |
 
 ## Phase C: Runtime and Loader Hardening
 
@@ -100,12 +100,13 @@ Every implementation slice must pass, as applicable:
 
 1. `go test ./...`
 2. `go vet ./...`
-3. host and Windows CLI builds
-4. `mkdocs build --strict`
-5. native loader build
-6. Windows lab smoke
-7. staged-directory and ZIP verification
-8. release archive checksum and content inspection
+3. `go run ./cmd/capgen -check -out native/loader/capabilities.generated.h`
+4. host and Windows CLI builds
+5. `mkdocs build --strict`
+6. native loader build
+7. Windows lab smoke
+8. staged-directory and ZIP verification
+9. release archive checksum and content inspection
 
 ## Deliberate Deferrals
 

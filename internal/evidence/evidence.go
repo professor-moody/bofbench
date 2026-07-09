@@ -18,6 +18,7 @@ const (
 	SchemaBuild        = "bofbench.build"
 	SchemaDoctor       = "bofbench.doctor"
 	SchemaLabSmoke     = "bofbench.lab-smoke"
+	SchemaPreflight    = "bofbench.preflight"
 	SchemaRun          = "bofbench.run"
 	SchemaSource       = "bofbench.arsenal-source"
 	SchemaVersionInfo  = "bofbench.version"

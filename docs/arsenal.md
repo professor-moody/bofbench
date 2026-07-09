@@ -18,12 +18,15 @@ SA/whoami/whoami.x64.o
 Run selected smoke coverage:
 
 ```sh
+bofbench preflight arsenal/trustedsec-sa --select whoami,ipconfig,netuser
 bofbench test arsenal/trustedsec-sa --select whoami,ipconfig,netuser
 ```
 
 Arsenal tests write JSON and Markdown reports under `runs/<timestamp>-test-arsenal-*/`.
 
-On non-Windows, arsenal tests inspect objects and report that execution requires Windows x64.
+Arsenal preflight writes a corpus compatibility matrix under `runs/<timestamp>-preflight-*/`. Each x64 object is classified as `compatible`, `compatible_runtime_lookup`, or a concrete blocker such as `unsupported_relocation` or `unsupported_beacon_api`. The JSON retains every structured issue and the Markdown report is the review-oriented matrix. Use `--strict` when runtime fallback lookup warnings must fail the gate.
+
+On non-Windows, arsenal tests inspect compatible objects and report that execution requires Windows x64. Loader-incompatible objects fail during the preflight phase on every host.
 
 Current macOS transcript:
 

@@ -15,6 +15,9 @@ mkdir -p "$OUT" "$TMP"
 
 cd "$ROOT"
 
+echo "[release] verifying generated loader capabilities"
+go run ./cmd/capgen -check -out native/loader/capabilities.generated.h
+
 echo "[release] testing"
 go test ./...
 

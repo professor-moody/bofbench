@@ -40,6 +40,7 @@ bofbench version --format json
 | `bofbench.arsenal-test` | aggregate arsenal test report |
 | `bofbench.arsenal-source` | fetched source metadata |
 | `bofbench.lab-smoke` | Windows lab summary and environment fingerprint |
+| `bofbench.preflight` | per-artifact or arsenal-wide loader compatibility matrix |
 | `bofbench.doctor` | environment readiness report |
 | `bofbench.stage` | staged-package manifest |
 | `bofbench.stage-verification` | stage integrity verification result |
@@ -50,6 +51,7 @@ bofbench version --format json
 Top-level operations receive a unique `run_id`. Child evidence uses `parent_run_id`:
 
 - aggregate arsenal test → per-entry analysis/run,
+- aggregate loader preflight → per-entry analysis identity,
 - staged manifest → embedded analysis,
 - analysis → analysis diff.
 
@@ -61,6 +63,7 @@ Run directory allocation is collision-safe even when identical operations start 
 - Builds persist `build.json` beside `build.log`, including configuration and output fingerprints when available.
 - Arsenal `source.json` records a deterministic content-tree fingerprint in addition to URL/ref metadata.
 - Runtime reports record object, loader, and test-configuration fingerprints.
+- Loader preflight reports record the capability-catalog version, artifact hashes, root tree fingerprint, and structured blockers/warnings.
 - Stage manifests record every packaged file's size and SHA-256.
 - Windows lab summaries record BOFBench and loader SHA-256 plus Windows, architecture, PowerShell, Go, compiler, and machine identity.
 

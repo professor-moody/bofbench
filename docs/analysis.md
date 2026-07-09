@@ -5,12 +5,14 @@
 ```sh
 bofbench inspect dist/hello.x64.o
 bofbench analyze dist/hello.x64.o --format md
+bofbench preflight dist/hello.x64.o
 ```
 
 The analyzer currently reports:
 
 - artifact kind, architecture, size, hash, and entrypoint presence,
 - runtime compatibility for the current host and the selected runtime,
+- Windows COFF loader compatibility from the authoritative capability catalog,
 - sections, flags, and relocation counts,
 - relocation details when the object format exposes them,
 - unresolved symbols and imported API conventions,
@@ -44,9 +46,17 @@ This makes `inspect` and `analyze` more actionable before execution: a COFF obje
 
 ## Relocation Detail
 
-COFF relocation records include section, offset, relocation type, and symbol name when available. ELF and Mach-O records use the same schema with best-effort symbol resolution.
+COFF relocation records include section, offset, numeric relocation code, relocation type, and symbol name when available. ELF and Mach-O records use the same schema with best-effort symbol resolution.
 
 Markdown reports cap relocation rows for readability. JSON reports retain the structured `relocation_details` array.
+
+## Loader Compatibility
+
+Windows COFF analysis includes `loader_compatibility` with a catalog version, overall status, and structured `blockers` and `warnings`. Hard blockers include unsupported architecture, missing entrypoint, unsupported or unknown relocation codes, unsupported Beacon APIs, and malformed `LIBRARY$API` imports. Plain externals that the loader can only search for across its fallback DLL set are reported as `fallback_lookup` warnings.
+
+The analyzer, runtime gate, and native loader all consume `internal/capability/windows_coff.json`; the native loader consumes its generated C header. Import-pointer prefixes are evaluated longest-first, so `__imp__BeaconPrintf` is normalized to `BeaconPrintf` consistently in Go and C.
+
+Use `preflight` for an execution-free gate or an arsenal-wide matrix. A hard blocker exits nonzero; `--strict` also fails runtime-lookup warnings.
 
 ## Findings
 

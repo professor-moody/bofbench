@@ -206,6 +206,44 @@ func TestCLIArsenalTestWritesReports(t *testing.T) {
 	}
 }
 
+func TestCLIPreflightArsenalGateAndReports(t *testing.T) {
+	bin := buildTestBinary(t)
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "arsenal", "demo")
+	if err := coff.CreateMockObject(filepath.Join(root, "supported", "supported.x64.o"), "x64", "go", []string{"__imp__BeaconPrintf", "KERNEL32$VirtualAlloc"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := coff.CreateMockObject(filepath.Join(root, "blocked", "blocked.x64.o"), "x64", "go", []string{"BeaconFormatAlloc"}); err != nil {
+		t.Fatal(err)
+	}
+	var passed struct {
+		Report struct {
+			Schema  string `json:"schema"`
+			Status  string `json:"status"`
+			Summary struct {
+				Compatible int `json:"compatible"`
+				Total      int `json:"total"`
+			} `json:"summary"`
+		} `json:"report"`
+		JSONPath string `json:"json_path"`
+		MDPath   string `json:"md_path"`
+	}
+	jsonOutput := runOK(t, tmp, bin, "preflight", filepath.Join("arsenal", "demo"), "--select", "supported", "--format", "json")
+	if err := json.Unmarshal([]byte(jsonOutput), &passed); err != nil {
+		t.Fatal(err)
+	}
+	if passed.Report.Schema != "bofbench.preflight" || passed.Report.Status != "pass" || passed.Report.Summary.Compatible != 1 || passed.Report.Summary.Total != 1 || passed.JSONPath == "" || passed.MDPath == "" {
+		t.Fatalf("preflight JSON = %+v", passed)
+	}
+	mustExist(t, filepath.Join(tmp, passed.JSONPath))
+	mustExist(t, filepath.Join(tmp, passed.MDPath))
+
+	blocked, err := run(t, tmp, bin, "preflight", filepath.Join("arsenal", "demo"), "--select", "blocked")
+	if err == nil || !strings.Contains(blocked, "unsupported_beacon_api") || !strings.Contains(blocked, "loader preflight gate failed") || !strings.Contains(blocked, "reports:") {
+		t.Fatalf("blocked preflight did not fail with evidence: err=%v\n%s", err, blocked)
+	}
+}
+
 func TestCLIVersionJSON(t *testing.T) {
 	bin := buildTestBinary(t)
 	out := runOK(t, t.TempDir(), bin, "version", "--format", "json")

@@ -7,10 +7,10 @@ This version is convention-first and operator-shaped:
 - No required JSON manifest.
 - No approval/review gates.
 - Optional `bofbench.toml` only stores repeatable test args and build defaults.
-- Cobra command surface with direct verbs: `new`, `fetch`, `list`, `build`, `inspect`, `analyze`, `run`, `test`, `stage`, `lab`, `doctor`, `tui`, and `docs`.
+- Cobra command surface with direct verbs: `new`, `fetch`, `list`, `build`, `inspect`, `analyze`, `preflight`, `run`, `test`, `stage`, `lab`, `doctor`, `tui`, and `docs`.
 - Bubble Tea/Lip Gloss TUI for arsenal details, command previews, run-history filters, event snippets, and analyzer navigation.
 - Static artifact analysis for Windows COFF, Linux ELF, and macOS Mach-O relocatable objects.
-- Analysis reports include runtime compatibility, host requirements, and next run/test commands.
+- Analysis reports include runtime compatibility, the versioned loader-capability catalog, structured blockers/warnings, host requirements, and next run/test commands.
 - Real Windows x64 native execution is handled by `native/loader/bofbench-loader.exe`.
 - Run and test reports include normalized runtime event timelines for load, args, entry calls, output/errors, and terminal state.
 - Persisted JSON carries versioned schema, run lineage, tool build identity, host metadata, and relevant object/loader/configuration fingerprints.
@@ -29,6 +29,7 @@ work/bin/bofbench version --format json
 work/bin/bofbench build bofs/smoke
 work/bin/bofbench inspect dist/smoke.x64.o
 work/bin/bofbench analyze dist/smoke.x64.o --format md
+work/bin/bofbench preflight dist/smoke.x64.o
 work/bin/bofbench analyze dist/smoke.x64.o --baseline runs/<old-analysis>/analysis.json --format md
 work/bin/bofbench stage dist/smoke.x64.o --target cobaltstrike --args z:hello i:3
 work/bin/bofbench stage verify stage/smoke-cobaltstrike.zip
@@ -55,6 +56,7 @@ bofbench fetch https://github.com/org/repo --name foo --ref main --type git
 bofbench fetch https://example.test/payloads.zip --name payloads --type zip
 bofbench fetch https://example.test/payload.x64.o --name single-object --type raw
 bofbench list arsenal/trustedsec-sa
+bofbench preflight arsenal/trustedsec-sa --select whoami,ipconfig,netuser
 bofbench test arsenal/trustedsec-sa --select whoami,ipconfig,netuser
 ```
 
@@ -64,7 +66,7 @@ Each fetched arsenal gets a `source.json` with URL, ref, type, adapter, fetch ti
 
 HTTP downloads are bounded and ZIP acquisition is transactional. Unsafe paths, symlinks, special files, duplicate/case-colliding entries, excessive entry counts, and oversized expansion are rejected before an existing arsenal is replaced.
 
-`inspect` and `analyze` include imports, relocation detail, visible strings, review findings, and optional baseline diffs so operators can see likely loader/runtime issues before running or staging.
+`inspect`, `analyze`, and `preflight` derive Windows COFF compatibility from the loader's authoritative catalog. `run` and `test` enforce the same gate before native execution.
 
 `bofbench.toml` supports named test profiles and expected exits for repeatable positive and negative fixture checks.
 
@@ -88,8 +90,11 @@ The ELF and Mach-O runners link the relocatable object into a tiny native harnes
 Build from a host with MinGW-w64:
 
 ```sh
+go generate ./internal/capability
 make -C native/loader
 ```
+
+`internal/capability/windows_coff.json` is the authoritative machine, relocation, Beacon shim, import-prefix, and fallback-library registry. Generation produces `native/loader/capabilities.generated.h`; `go run ./cmd/capgen -check -out native/loader/capabilities.generated.h` verifies freshness without writing, and CI/release builds fail if it is stale.
 
 Or on Windows:
 

@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"bofbench/internal/capability"
 )
 
 const (
@@ -63,7 +65,17 @@ type Relocation struct {
 	SymbolName       string `json:"symbol_name,omitempty"`
 }
 
+type MockRelocation struct {
+	VirtualAddress uint32
+	Symbol         string
+	Type           uint16
+}
+
 func CreateMockObject(path, arch, entrypoint string, unresolved []string) error {
+	return CreateMockObjectWithRelocations(path, arch, entrypoint, unresolved, nil)
+}
+
+func CreateMockObjectWithRelocations(path, arch, entrypoint string, unresolved []string, relocations []MockRelocation) error {
 	if entrypoint == "" {
 		entrypoint = "go"
 	}
@@ -84,8 +96,23 @@ func CreateMockObject(path, arch, entrypoint string, unresolved []string) error 
 	sectionTableSize := int(sectionCount) * 40
 	rawPtr := uint32(headerSize + sectionTableSize)
 	rawData := []byte{0xc3}
-	symPtr := rawPtr + uint32(len(rawData))
+	relocPtr := uint32(0)
+	if len(relocations) > 0 {
+		relocPtr = rawPtr + uint32(len(rawData))
+	}
+	symPtr := rawPtr + uint32(len(rawData)) + uint32(len(relocations)*10)
 	stringTable := newStringTable()
+	symbolIndexes := map[string]uint32{}
+	for i, symbol := range symbols {
+		if _, exists := symbolIndexes[symbol.Name]; !exists {
+			symbolIndexes[symbol.Name] = uint32(i)
+		}
+	}
+	for _, relocation := range relocations {
+		if _, ok := symbolIndexes[relocation.Symbol]; !ok {
+			return fmt.Errorf("mock relocation symbol %q is not declared", relocation.Symbol)
+		}
+	}
 
 	writeU16(&buf, machine)
 	writeU16(&buf, sectionCount)
@@ -102,12 +129,17 @@ func CreateMockObject(path, arch, entrypoint string, unresolved []string) error 
 	writeU32(&buf, 0)
 	writeU32(&buf, uint32(len(rawData)))
 	writeU32(&buf, rawPtr)
+	writeU32(&buf, relocPtr)
 	writeU32(&buf, 0)
-	writeU32(&buf, 0)
-	writeU16(&buf, 0)
+	writeU16(&buf, uint16(len(relocations)))
 	writeU16(&buf, 0)
 	writeU32(&buf, 0x00000020|sectionExecutable|sectionReadable)
 	buf.Write(rawData)
+	for _, relocation := range relocations {
+		writeU32(&buf, relocation.VirtualAddress)
+		writeU32(&buf, symbolIndexes[relocation.Symbol])
+		writeU16(&buf, relocation.Type)
+	}
 
 	for _, sym := range symbols {
 		writeSymbol(&buf, sym, stringTable)
@@ -246,34 +278,8 @@ func Inspect(path string) (*File, error) {
 
 func RelocationTypeName(machine string, typ uint16) string {
 	if machine == "x64" {
-		switch typ {
-		case 0x0000:
-			return "ABSOLUTE"
-		case 0x0001:
-			return "ADDR64"
-		case 0x0002:
-			return "ADDR32"
-		case 0x0003:
-			return "ADDR32NB"
-		case 0x0004:
-			return "REL32"
-		case 0x0005:
-			return "REL32_1"
-		case 0x0006:
-			return "REL32_2"
-		case 0x0007:
-			return "REL32_3"
-		case 0x0008:
-			return "REL32_4"
-		case 0x0009:
-			return "REL32_5"
-		case 0x000b:
-			return "SECTION"
-		case 0x000c:
-			return "SECREL"
-		default:
-			return fmt.Sprintf("AMD64_0x%04x", typ)
-		}
+		relocation, _ := capability.WindowsCOFF().RelocationByCode(typ)
+		return relocation.Name
 	}
 	return fmt.Sprintf("0x%04x", typ)
 }

@@ -4,7 +4,7 @@
 
 1. create or fetch BOFs,
 2. build Windows COFF objects first,
-3. analyze COFF, ELF, and Mach-O relocatable artifacts,
+3. analyze COFF, ELF, and Mach-O relocatable artifacts and preflight Windows-loader compatibility,
 4. run through the native runtime when host and artifact match,
 5. test payload behavior,
 6. stage for Cobalt Strike, Sliver, or raw operator handoff.
@@ -15,6 +15,7 @@ The CLI is intentionally direct. There is no required manifest and no workflow g
 bofbench build ./bofs/whoami
 bofbench inspect ./dist/whoami.x64.o
 bofbench analyze ./dist/whoami.x64.o --format md
+bofbench preflight ./dist/whoami.x64.o
 bofbench run ./dist/whoami.x64.o --args z:hello i:3
 bofbench stage ./dist/whoami.x64.o --target cobaltstrike
 bofbench tui

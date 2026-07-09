@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"bofbench/internal/artifact"
+	"bofbench/internal/coff"
 	"bofbench/internal/evidence"
 )
 
@@ -76,6 +77,24 @@ func TestWrongRuntimeResultHasNormalizedEvents(t *testing.T) {
 		t.Fatalf("expected wrong_artifact: %+v", res)
 	}
 	requireEvents(t, res, "artifact", "arg_pack", "load", "beacon_error", "exit")
+}
+
+func TestWindowsCOFFRuntimeEnforcesLoaderPreflight(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "blocked.o")
+	if err := coff.CreateMockObject(path, "x64", "go", []string{"BeaconFormatAlloc"}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Run(Request{Path: path, Runtime: "windows-coff", Entry: "go"})
+	if err == nil {
+		t.Fatal("expected preflight failure")
+	}
+	if res.Status != "fail" || res.ExitState != "preflight_blocked" || res.LoaderCompatibility == nil || res.LoaderCompatibility.Compatible {
+		t.Fatalf("runtime preflight = %+v", res)
+	}
+	if !strings.Contains(strings.Join(res.Errors, "\n"), "unsupported_beacon_api") {
+		t.Fatalf("runtime preflight errors = %+v", res.Errors)
+	}
+	requireEvents(t, res, "artifact", "arg_pack", "preflight", "load", "beacon_error", "exit")
 }
 
 func TestDarwinMachORunner(t *testing.T) {
