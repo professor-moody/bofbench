@@ -124,9 +124,11 @@ Package a BOF for a C2 target:
 bofbench stage ./dist/whoami.x64.o --target cobaltstrike --args z:target i:1
 bofbench stage ./dist/whoami.x64.o --target sliver
 bofbench stage ./dist/whoami.x64.o --target raw
+bofbench stage verify ./stage/whoami-cobaltstrike
+bofbench stage verify ./stage/whoami-cobaltstrike.zip --format json
 ```
 
-Stage packages include `manifest.json`, `objects/`, `reports/analysis.json`, `reports/analysis.md`, and the latest matching run/test report when available.
+Stage packages include `manifest.json`, `objects/`, `reports/analysis.json`, `reports/analysis.md`, and the latest matching run/test report when available. Version 1 manifests record size and SHA-256 for every packaged file. `stage verify` validates a directory or ZIP and exits nonzero on an integrity, schema, inventory, analysis, or target-contract failure.
 
 ## `lab`
 

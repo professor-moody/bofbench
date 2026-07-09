@@ -27,6 +27,19 @@ if [[ ! -f native/loader/bofbench-loader.exe ]]; then
   fi
 fi
 
+echo "[release] verifying stage package contract"
+SMOKE_ROOT="$TMP/stage-smoke"
+SMOKE_BIN="$TMP/bofbench-release-smoke"
+mkdir -p "$SMOKE_ROOT"
+go build -trimpath -o "$SMOKE_BIN" ./cmd/bofbench
+printf 'bofbench release stage smoke\n' > "$SMOKE_ROOT/smoke.x64.o"
+(
+  cd "$SMOKE_ROOT"
+  "$SMOKE_BIN" stage smoke.x64.o --target raw >/dev/null
+  "$SMOKE_BIN" stage verify stage/smoke-raw >/dev/null
+  "$SMOKE_BIN" stage verify stage/smoke-raw.zip --format json >/dev/null
+)
+
 build_cli() {
   local goos="$1"
   local goarch="$2"

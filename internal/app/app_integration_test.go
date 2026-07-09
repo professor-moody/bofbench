@@ -27,6 +27,39 @@ func TestCLIWorkspaceBuildInspectStage(t *testing.T) {
 	mustExist(t, filepath.Join(tmp, "stage", "hello-cobaltstrike.zip"))
 }
 
+func TestCLIStageVerifyDirectoryZipAndFailure(t *testing.T) {
+	bin := buildTestBinary(t)
+	tmp := t.TempDir()
+	obj := filepath.Join(tmp, "demo.x64.o")
+	if err := coff.CreateMockObject(obj, "x64", "go", []string{"BeaconPrintf"}); err != nil {
+		t.Fatal(err)
+	}
+	runOK(t, tmp, bin, "stage", obj, "--target", "raw")
+	directory := filepath.Join("stage", "demo-raw")
+	archive := directory + ".zip"
+	var verified struct {
+		Schema string `json:"schema"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(runOK(t, tmp, bin, "stage", "verify", directory, "--format", "json")), &verified); err != nil {
+		t.Fatal(err)
+	}
+	if verified.Schema != "bofbench.stage-verification" || verified.Status != "pass" {
+		t.Fatalf("directory verification = %+v", verified)
+	}
+	zipText := runOK(t, tmp, bin, "stage", "verify", archive)
+	if !strings.Contains(zipText, "Stage Package Verification: PASS") {
+		t.Fatalf("unexpected ZIP verification output:\n%s", zipText)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, directory, "objects", "demo.x64.o"), []byte("tampered"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run(t, tmp, bin, "stage", "verify", directory, "--format", "json")
+	if err == nil || !strings.Contains(out, `"status": "fail"`) || !strings.Contains(out, "stage package verification failed") {
+		t.Fatalf("tampered verification did not fail: err=%v\n%s", err, out)
+	}
+}
+
 func TestCLINewTemplates(t *testing.T) {
 	bin := buildTestBinary(t)
 	tmp := t.TempDir()

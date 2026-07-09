@@ -12,6 +12,8 @@ This page captures the current design review so future work starts from evidence
 - Run and test reports now include a normalized event timeline across runtime types.
 - Windows lab smoke and summary evidence are available through the main CLI.
 - Stage packages include objects, manifests, analysis reports, and latest run/test reports when available.
+- Stage manifests are versioned, hash every packaged file, and can be verified in directory or ZIP form.
+- ZIP/raw arsenal acquisition is bounded and transactional; unsafe archive entries are rejected before replacement.
 - CI covers Go tests on Linux/macOS/Windows, docs build, native loader build, and release smoke.
 
 ## Main Gaps
@@ -20,7 +22,7 @@ This page captures the current design review so future work starts from evidence
 - Analysis is improving, but compatibility notes should eventually include loader capability gaps such as unsupported imports or relocation families when discovered.
 - The TUI is now a triage surface; next improvement is optional command execution or clipboard integration.
 - Windows lab setup has repeatable smoke and summary commands; next improvement is richer bootstrap for toolchain installation and optional debugger setup.
-- Staging output is functional, but C2-specific packaging needs more real-world validation by operators.
+- Staging integrity is now machine-verifiable; real Cobalt Strike and Sliver import/execution validation remains environment-gated work.
 
 ## Review Rules
 
@@ -30,7 +32,7 @@ Before calling a slice done:
 2. Run `mkdocs build --strict`.
 3. Build the CLI for the local host and Windows.
 4. On Windows x64, run `scripts/windows-lab-smoke.ps1`.
-5. Inspect at least one staged package and confirm it includes `manifest.json`, `objects/`, `reports/analysis.json`, and `reports/analysis.md`.
+5. Run `bofbench stage verify` against both a staged directory and ZIP.
 
 ## Current Decisions
 

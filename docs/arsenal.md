@@ -83,3 +83,9 @@ Each fetch writes `arsenal/<name>/source.json`:
   "path": "arsenal/trustedsec-sa"
 }
 ```
+
+## Acquisition Safety
+
+ZIP and raw HTTP acquisition use a 256 MiB compressed/download limit. ZIP archives are limited to 100,000 entries and 512 MiB expanded content. Extraction rejects traversal and absolute paths, Windows drive/backslash paths, symlinks, special files, and duplicate or case-colliding destinations.
+
+ZIP and raw updates are staged beside the destination and replace an existing arsenal only after download and validation succeed. A failed or malicious update therefore leaves the prior arsenal intact and removes temporary staging content.

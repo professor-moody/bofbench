@@ -22,6 +22,8 @@ go build -o work\bin\bofbench.exe .\cmd\bofbench
 .\work\bin\bofbench.exe test .\testdata\bofs\data_reloc --runtime windows-coff
 .\work\bin\bofbench.exe test .\testdata\bofs\callback_ptr --runtime windows-coff
 .\work\bin\bofbench.exe test .\testdata\bofs\parser_all --runtime windows-coff
+.\work\bin\bofbench.exe stage .\dist\hello.x64.o --target raw
+.\work\bin\bofbench.exe stage verify .\stage\hello-raw.zip --format json
 .\work\bin\bofbench.exe fetch trustedsec-sa
 .\work\bin\bofbench.exe test .\arsenal\trustedsec-sa --select whoami,ipconfig,env,arp,netstat,routeprint,tasklist,uptime,locale --timeout 7000
 ```

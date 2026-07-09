@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -18,6 +19,12 @@ import (
 const TrustedSecURL = "https://github.com/trustedsec/CS-Situational-Awareness-BOF.git"
 const TrustedSecPath = "arsenal/trustedsec-sa"
 const TrustedSecHead = "ee9459cc4f42c6b025797bad22ffe8d9f1cf6487"
+
+const (
+	maxDownloadBytes = int64(256 << 20)
+	maxArchiveBytes  = uint64(512 << 20)
+	maxArchiveFiles  = 100000
+)
 
 type Entry struct {
 	Name string `json:"name"`
@@ -215,87 +222,185 @@ func fetchGit(path, source, ref string) error {
 }
 
 func fetchZip(path, source string) error {
-	tmp, err := download(source)
+	tmp, err := download(source, maxDownloadBytes)
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmp)
-	if err := os.RemoveAll(path); err != nil {
+	staged, err := stagingDir(path)
+	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(path, 0o755); err != nil {
+	defer os.RemoveAll(staged)
+	if err := extractZip(tmp, staged); err != nil {
 		return err
 	}
-	zr, err := zip.OpenReader(tmp)
+	return replaceDir(staged, path)
+}
+
+type archiveEntry struct {
+	file *zip.File
+	name string
+}
+
+func extractZip(zipPath, dstRoot string) error {
+	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return err
 	}
 	defer zr.Close()
+	if len(zr.File) > maxArchiveFiles {
+		return fmt.Errorf("zip contains %d entries; limit is %d", len(zr.File), maxArchiveFiles)
+	}
+	var entries []archiveEntry
+	var total uint64
 	for _, f := range zr.File {
-		clean := filepath.Clean(f.Name)
-		parts := strings.Split(clean, string(filepath.Separator))
-		if len(parts) > 1 {
-			clean = filepath.Join(parts[1:]...)
+		name, err := cleanArchivePath(f.Name)
+		if err != nil {
+			return err
 		}
-		if clean == "." || clean == "" {
-			continue
+		mode := f.Mode()
+		if mode&os.ModeSymlink != 0 {
+			return fmt.Errorf("zip entry %q is a symlink", f.Name)
 		}
-		dst := filepath.Join(path, clean)
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(dst, 0o755); err != nil {
-				return err
-			}
 			continue
+		}
+		if !mode.IsRegular() {
+			return fmt.Errorf("zip entry %q is not a regular file", f.Name)
+		}
+		if f.UncompressedSize64 > maxArchiveBytes-total {
+			return fmt.Errorf("zip expands beyond %d bytes", maxArchiveBytes)
+		}
+		total += f.UncompressedSize64
+		entries = append(entries, archiveEntry{file: f, name: name})
+	}
+	if len(entries) == 0 {
+		return fmt.Errorf("zip contains no regular files")
+	}
+	prefix := commonArchiveRoot(entries)
+	seen := map[string]string{}
+	for _, entry := range entries {
+		name := strings.TrimPrefix(entry.name, prefix)
+		if name == "" {
+			return fmt.Errorf("zip entry %q has no path after root normalization", entry.file.Name)
+		}
+		key := strings.ToLower(name)
+		if previous, ok := seen[key]; ok {
+			return fmt.Errorf("zip entries %q and %q resolve to the same path", previous, entry.file.Name)
+		}
+		seen[key] = entry.file.Name
+		dst, err := archiveDestination(dstRoot, name)
+		if err != nil {
+			return err
 		}
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
 		}
-		in, err := f.Open()
+		in, err := entry.file.Open()
 		if err != nil {
 			return err
 		}
-		out, err := os.Create(dst)
+		out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err != nil {
 			in.Close()
 			return err
 		}
-		_, copyErr := io.Copy(out, in)
+		written, copyErr := io.Copy(out, io.LimitReader(in, int64(entry.file.UncompressedSize64)+1))
 		closeErr := out.Close()
-		in.Close()
+		inputCloseErr := in.Close()
 		if copyErr != nil {
 			return copyErr
 		}
 		if closeErr != nil {
 			return closeErr
 		}
+		if inputCloseErr != nil {
+			return inputCloseErr
+		}
+		if uint64(written) != entry.file.UncompressedSize64 {
+			return fmt.Errorf("zip entry %q size mismatch: expected %d bytes, wrote %d", entry.file.Name, entry.file.UncompressedSize64, written)
+		}
 	}
 	return nil
 }
 
-func fetchRaw(path, source string) error {
-	if err := os.RemoveAll(path); err != nil {
-		return err
+func cleanArchivePath(name string) (string, error) {
+	if name == "" || strings.ContainsRune(name, '\x00') || strings.Contains(name, `\`) {
+		return "", fmt.Errorf("zip entry has unsafe path %q", name)
 	}
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		return err
+	trimmed := strings.TrimSuffix(name, "/")
+	clean := path.Clean(trimmed)
+	if clean == "." || clean == ".." || path.IsAbs(clean) || strings.HasPrefix(clean, "../") || clean != trimmed {
+		return "", fmt.Errorf("zip entry has unsafe path %q", name)
 	}
-	tmp, err := download(source)
+	first := strings.SplitN(clean, "/", 2)[0]
+	if strings.Contains(first, ":") || filepath.VolumeName(filepath.FromSlash(clean)) != "" {
+		return "", fmt.Errorf("zip entry has unsafe path %q", name)
+	}
+	return clean, nil
+}
+
+func commonArchiveRoot(entries []archiveEntry) string {
+	var root string
+	for _, entry := range entries {
+		parts := strings.Split(entry.name, "/")
+		if len(parts) < 2 {
+			return ""
+		}
+		if root == "" {
+			root = parts[0]
+			continue
+		}
+		if parts[0] != root {
+			return ""
+		}
+	}
+	if root == "" {
+		return ""
+	}
+	return root + "/"
+}
+
+func archiveDestination(root, name string) (string, error) {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	dst := filepath.Join(rootAbs, filepath.FromSlash(name))
+	rel, err := filepath.Rel(rootAbs, dst)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("zip entry escapes destination: %q", name)
+	}
+	return dst, nil
+}
+
+func fetchRaw(dstPath, source string) error {
+	tmp, err := download(source, maxDownloadBytes)
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmp)
-	name := filepath.Base(source)
-	if name == "." || name == "/" || name == "" {
-		name = "artifact.bin"
-	}
-	b, err := os.ReadFile(tmp)
+	staged, err := stagingDir(dstPath)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(path, name), b, 0o644)
+	defer os.RemoveAll(staged)
+	name := rawFileName(source)
+	if err := copyDownloadedFile(tmp, filepath.Join(staged, name)); err != nil {
+		return err
+	}
+	return replaceDir(staged, dstPath)
 }
 
-func download(source string) (string, error) {
+func download(source string, maxBytes int64) (path string, err error) {
+	u, err := url.Parse(source)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("download source must be an http or https URL")
+	}
+	if maxBytes <= 0 {
+		return "", fmt.Errorf("download size limit must be positive")
+	}
 	client := http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Get(source)
 	if err != nil {
@@ -305,15 +410,116 @@ func download(source string) (string, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("download failed: %s", resp.Status)
 	}
+	if resp.ContentLength > maxBytes {
+		return "", fmt.Errorf("download is %d bytes; limit is %d", resp.ContentLength, maxBytes)
+	}
 	f, err := os.CreateTemp("", "bofbench-download-*")
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	keep := false
+	defer func() {
+		if closeErr := f.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+		if !keep || err != nil {
+			_ = os.Remove(f.Name())
+		}
+	}()
+	written, err := io.Copy(f, io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
 		return "", err
 	}
+	if written > maxBytes {
+		return "", fmt.Errorf("download exceeds %d byte limit", maxBytes)
+	}
+	keep = true
 	return f.Name(), nil
+}
+
+func stagingDir(dst string) (string, error) {
+	parent := filepath.Dir(dst)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(parent, "."+filepath.Base(dst)+"-fetch-")
+}
+
+func replaceDir(staged, dst string) error {
+	backup := ""
+	if _, err := os.Lstat(dst); err == nil {
+		f, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+"-previous-")
+		if err != nil {
+			return err
+		}
+		backup = f.Name()
+		if err := f.Close(); err != nil {
+			return err
+		}
+		if err := os.Remove(backup); err != nil {
+			return err
+		}
+		if err := os.Rename(dst, backup); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(staged, dst); err != nil {
+		if backup != "" {
+			_ = os.Rename(backup, dst)
+		}
+		return err
+	}
+	if backup != "" {
+		return os.RemoveAll(backup)
+	}
+	return nil
+}
+
+func rawFileName(source string) string {
+	u, err := url.Parse(source)
+	if err != nil {
+		return "artifact.bin"
+	}
+	base := path.Base(u.EscapedPath())
+	if decoded, err := url.PathUnescape(base); err == nil {
+		base = decoded
+	}
+	base = filepath.Base(strings.TrimSpace(base))
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return "artifact.bin"
+	}
+	var b strings.Builder
+	for _, r := range base {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._-", r) {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	name := strings.Trim(b.String(), "-.")
+	if name == "" {
+		return "artifact.bin"
+	}
+	return name
+}
+
+func copyDownloadedFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func writeSource(path string, meta SourceMetadata) error {
@@ -365,7 +571,8 @@ func inferType(source string) string {
 	if strings.HasSuffix(source, ".git") || strings.Contains(source, "github.com") && !strings.Contains(source, "/archive/") {
 		return "git"
 	}
-	if strings.HasSuffix(strings.ToLower(source), ".zip") {
+	parsed, _ := url.Parse(source)
+	if strings.HasSuffix(strings.ToLower(parsed.Path), ".zip") {
 		return "zip"
 	}
 	return "raw"
@@ -397,7 +604,16 @@ func safeName(s string) string {
 	s = strings.TrimSuffix(s, ".git")
 	s = strings.TrimSuffix(s, ".zip")
 	s = strings.NewReplacer(" ", "-", "_", "-", ".", "-").Replace(s)
-	if s == "" || s == "/" || s == "." {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	s = strings.Join(strings.FieldsFunc(b.String(), func(r rune) bool { return r == '-' }), "-")
+	if s == "" {
 		return "arsenal"
 	}
 	return s

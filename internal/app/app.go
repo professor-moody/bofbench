@@ -468,6 +468,35 @@ func stageCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&target, "target", "", "target: cobaltstrike, sliver, raw")
 	cmd.Flags().StringVar(&entry, "entry", "go", "entrypoint")
 	cmd.Flags().BoolVar(&argsMode, "args", false, "treat remaining positional tokens as packed artifact args")
+	cmd.AddCommand(stageVerifyCommand(stdout))
+	return cmd
+}
+
+func stageVerifyCommand(stdout io.Writer) *cobra.Command {
+	var format string
+	cmd := &cobra.Command{
+		Use:   "verify <stage-directory-or-zip>",
+		Short: "Verify a staged package and its manifest integrity",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "text" && format != "json" {
+				return fmt.Errorf("unknown stage verification format %q", format)
+			}
+			report := stage.Verify(args[0])
+			if format == "json" {
+				if err := printJSON(stdout, report); err != nil {
+					return err
+				}
+			} else {
+				fmt.Fprint(stdout, report.Text())
+			}
+			if !report.Passed() {
+				return codedError{code: 1, err: fmt.Errorf("stage package verification failed")}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
 	return cmd
 }
 

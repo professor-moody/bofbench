@@ -2,16 +2,23 @@ package stage
 
 import (
 	"archive/zip"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"bofbench/internal/argpack"
 	"bofbench/internal/artifact"
+)
+
+const (
+	ManifestSchema        = "bofbench.stage"
+	ManifestSchemaVersion = 1
 )
 
 type Result struct {
@@ -23,6 +30,8 @@ type Result struct {
 }
 
 type Manifest struct {
+	Schema        string         `json:"schema"`
+	SchemaVersion int            `json:"schema_version"`
 	Name          string         `json:"name"`
 	Target        string         `json:"target"`
 	Object        string         `json:"object"`
@@ -34,6 +43,13 @@ type Manifest struct {
 	AnalysisMD    string         `json:"analysis_md,omitempty"`
 	AnalysisError string         `json:"analysis_error,omitempty"`
 	LatestReport  []string       `json:"latest_report,omitempty"`
+	Files         []FileRecord   `json:"files"`
+}
+
+type FileRecord struct {
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
 }
 
 func Stage(object, target, entry string, args []argpack.Item) (Result, error) {
@@ -54,13 +70,15 @@ func Stage(object, target, entry string, args []argpack.Item) (Result, error) {
 	}
 	var files []string
 	manifest := Manifest{
-		Name:         name,
-		Target:       target,
-		Object:       object,
-		StagedObject: filepath.ToSlash(filepath.Join("objects", filepath.Base(object))),
-		Entrypoint:   entry,
-		Arguments:    args,
-		GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
+		Schema:        ManifestSchema,
+		SchemaVersion: ManifestSchemaVersion,
+		Name:          name,
+		Target:        target,
+		Object:        object,
+		StagedObject:  filepath.ToSlash(filepath.Join("objects", filepath.Base(object))),
+		Entrypoint:    entry,
+		Arguments:     args,
+		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 	add := func(path string) {
 		rel, err := filepath.Rel(root, path)
@@ -124,6 +142,11 @@ func Stage(object, target, entry string, args []argpack.Item) (Result, error) {
 		return Result{}, err
 	}
 	add(readmePath)
+	records, err := manifestFileRecords(root, files)
+	if err != nil {
+		return Result{}, err
+	}
+	manifest.Files = records
 	manifestPath := filepath.Join(root, "manifest.json")
 	if err := writeJSON(manifestPath, manifest); err != nil {
 		return Result{}, err
@@ -135,6 +158,43 @@ func Stage(object, target, entry string, args []argpack.Item) (Result, error) {
 	}
 	files = append(files, filepath.Base(zipPath))
 	return Result{Target: target, Object: object, Output: root, Manifest: filepath.ToSlash(filepath.Join(root, "manifest.json")), Files: files}, nil
+}
+
+func manifestFileRecords(root string, files []string) ([]FileRecord, error) {
+	records := make([]FileRecord, 0, len(files))
+	seen := map[string]bool{}
+	for _, rel := range files {
+		rel = filepath.ToSlash(filepath.Clean(rel))
+		if seen[rel] {
+			continue
+		}
+		seen[rel] = true
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		hash, err := sha256File(path)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, FileRecord{Path: rel, Size: info.Size(), SHA256: hash})
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].Path < records[j].Path })
+	return records, nil
+}
+
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 func cobaltStrike(name, objectFile, entry string, args []argpack.Item) string {
@@ -315,10 +375,8 @@ func zipDir(root, zipPath string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 	zw := zip.NewWriter(out)
-	defer zw.Close()
-	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -334,8 +392,21 @@ func zipDir(root, zipPath string) error {
 		if err != nil {
 			return err
 		}
-		defer in.Close()
-		_, err = io.Copy(w, in)
-		return err
+		_, copyErr := io.Copy(w, in)
+		closeErr := in.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
 	})
+	if walkErr != nil {
+		_ = zw.Close()
+		_ = out.Close()
+		return walkErr
+	}
+	if err := zw.Close(); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }

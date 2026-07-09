@@ -22,6 +22,7 @@ nav:
   - TUI: tui.md
   - Engineering Review: review.md
   - Roadmap: roadmap.md
+  - Operational Program: operational-roadmap.md
   - Release: release.md
   - Troubleshooting: troubleshooting.md
 markdown_extensions:

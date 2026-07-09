@@ -18,6 +18,7 @@ It performs:
 - `go test ./...`
 - `mkdocs build --strict`
 - native loader build when MinGW-w64 is available and the loader binary is missing
+- staged-directory and staged-ZIP contract verification
 - CLI builds for `darwin/amd64`, `darwin/arm64`, `linux/amd64`, and `windows/amd64`
 - packaging under `dist/release/`
 - `SHA256SUMS`
@@ -35,5 +36,6 @@ Before cutting a release, stage at least one known-good BOF and inspect the pack
 ```sh
 bofbench run dist/hello.x64.o --args z:hello i:3
 bofbench stage dist/hello.x64.o --target raw --args z:hello i:3
-unzip -l stage/hello-raw.zip
+bofbench stage verify stage/hello-raw
+bofbench stage verify stage/hello-raw.zip --format json
 ```

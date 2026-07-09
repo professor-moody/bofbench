@@ -2,6 +2,8 @@
 
 The near-term goal is to make `bofbench` boringly reliable for local offensive module development: fetch, build, analyze, run, test, stage, and explain failures.
 
+This page records the original phase-two roadmap. The governing multi-phase plan is now the [Operational Development Program](operational-roadmap.md).
+
 ## Slice 1: Analyzer Depth
 
 - Add import classification, visible string filtering, and review findings.
@@ -45,6 +47,7 @@ The near-term goal is to make `bofbench` boringly reliable for local offensive m
 - Include generated docs and the Windows loader where available.
 - Publish checksums.
 - Keep GitHub Pages docs tied to `mkdocs build --strict`.
+- Verify a staged directory and ZIP during release preparation. Implemented through `stage verify` and the release smoke gate.
 
 ## Demo Path
 

@@ -107,6 +107,12 @@ $steps.Add((Invoke-Step "negative fixture timeout" {
     & $BofbenchExe test .\testdata\bofs\timeout --runtime windows-coff
 }))
 
+$steps.Add((Invoke-Step "stage package verify" {
+    & $BofbenchExe stage .\dist\hello.x64.o --target raw
+    & $BofbenchExe stage verify .\stage\hello-raw
+    & $BofbenchExe stage verify .\stage\hello-raw.zip --format json
+}))
+
 if (!$SkipFetch -and !(Test-Path "arsenal\trustedsec-sa")) {
     $steps.Add((Invoke-Step "fetch trustedsec-sa" {
         & $BofbenchExe fetch trustedsec-sa
