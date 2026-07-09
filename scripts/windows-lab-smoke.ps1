@@ -73,6 +73,7 @@ $steps.Add((Invoke-Step "fixture build" {
     & $BofbenchExe build .\testdata\bofs\arg_echo
     & $BofbenchExe build .\testdata\bofs\winapi_call
     & $BofbenchExe build .\testdata\bofs\data_reloc
+    & $BofbenchExe build .\testdata\bofs\bss_reloc
     & $BofbenchExe build .\testdata\bofs\callback_ptr
     & $BofbenchExe build .\testdata\bofs\parser_all
     & $BofbenchExe build .\testdata\bofs\unresolved
@@ -93,6 +94,10 @@ $steps.Add((Invoke-Step "fixture run winapi_call" {
 
 $steps.Add((Invoke-Step "fixture test data_reloc" {
     & $BofbenchExe test .\testdata\bofs\data_reloc --runtime windows-coff
+}))
+
+$steps.Add((Invoke-Step "fixture test bss_reloc" {
+    & $BofbenchExe test .\testdata\bofs\bss_reloc --runtime windows-coff
 }))
 
 $steps.Add((Invoke-Step "fixture test callback_ptr" {

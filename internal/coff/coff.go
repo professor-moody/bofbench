@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"bofbench/internal/capability"
@@ -21,21 +22,33 @@ const (
 	sectionExecutable = 0x20000000
 	sectionReadable   = 0x40000000
 	sectionWritable   = 0x80000000
+	sectionAlignMask  = 0x00f00000
+
+	maxSections = 4096
+	maxSymbols  = 1 << 20
 )
 
 type File struct {
-	Path             string    `json:"path"`
-	Size             int64     `json:"size"`
-	SHA256           string    `json:"sha256"`
-	Machine          string    `json:"machine"`
-	NumberOfSections int       `json:"number_of_sections"`
-	Sections         []Section `json:"sections"`
-	Symbols          []Symbol  `json:"symbols"`
-	Strings          []string  `json:"strings,omitempty"`
+	Path              string       `json:"path"`
+	Size              int64        `json:"size"`
+	SHA256            string       `json:"sha256"`
+	Machine           string       `json:"machine"`
+	MachineCode       uint16       `json:"machine_code"`
+	Timestamp         uint32       `json:"timestamp"`
+	NumberOfSections  int          `json:"number_of_sections"`
+	SymbolTableOffset uint32       `json:"symbol_table_offset"`
+	NumberOfSymbols   uint32       `json:"number_of_symbols"`
+	Sections          []Section    `json:"sections"`
+	Symbols           []Symbol     `json:"symbols"`
+	Strings           []string     `json:"strings,omitempty"`
+	LayoutValid       bool         `json:"layout_valid"`
+	Diagnostics       []Diagnostic `json:"diagnostics,omitempty"`
 }
 
 type Section struct {
+	Index                int          `json:"index"`
 	Name                 string       `json:"name"`
+	RawName              string       `json:"raw_name,omitempty"`
 	Size                 uint32       `json:"size"`
 	PointerToRawData     uint32       `json:"pointer_to_raw_data"`
 	PointerToRelocations uint32       `json:"pointer_to_relocations"`
@@ -46,14 +59,28 @@ type Section struct {
 	Executable           bool         `json:"executable"`
 	Readable             bool         `json:"readable"`
 	Writable             bool         `json:"writable"`
+	Uninitialized        bool         `json:"uninitialized"`
+	Alignment            uint32       `json:"alignment,omitempty"`
 }
 
 type Symbol struct {
+	Index         uint32 `json:"index"`
 	Name          string `json:"name"`
 	Value         uint32 `json:"value"`
 	SectionNumber int16  `json:"section_number"`
+	Type          uint16 `json:"type"`
 	StorageClass  uint8  `json:"storage_class"`
+	AuxSymbols    uint8  `json:"aux_symbols"`
 	External      bool   `json:"external"`
+}
+
+type Diagnostic struct {
+	Severity string `json:"severity"`
+	Code     string `json:"code"`
+	Detail   string `json:"detail"`
+	Section  string `json:"section,omitempty"`
+	Symbol   string `json:"symbol,omitempty"`
+	Offset   uint64 `json:"offset,omitempty"`
 }
 
 type Relocation struct {
@@ -95,7 +122,8 @@ func CreateMockObjectWithRelocations(path, arch, entrypoint string, unresolved [
 	headerSize := 20
 	sectionTableSize := int(sectionCount) * 40
 	rawPtr := uint32(headerSize + sectionTableSize)
-	rawData := []byte{0xc3}
+	rawData := make([]byte, 8)
+	rawData[0] = 0xc3
 	relocPtr := uint32(0)
 	if len(relocations) > 0 {
 		relocPtr = rawPtr + uint32(len(rawData))
@@ -161,14 +189,12 @@ func Inspect(path string) (*File, error) {
 		return nil, fmt.Errorf("file too small for COFF header")
 	}
 	sum := sha256.Sum256(b)
-	r := bytes.NewReader(b)
-	machine := readU16(r)
-	sectionCount := readU16(r)
-	_ = readU32(r)
-	symPtr := readU32(r)
-	symCount := readU32(r)
-	optionalHeaderSize := readU16(r)
-	_ = readU16(r)
+	machine := binary.LittleEndian.Uint16(b[0:2])
+	sectionCount := binary.LittleEndian.Uint16(b[2:4])
+	timestamp := binary.LittleEndian.Uint32(b[4:8])
+	symPtr := binary.LittleEndian.Uint32(b[8:12])
+	symCount := binary.LittleEndian.Uint32(b[12:16])
+	optionalHeaderSize := binary.LittleEndian.Uint16(b[16:18])
 	if optionalHeaderSize != 0 {
 		return nil, fmt.Errorf("COFF object should not have optional header, got %d bytes", optionalHeaderSize)
 	}
@@ -176,80 +202,198 @@ func Inspect(path string) (*File, error) {
 	if machineName == "unknown" {
 		return nil, fmt.Errorf("unsupported COFF machine 0x%x", machine)
 	}
-	sections := make([]Section, 0, sectionCount)
+	file := &File{
+		Path:              path,
+		Size:              int64(len(b)),
+		SHA256:            hex.EncodeToString(sum[:]),
+		Machine:           machineName,
+		MachineCode:       machine,
+		Timestamp:         timestamp,
+		NumberOfSections:  int(sectionCount),
+		SymbolTableOffset: symPtr,
+		NumberOfSymbols:   symCount,
+		Strings:           ExtractStrings(b, 4),
+		LayoutValid:       true,
+	}
+	addDiagnostic := func(diagnostic Diagnostic) {
+		file.Diagnostics = append(file.Diagnostics, diagnostic)
+		if diagnostic.Severity == "error" {
+			file.LayoutValid = false
+		}
+	}
+	if sectionCount == 0 {
+		addDiagnostic(Diagnostic{Severity: "error", Code: "section_table_empty", Detail: "COFF object declares no sections"})
+	}
+	if int(sectionCount) > maxSections {
+		addDiagnostic(Diagnostic{Severity: "error", Code: "section_count_limit", Detail: fmt.Sprintf("COFF object declares %d sections; parser limit is %d", sectionCount, maxSections)})
+		return file, nil
+	}
+	sectionTableEnd := uint64(20) + uint64(sectionCount)*40
+	if !rangeWithin(len(b), 20, uint64(sectionCount)*40) {
+		addDiagnostic(Diagnostic{Severity: "error", Code: "section_table_range", Detail: "section table extends beyond the file", Offset: 20})
+		return file, nil
+	}
+	file.Sections = make([]Section, 0, sectionCount)
+	uninitializedFlag := capability.WindowsCOFF().SectionFlags.UninitializedData
 	for i := 0; i < int(sectionCount); i++ {
-		if r.Len() < 40 {
-			return nil, fmt.Errorf("truncated section table")
-		}
-		rawName := make([]byte, 8)
-		_, _ = io.ReadFull(r, rawName)
-		name := strings.TrimRight(string(bytes.TrimRight(rawName, "\x00")), "\x00")
-		_ = readU32(r)
-		_ = readU32(r)
-		size := readU32(r)
-		rawPtr := readU32(r)
-		relocPtr := readU32(r)
-		_ = readU32(r)
-		numRelocs := readU16(r)
-		_ = readU16(r)
-		ch := readU32(r)
-		var data []byte
-		if size > 0 && rawPtr > 0 && int(rawPtr+size) <= len(b) {
-			data = append([]byte(nil), b[rawPtr:rawPtr+size]...)
-		}
-		sections = append(sections, Section{
-			Name:                 name,
+		off := 20 + i*40
+		rawNameBytes := b[off : off+8]
+		rawName := strings.TrimRight(string(rawNameBytes), "\x00")
+		size := binary.LittleEndian.Uint32(b[off+16 : off+20])
+		rawPtr := binary.LittleEndian.Uint32(b[off+20 : off+24])
+		relocPtr := binary.LittleEndian.Uint32(b[off+24 : off+28])
+		numRelocs := binary.LittleEndian.Uint16(b[off+32 : off+34])
+		ch := binary.LittleEndian.Uint32(b[off+36 : off+40])
+		section := Section{
+			Index:                i + 1,
+			Name:                 rawName,
+			RawName:              rawName,
 			Size:                 size,
 			PointerToRawData:     rawPtr,
 			PointerToRelocations: relocPtr,
 			NumberOfRelocations:  numRelocs,
 			Characteristics:      ch,
-			Data:                 data,
 			Executable:           ch&sectionExecutable != 0,
 			Readable:             ch&sectionReadable != 0,
 			Writable:             ch&sectionWritable != 0,
-		})
-	}
-	if int(symPtr) > len(b) {
-		return nil, fmt.Errorf("symbol table pointer is outside file")
-	}
-	stringTableStart := int(symPtr) + int(symCount)*18
-	stringTable := []byte(nil)
-	if stringTableStart+4 <= len(b) {
-		total := int(binary.LittleEndian.Uint32(b[stringTableStart:]))
-		if total >= 4 && stringTableStart+total <= len(b) {
-			stringTable = b[stringTableStart : stringTableStart+total]
+			Uninitialized:        ch&uninitializedFlag != 0,
+			Alignment:            sectionAlignment(ch),
 		}
-	}
-	var symbols []Symbol
-	symbolNamesByIndex := map[int]string{}
-	for i := 0; i < int(symCount); i++ {
-		off := int(symPtr) + i*18
-		if off+18 > len(b) {
-			return nil, fmt.Errorf("truncated symbol table")
+		if rawName == "" {
+			addDiagnostic(Diagnostic{Severity: "warning", Code: "section_name_empty", Detail: "section name is empty", Section: fmt.Sprintf("#%d", i+1), Offset: uint64(off)})
 		}
-		name := symbolName(b[off:off+8], stringTable)
-		symbolNamesByIndex[i] = name
-		value := binary.LittleEndian.Uint32(b[off+8 : off+12])
-		sectionNumber := int16(binary.LittleEndian.Uint16(b[off+12 : off+14]))
-		storageClass := b[off+16]
-		aux := int(b[off+17])
-		symbols = append(symbols, Symbol{
-			Name:          name,
-			Value:         value,
-			SectionNumber: sectionNumber,
-			StorageClass:  storageClass,
-			External:      storageClass == 2,
-		})
-		i += aux
-	}
-	for si := range sections {
-		section := &sections[si]
-		for ri := 0; ri < int(section.NumberOfRelocations); ri++ {
-			off := int(section.PointerToRelocations) + ri*10
-			if off+10 > len(b) {
-				return nil, fmt.Errorf("truncated relocation table for section %s", section.Name)
+		if ch&sectionAlignMask == sectionAlignMask {
+			addDiagnostic(Diagnostic{Severity: "error", Code: "section_alignment_reserved", Detail: "section uses the reserved alignment encoding", Section: displaySection(section), Offset: uint64(off + 36)})
+		}
+		if size > 0 && !section.Uninitialized {
+			switch {
+			case rawPtr == 0:
+				addDiagnostic(Diagnostic{Severity: "error", Code: "section_data_pointer", Detail: "non-empty section has a zero raw-data pointer", Section: displaySection(section)})
+			case !rangeWithin(len(b), uint64(rawPtr), uint64(size)):
+				addDiagnostic(Diagnostic{Severity: "error", Code: "section_data_range", Detail: "section raw data extends beyond the file", Section: displaySection(section), Offset: uint64(rawPtr)})
+			case uint64(rawPtr) < sectionTableEnd:
+				addDiagnostic(Diagnostic{Severity: "error", Code: "section_data_overlap_headers", Detail: "section raw data overlaps the COFF headers or section table", Section: displaySection(section), Offset: uint64(rawPtr)})
+			default:
+				section.Data = append([]byte(nil), b[rawPtr:rawPtr+size]...)
 			}
+		}
+		if section.Uninitialized && rawPtr != 0 {
+			addDiagnostic(Diagnostic{Severity: "warning", Code: "uninitialized_data_pointer", Detail: "uninitialized-data section has a non-zero raw-data pointer; loader will zero-fill it", Section: displaySection(section), Offset: uint64(rawPtr)})
+		}
+		if numRelocs > 0 {
+			relocationBytes := uint64(numRelocs) * 10
+			switch {
+			case relocPtr == 0:
+				addDiagnostic(Diagnostic{Severity: "error", Code: "relocation_table_pointer", Detail: "section declares relocations with a zero table pointer", Section: displaySection(section)})
+			case !rangeWithin(len(b), uint64(relocPtr), relocationBytes):
+				addDiagnostic(Diagnostic{Severity: "error", Code: "relocation_table_range", Detail: "relocation table extends beyond the file", Section: displaySection(section), Offset: uint64(relocPtr)})
+			case uint64(relocPtr) < sectionTableEnd:
+				addDiagnostic(Diagnostic{Severity: "error", Code: "relocation_table_overlap_headers", Detail: "relocation table overlaps the COFF headers or section table", Section: displaySection(section), Offset: uint64(relocPtr)})
+			}
+		}
+		file.Sections = append(file.Sections, section)
+	}
+
+	var stringTable []byte
+	symbolTableValid := true
+	if symCount == 0 {
+		addDiagnostic(Diagnostic{Severity: "warning", Code: "symbol_table_stripped", Detail: "object has no COFF symbol table; entrypoint and import discovery are unavailable"})
+		symbolTableValid = false
+	} else {
+		symbolBytes := uint64(symCount) * 18
+		switch {
+		case symCount > maxSymbols:
+			addDiagnostic(Diagnostic{Severity: "error", Code: "symbol_count_limit", Detail: fmt.Sprintf("COFF object declares %d symbol records; parser limit is %d", symCount, maxSymbols)})
+			symbolTableValid = false
+		case symPtr == 0:
+			addDiagnostic(Diagnostic{Severity: "error", Code: "symbol_table_pointer", Detail: "object declares symbols with a zero symbol-table pointer"})
+			symbolTableValid = false
+		case !rangeWithin(len(b), uint64(symPtr), symbolBytes):
+			addDiagnostic(Diagnostic{Severity: "error", Code: "symbol_table_range", Detail: "symbol table extends beyond the file", Offset: uint64(symPtr)})
+			symbolTableValid = false
+		case uint64(symPtr) < sectionTableEnd:
+			addDiagnostic(Diagnostic{Severity: "error", Code: "symbol_table_overlap_headers", Detail: "symbol table overlaps the COFF headers or section table", Offset: uint64(symPtr)})
+			symbolTableValid = false
+		}
+		if symbolTableValid {
+			stringTableStart := uint64(symPtr) + symbolBytes
+			if !rangeWithin(len(b), stringTableStart, 4) {
+				addDiagnostic(Diagnostic{Severity: "warning", Code: "string_table_missing", Detail: "COFF string-table length is missing", Offset: stringTableStart})
+			} else {
+				total := uint64(binary.LittleEndian.Uint32(b[stringTableStart : stringTableStart+4]))
+				switch {
+				case total < 4:
+					addDiagnostic(Diagnostic{Severity: "error", Code: "string_table_length", Detail: fmt.Sprintf("COFF string-table length is %d; minimum is 4", total), Offset: stringTableStart})
+				case !rangeWithin(len(b), stringTableStart, total):
+					addDiagnostic(Diagnostic{Severity: "error", Code: "string_table_range", Detail: "COFF string table extends beyond the file", Offset: stringTableStart})
+				default:
+					stringTable = b[stringTableStart : stringTableStart+total]
+				}
+			}
+		}
+	}
+
+	for i := range file.Sections {
+		resolved, diagnostic := resolveSectionName(file.Sections[i], stringTable)
+		file.Sections[i].Name = resolved
+		if diagnostic != nil {
+			addDiagnostic(*diagnostic)
+		}
+	}
+	seenSections := map[string]bool{}
+	for _, section := range file.Sections {
+		if section.Name != "" && seenSections[section.Name] {
+			addDiagnostic(Diagnostic{Severity: "warning", Code: "section_name_duplicate", Detail: "multiple sections use the same resolved name", Section: section.Name})
+		}
+		seenSections[section.Name] = true
+	}
+
+	symbolNamesByIndex := map[uint32]string{}
+	auxIndexes := map[uint32]bool{}
+	if symbolTableValid {
+		for i := uint32(0); i < symCount; {
+			off := uint64(symPtr) + uint64(i)*18
+			raw := b[off : off+18]
+			name, nameDiagnostic := resolveSymbolName(raw[:8], stringTable)
+			if nameDiagnostic != nil {
+				nameDiagnostic.Offset = off
+				addDiagnostic(*nameDiagnostic)
+			}
+			value := binary.LittleEndian.Uint32(raw[8:12])
+			sectionNumber := int16(binary.LittleEndian.Uint16(raw[12:14]))
+			symbolType := binary.LittleEndian.Uint16(raw[14:16])
+			storageClass := raw[16]
+			aux := raw[17]
+			symbol := Symbol{Index: i, Name: name, Value: value, SectionNumber: sectionNumber, Type: symbolType, StorageClass: storageClass, AuxSymbols: aux, External: storageClass == 2 || storageClass == 105}
+			file.Symbols = append(file.Symbols, symbol)
+			symbolNamesByIndex[i] = name
+			if uint64(i)+1+uint64(aux) > uint64(symCount) {
+				addDiagnostic(Diagnostic{Severity: "error", Code: "aux_symbol_range", Detail: fmt.Sprintf("symbol declares %d auxiliary records beyond the symbol table", aux), Symbol: name, Offset: off})
+				break
+			}
+			for ai := uint32(1); ai <= uint32(aux); ai++ {
+				auxIndexes[i+ai] = true
+			}
+			if sectionNumber > int16(sectionCount) || sectionNumber < -2 {
+				addDiagnostic(Diagnostic{Severity: "error", Code: "symbol_section_range", Detail: fmt.Sprintf("symbol refers to invalid section number %d", sectionNumber), Symbol: name, Offset: off + 12})
+			} else if sectionNumber > 0 {
+				section := file.Sections[sectionNumber-1]
+				if value > section.Size {
+					addDiagnostic(Diagnostic{Severity: "error", Code: "symbol_value_range", Detail: fmt.Sprintf("symbol value 0x%x exceeds section size 0x%x", value, section.Size), Section: section.Name, Symbol: name, Offset: off + 8})
+				}
+			}
+			i += 1 + uint32(aux)
+		}
+	}
+
+	for si := range file.Sections {
+		section := &file.Sections[si]
+		if section.NumberOfRelocations == 0 || section.PointerToRelocations == 0 || !rangeWithin(len(b), uint64(section.PointerToRelocations), uint64(section.NumberOfRelocations)*10) {
+			continue
+		}
+		seenRelocations := map[string]bool{}
+		for ri := 0; ri < int(section.NumberOfRelocations); ri++ {
+			off := uint64(section.PointerToRelocations) + uint64(ri)*10
 			symIdx := binary.LittleEndian.Uint32(b[off+4 : off+8])
 			rel := Relocation{
 				Section:          section.Name,
@@ -258,22 +402,28 @@ func Inspect(path string) (*File, error) {
 				Type:             binary.LittleEndian.Uint16(b[off+8 : off+10]),
 			}
 			rel.TypeName = RelocationTypeName(machineName, rel.Type)
-			if name, ok := symbolNamesByIndex[int(symIdx)]; ok {
+			if name, ok := symbolNamesByIndex[symIdx]; ok {
 				rel.SymbolName = name
 			}
+			switch {
+			case symIdx >= symCount:
+				addDiagnostic(Diagnostic{Severity: "error", Code: "relocation_symbol_range", Detail: fmt.Sprintf("relocation refers to symbol index %d but table has %d records", symIdx, symCount), Section: section.Name, Offset: off + 4})
+			case auxIndexes[symIdx]:
+				addDiagnostic(Diagnostic{Severity: "error", Code: "relocation_aux_symbol", Detail: "relocation refers to an auxiliary symbol record", Section: section.Name, Offset: off + 4})
+			}
+			width := relocationWidth(machineName, rel.Type)
+			if width > 0 && (uint64(rel.VirtualAddress) > uint64(section.Size) || width > uint64(section.Size)-minUint64(uint64(rel.VirtualAddress), uint64(section.Size))) {
+				addDiagnostic(Diagnostic{Severity: "error", Code: "relocation_offset_range", Detail: fmt.Sprintf("%s relocation at 0x%x needs %d bytes in a section of size 0x%x", rel.TypeName, rel.VirtualAddress, width, section.Size), Section: section.Name, Symbol: rel.SymbolName, Offset: off})
+			}
+			key := fmt.Sprintf("%x:%d:%x", rel.VirtualAddress, symIdx, rel.Type)
+			if seenRelocations[key] {
+				addDiagnostic(Diagnostic{Severity: "warning", Code: "relocation_duplicate", Detail: "duplicate relocation record", Section: section.Name, Symbol: rel.SymbolName, Offset: off})
+			}
+			seenRelocations[key] = true
 			section.Relocations = append(section.Relocations, rel)
 		}
 	}
-	return &File{
-		Path:             path,
-		Size:             int64(len(b)),
-		SHA256:           hex.EncodeToString(sum[:]),
-		Machine:          machineName,
-		NumberOfSections: int(sectionCount),
-		Sections:         sections,
-		Symbols:          symbols,
-		Strings:          ExtractStrings(b, 4),
-	}, nil
+	return file, nil
 }
 
 func RelocationTypeName(machine string, typ uint16) string {
@@ -282,6 +432,106 @@ func RelocationTypeName(machine string, typ uint16) string {
 		return relocation.Name
 	}
 	return fmt.Sprintf("0x%04x", typ)
+}
+
+func rangeWithin(total int, offset, size uint64) bool {
+	return offset <= uint64(total) && size <= uint64(total)-offset
+}
+
+func sectionAlignment(characteristics uint32) uint32 {
+	code := (characteristics & sectionAlignMask) >> 20
+	if code == 0 || code >= 15 {
+		return 0
+	}
+	return uint32(1) << (code - 1)
+}
+
+func displaySection(section Section) string {
+	if section.Name != "" {
+		return section.Name
+	}
+	return fmt.Sprintf("#%d", section.Index)
+}
+
+func resolveSectionName(section Section, stringTable []byte) (string, *Diagnostic) {
+	raw := section.RawName
+	if !strings.HasPrefix(raw, "/") || raw == "/" {
+		return raw, nil
+	}
+	offset, err := strconv.ParseUint(strings.TrimPrefix(raw, "/"), 10, 32)
+	if err != nil {
+		return raw, &Diagnostic{Severity: "error", Code: "section_name_encoding", Detail: fmt.Sprintf("long section name %q does not contain a decimal string-table offset", raw), Section: displaySection(section), Offset: uint64(20 + (section.Index-1)*40)}
+	}
+	name, ok := stringAt(stringTable, uint32(offset))
+	if !ok {
+		return raw, &Diagnostic{Severity: "error", Code: "section_name_offset", Detail: fmt.Sprintf("long section name offset %d is outside the COFF string table", offset), Section: displaySection(section), Offset: uint64(20 + (section.Index-1)*40)}
+	}
+	return name, nil
+}
+
+func resolveSymbolName(raw, stringTable []byte) (string, *Diagnostic) {
+	if len(raw) != 8 {
+		return "", &Diagnostic{Severity: "error", Code: "symbol_name_record", Detail: "symbol name record is not 8 bytes"}
+	}
+	if binary.LittleEndian.Uint32(raw[:4]) == 0 {
+		offset := binary.LittleEndian.Uint32(raw[4:])
+		name, ok := stringAt(stringTable, offset)
+		if !ok {
+			return fmt.Sprintf("<bad-string-%d>", offset), &Diagnostic{Severity: "error", Code: "symbol_name_offset", Detail: fmt.Sprintf("symbol name offset %d is outside the COFF string table", offset)}
+		}
+		return name, nil
+	}
+	name := strings.TrimRight(string(raw), "\x00")
+	if name == "" {
+		return name, &Diagnostic{Severity: "warning", Code: "symbol_name_empty", Detail: "symbol name is empty"}
+	}
+	return name, nil
+}
+
+func stringAt(stringTable []byte, offset uint32) (string, bool) {
+	if offset < 4 || uint64(offset) >= uint64(len(stringTable)) {
+		return "", false
+	}
+	end := int(offset)
+	for end < len(stringTable) && stringTable[end] != 0 {
+		end++
+	}
+	if end == len(stringTable) {
+		return "", false
+	}
+	return string(stringTable[offset:end]), true
+}
+
+func relocationWidth(machine string, typ uint16) uint64 {
+	if machine == "x64" {
+		switch typ {
+		case 0x0000:
+			return 0
+		case 0x0001:
+			return 8
+		case 0x000b:
+			return 2
+		case 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, 0x0008, 0x0009, 0x000c:
+			return 4
+		default:
+			return 1
+		}
+	}
+	switch typ {
+	case 0x0000:
+		return 0
+	case 0x0006, 0x0014:
+		return 4
+	default:
+		return 1
+	}
+}
+
+func minUint64(a, b uint64) uint64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func ExtractStrings(b []byte, min int) []string {
@@ -372,34 +622,5 @@ func writeSymbol(buf *bytes.Buffer, sym mockSymbol, st *stringTable) {
 	buf.WriteByte(0)
 }
 
-func symbolName(raw []byte, st []byte) string {
-	if len(raw) != 8 {
-		return ""
-	}
-	if binary.LittleEndian.Uint32(raw[:4]) == 0 {
-		off := int(binary.LittleEndian.Uint32(raw[4:]))
-		if off >= 4 && off < len(st) {
-			end := off
-			for end < len(st) && st[end] != 0 {
-				end++
-			}
-			return string(st[off:end])
-		}
-	}
-	return strings.TrimRight(string(raw), "\x00")
-}
-
 func writeU16(w io.Writer, v uint16) { _ = binary.Write(w, binary.LittleEndian, v) }
 func writeU32(w io.Writer, v uint32) { _ = binary.Write(w, binary.LittleEndian, v) }
-
-func readU16(r io.Reader) uint16 {
-	var v uint16
-	_ = binary.Read(r, binary.LittleEndian, &v)
-	return v
-}
-
-func readU32(r io.Reader) uint32 {
-	var v uint32
-	_ = binary.Read(r, binary.LittleEndian, &v)
-	return v
-}

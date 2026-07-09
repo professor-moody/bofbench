@@ -1,7 +1,7 @@
 {
   "schema": "bofbench.loader-capabilities",
   "schema_version": 1,
-  "catalog_version": "windows-coff-x64/v1",
+  "catalog_version": "windows-coff-x64/v2",
   "runtime": "windows-coff",
   "format": "COFF",
   "machine": {
@@ -10,6 +10,9 @@
     "code": 34404
   },
   "default_entrypoint": "go",
+  "section_flags": {
+    "uninitialized_data": 128
+  },
   "relocations": [
     {"name": "ABSOLUTE", "code": 0, "supported": true, "detail": "no relocation"},
     {"name": "ADDR64", "code": 1, "supported": true, "detail": "64-bit virtual address"},

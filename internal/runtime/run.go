@@ -297,6 +297,8 @@ func compatibilityMessage(compatibility capability.Compatibility) string {
 			value += ": " + issue.Symbol
 		} else if issue.Relocation != "" {
 			value += ": " + issue.Relocation
+		} else if issue.Diagnostic != "" {
+			value += ": " + issue.Diagnostic
 		}
 		parts = append(parts, value)
 	}

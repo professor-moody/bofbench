@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -95,6 +96,34 @@ func TestWindowsCOFFRuntimeEnforcesLoaderPreflight(t *testing.T) {
 		t.Fatalf("runtime preflight errors = %+v", res.Errors)
 	}
 	requireEvents(t, res, "artifact", "arg_pack", "preflight", "load", "beacon_error", "exit")
+}
+
+func TestWindowsCOFFRuntimeRejectsMalformedLayoutBeforeLoader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "malformed.o")
+	if err := coff.CreateMockObject(path, "x64", "go", []string{"BeaconPrintf"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary.LittleEndian.PutUint32(b[40:44], uint32(len(b)-2))
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Run(Request{Path: path, Runtime: "windows-coff", Entry: "go"})
+	if err == nil || res.ExitState != "preflight_blocked" || res.LoaderCompatibility == nil || res.LoaderCompatibility.Status != "malformed_object" {
+		t.Fatalf("malformed runtime gate = err=%v result=%+v", err, res)
+	}
+	found := false
+	for _, blocker := range res.LoaderCompatibility.Blockers {
+		if blocker.Category == "malformed_object" && blocker.Diagnostic == "section_data_range" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("malformed diagnostic missing: %+v", res.LoaderCompatibility.Blockers)
+	}
 }
 
 func TestDarwinMachORunner(t *testing.T) {

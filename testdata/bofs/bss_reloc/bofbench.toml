@@ -1,0 +1,5 @@
+name = "bss_reloc"
+entry = "go"
+args = []
+expect = ["bss_reloc: zero=0"]
+timeout_ms = 5000

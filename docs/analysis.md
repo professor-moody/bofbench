@@ -11,13 +11,23 @@ bofbench preflight dist/hello.x64.o
 The analyzer currently reports:
 
 - artifact kind, architecture, size, hash, and entrypoint presence,
+- resolved entrypoint symbol, section, and offset, including x86 C/stdcall decoration normalization,
+- reported or inferred COFF toolchain family and evidence,
 - runtime compatibility for the current host and the selected runtime,
 - Windows COFF loader compatibility from the authoritative capability catalog,
-- sections, flags, and relocation counts,
+- sections, flags, alignment, file-backed versus zero-fill storage, and relocation counts,
 - relocation details when the object format exposes them,
 - unresolved symbols and imported API conventions,
 - visible strings after filtering common object-format noise,
 - review findings for missing entrypoints, writable/executable sections, memory/process/network/registry/dynamic-linking imports, and notable strings.
+
+## COFF Structural Diagnostics
+
+COFF parsing is bounded before any table or payload range is read. `coff_diagnostics` explains invalid section/symbol/string/relocation ranges, bad auxiliary-symbol references, invalid symbol sections or values, malformed long names, duplicate sections or relocations, reserved alignment encodings, stripped symbol tables, and entrypoint location/type problems.
+
+Diagnostics remain part of the analysis even when they block execution. Error-severity layout diagnostics become structured `malformed_object` preflight blockers, so `run` and `test` refuse the artifact before launching the native loader. Warning diagnostics remain review evidence.
+
+Uninitialized-data sections such as `.bss` are recorded as `zero-fill`. Capability catalog v2 teaches the generated native loader to leave these mapped ranges zeroed instead of copying bytes from file offset zero.
 
 ## Import Classification
 
@@ -68,6 +78,15 @@ Findings are review cues, not verdicts. A finding means "look here before runnin
 | `review` | API or section behavior that should be understood before use |
 | `info` | contextual evidence such as notable strings |
 
+Findings can be acknowledged without deleting their raw evidence:
+
+```sh
+bofbench inspect payload.x64.o --suppress memory_api
+bofbench analyze payload.x64.o --suppress 'external_symbol=Missing*' --format md
+```
+
+A rule is either an exact category or `category=evidence-glob`; `*` can select every category. Suppressed findings remain in JSON and Markdown with `suppressed: true`, the matching rule, original severity, detail, and evidence. Finding summaries separate active, suppressed, and total counts. Invalid rules fail analysis rather than silently matching nothing.
+
 ## String Output
 
 The string table is capped and filtered. It keeps operator-relevant values such as source filenames, toolchain markers, URLs, commands, paths, IP literals, and secret-like labels while dropping common section names and COFF table artifacts.
@@ -86,4 +105,4 @@ Compare a current object against a previous `analysis.json`:
 bofbench analyze dist/hello.x64.o --baseline runs/20260709-120000-analysis-hello-x64/analysis.json --format md
 ```
 
-The command writes `diff.json` and `diff.md` next to the new analysis report. The diff tracks hash changes, size delta, relocation delta, entrypoint changes, section changes, added/removed imports, added/removed findings, and unresolved-symbol changes.
+The command writes `diff.json` and `diff.md` next to the new analysis report. The diff tracks hash changes, size delta, relocation delta, resolved entrypoint location, section size/flags/alignment/storage changes, added/removed imports and findings, active/suppressed finding deltas, and unresolved-symbol changes.

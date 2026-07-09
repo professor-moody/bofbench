@@ -55,6 +55,7 @@ type Result struct {
 	Build         *buildsys.Result          `json:"build,omitempty"`
 	Kind          artifact.Kind             `json:"kind,omitempty"`
 	Arch          string                    `json:"arch,omitempty"`
+	Toolchain     string                    `json:"toolchain,omitempty"`
 	SHA256        string                    `json:"sha256,omitempty"`
 	EntrypointOK  bool                      `json:"entrypoint_ok"`
 	Relocations   int                       `json:"relocations"`
@@ -128,6 +129,7 @@ func Run(opts Options) (Persisted, error) {
 		}
 		result.Kind = analysis.Kind
 		result.Arch = analysis.Arch
+		result.Toolchain = analysis.Toolchain.Family
 		result.SHA256 = analysis.SHA256
 		result.EntrypointOK = analysis.EntrypointOK
 		result.Relocations = analysis.Relocations
@@ -235,7 +237,7 @@ func Text(report Report) string {
 				detail = issueSummary(result.Compatibility.Warnings)
 			}
 		}
-		fmt.Fprintf(&b, "%-28s %-28s %-6s relocs=%-4d %s\n", result.Name, result.Status, emptyAs(result.Arch, "-"), result.Relocations, detail)
+		fmt.Fprintf(&b, "%-28s %-28s %-6s %-12s relocs=%-4d %s\n", result.Name, result.Status, emptyAs(result.Arch, "-"), emptyAs(result.Toolchain, "-"), result.Relocations, detail)
 	}
 	return b.String()
 }
@@ -243,7 +245,7 @@ func Text(report Report) string {
 func Markdown(report Report) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Loader Preflight\n\n- Schema: `%s` version `%d`\n- Run ID: `%s`\n- Root: `%s`\n- Selection: `%s`\n- Entrypoint: `%s`\n- Status: `%s`\n- Summary: `%d compatible`, `%d runtime lookup`, `%d blocked`, `%d not applicable`, `%d failed`, `%d total`\n\n", report.Schema, report.SchemaVersion, report.RunID, report.Root, report.Selected, report.Entrypoint, report.Status, report.Summary.Compatible, report.Summary.RuntimeLookup, report.Summary.Blocked, report.Summary.NotApplicable, report.Summary.AnalyzeFailed, report.Summary.Total)
-	b.WriteString("| Name | Status | Kind | Arch | Relocations | SHA256 | Detail |\n| --- | --- | --- | --- | ---: | --- | --- |\n")
+	b.WriteString("| Name | Status | Kind | Arch | Toolchain | Relocations | SHA256 | Detail |\n| --- | --- | --- | --- | --- | ---: | --- | --- |\n")
 	for _, result := range report.Results {
 		detail := result.Error
 		if detail == "" && result.Compatibility != nil {
@@ -253,7 +255,7 @@ func Markdown(report Report) string {
 				detail = issueSummary(result.Compatibility.Warnings)
 			}
 		}
-		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%s` | %d | `%s` | %s |\n", escape(result.Name), result.Status, result.Kind, result.Arch, result.Relocations, result.SHA256, escape(detail))
+		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%s` | `%s` | %d | `%s` | %s |\n", escape(result.Name), result.Status, result.Kind, result.Arch, result.Toolchain, result.Relocations, result.SHA256, escape(detail))
 	}
 	return b.String()
 }
@@ -266,6 +268,8 @@ func issueSummary(issues []capability.Issue) string {
 			value += ": " + issue.Symbol
 		} else if issue.Relocation != "" {
 			value += ": " + issue.Relocation
+		} else if issue.Diagnostic != "" {
+			value += ": " + issue.Diagnostic
 		}
 		parts = append(parts, value)
 	}

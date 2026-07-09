@@ -10,7 +10,7 @@ import (
 
 func TestWindowsCOFFCatalogAndNormalization(t *testing.T) {
 	catalog := WindowsCOFF()
-	if catalog.CatalogVersion != "windows-coff-x64/v1" || catalog.Machine.Code != 0x8664 {
+	if catalog.CatalogVersion != "windows-coff-x64/v2" || catalog.Machine.Code != 0x8664 || catalog.SectionFlags.UninitializedData != 0x80 {
 		t.Fatalf("catalog identity = %+v", catalog)
 	}
 	for _, name := range []string{"BeaconDataParse", "BeaconDataInt", "BeaconDataShort", "BeaconDataLength", "BeaconDataExtract", "BeaconPrintf", "BeaconOutput"} {
@@ -80,7 +80,7 @@ func TestGeneratedNativeHeaderIsCurrent(t *testing.T) {
 	if string(got) != string(want) {
 		t.Fatalf("%s is stale; run go generate ./internal/capability", path)
 	}
-	for _, text := range []string{"REL_AMD64_SECREL", "BOFBENCH_BEACON_API_LIST", "bofbench_normalize_import", "__imp__"} {
+	for _, text := range []string{"REL_AMD64_SECREL", "SECTION_CNT_UNINITIALIZED_DATA", "BOFBENCH_BEACON_API_LIST", "bofbench_normalize_import", "__imp__"} {
 		if !strings.Contains(string(got), text) {
 			t.Fatalf("generated header missing %q", text)
 		}

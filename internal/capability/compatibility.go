@@ -10,8 +10,16 @@ type COFFInput struct {
 	Arch         string
 	Entrypoint   string
 	EntrypointOK bool
+	LayoutIssues []LayoutIssue
 	Relocations  []RelocationUse
 	Unresolved   []string
+}
+
+type LayoutIssue struct {
+	Code    string
+	Detail  string
+	Section string
+	Symbol  string
 }
 
 type RelocationUse struct {
@@ -39,6 +47,7 @@ type Issue struct {
 	Relocation string `json:"relocation,omitempty"`
 	Code       uint16 `json:"code,omitempty"`
 	Section    string `json:"section,omitempty"`
+	Diagnostic string `json:"diagnostic,omitempty"`
 }
 
 func AssessWindowsCOFF(input COFFInput) Compatibility {
@@ -55,6 +64,15 @@ func AssessWindowsCOFF(input COFFInput) Compatibility {
 		result.Blockers = append(result.Blockers, Issue{
 			Category: "unsupported_arch",
 			Detail:   fmt.Sprintf("loader supports %s objects; artifact architecture is %s", catalog.Machine.Arch, emptyAs(input.Arch, "unknown")),
+		})
+	}
+	for _, layout := range input.LayoutIssues {
+		result.Blockers = append(result.Blockers, Issue{
+			Category:   "malformed_object",
+			Detail:     layout.Detail,
+			Symbol:     layout.Symbol,
+			Section:    layout.Section,
+			Diagnostic: layout.Code,
 		})
 	}
 	if !input.EntrypointOK {
@@ -135,7 +153,7 @@ func uniqueIssues(issues []Issue) []Issue {
 	seen := map[string]bool{}
 	out := make([]Issue, 0, len(issues))
 	for _, issue := range issues {
-		key := fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%s", issue.Category, issue.Symbol, issue.Relocation, issue.Code, issue.Section)
+		key := fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%s\x00%s", issue.Category, issue.Symbol, issue.Relocation, issue.Code, issue.Section, issue.Diagnostic)
 		if seen[key] {
 			continue
 		}
@@ -162,13 +180,15 @@ func issuePriority(category string) int {
 	case "unsupported_arch":
 		return 0
 	case "missing_entrypoint":
+		return 2
+	case "malformed_object":
 		return 1
 	case "unsupported_relocation":
-		return 2
-	case "unsupported_beacon_api":
 		return 3
-	case "malformed_dynamic_import":
+	case "unsupported_beacon_api":
 		return 4
+	case "malformed_dynamic_import":
+		return 5
 	default:
 		return 9
 	}

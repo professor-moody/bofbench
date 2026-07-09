@@ -95,7 +95,7 @@ func TestCLIAnalyzeBaselineWritesDiff(t *testing.T) {
 	bin := buildTestBinary(t)
 	tmp := t.TempDir()
 	obj := filepath.Join(tmp, "demo.x64.o")
-	if err := coff.CreateMockObject(obj, "x64", "go", []string{"BeaconPrintf"}); err != nil {
+	if err := coff.CreateMockObject(obj, "x64", "go", []string{"BeaconPrintf", "KERNEL32$VirtualAlloc"}); err != nil {
 		t.Fatal(err)
 	}
 	inspect := runOK(t, tmp, bin, "inspect", obj)
@@ -133,6 +133,10 @@ func TestCLIAnalyzeBaselineWritesDiff(t *testing.T) {
 	}
 	mustExist(t, filepath.Join(tmp, second.DiffJSON))
 	mustExist(t, filepath.Join(tmp, second.DiffMD))
+	suppressed := runOK(t, tmp, bin, "analyze", obj, "--suppress", "memory_api")
+	if !strings.Contains(suppressed, `"category": "memory_api"`) || !strings.Contains(suppressed, `"suppressed": true`) || !strings.Contains(suppressed, `"suppression": "memory_api"`) {
+		t.Fatalf("CLI suppression did not preserve marked finding:\n%s", suppressed)
+	}
 }
 
 func TestCLIRunRequiresWindowsOnNonWindows(t *testing.T) {

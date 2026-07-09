@@ -16,6 +16,7 @@ func NativeHeader(c Catalog) ([]byte, error) {
 	fmt.Fprintf(&b, "#define BOFBENCH_CAPABILITY_SCHEMA_VERSION %d\n", c.SchemaVersion)
 	fmt.Fprintf(&b, "#define BOFBENCH_CAPABILITY_CATALOG_VERSION %s\n", strconv.Quote(c.CatalogVersion))
 	fmt.Fprintf(&b, "#define MACHINE_AMD64 0x%04x\n", c.Machine.Code)
+	fmt.Fprintf(&b, "#define SECTION_CNT_UNINITIALIZED_DATA 0x%08x\n", c.SectionFlags.UninitializedData)
 	for _, relocation := range c.SortedRelocations() {
 		fmt.Fprintf(&b, "#define REL_AMD64_%s 0x%04x\n", relocation.Name, relocation.Code)
 	}

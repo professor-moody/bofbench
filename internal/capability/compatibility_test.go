@@ -22,6 +22,7 @@ func TestAssessWindowsCOFFStructuredBlockers(t *testing.T) {
 		Arch:         "x86",
 		Entrypoint:   "go",
 		EntrypointOK: false,
+		LayoutIssues: []LayoutIssue{{Code: "section_data_range", Detail: "section data extends beyond file", Section: ".text"}},
 		Relocations: []RelocationUse{
 			{Code: 0x000c, Name: "SECREL", Section: ".data", Symbol: "value"},
 			{Code: 0x7777, Name: "AMD64_0x7777", Section: ".text", Symbol: "other"},
@@ -31,7 +32,7 @@ func TestAssessWindowsCOFFStructuredBlockers(t *testing.T) {
 	if result.Compatible || result.Status != "unsupported_arch" {
 		t.Fatalf("compatibility = %+v", result)
 	}
-	for _, category := range []string{"unsupported_arch", "missing_entrypoint", "unsupported_relocation", "unsupported_beacon_api", "malformed_dynamic_import"} {
+	for _, category := range []string{"unsupported_arch", "malformed_object", "missing_entrypoint", "unsupported_relocation", "unsupported_beacon_api", "malformed_dynamic_import"} {
 		if !hasIssue(result.Blockers, category) {
 			t.Fatalf("missing %s blocker: %+v", category, result.Blockers)
 		}

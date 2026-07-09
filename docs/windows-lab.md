@@ -20,6 +20,7 @@ go build -o work\bin\bofbench.exe .\cmd\bofbench
 .\work\bin\bofbench.exe run .\dist\arg_echo.x64.o --args z:test-message i:42
 .\work\bin\bofbench.exe run .\dist\winapi_call.x64.o
 .\work\bin\bofbench.exe test .\testdata\bofs\data_reloc --runtime windows-coff
+.\work\bin\bofbench.exe test .\testdata\bofs\bss_reloc --runtime windows-coff
 .\work\bin\bofbench.exe test .\testdata\bofs\callback_ptr --runtime windows-coff
 .\work\bin\bofbench.exe test .\testdata\bofs\parser_all --runtime windows-coff
 .\work\bin\bofbench.exe stage .\dist\hello.x64.o --target raw
@@ -62,6 +63,7 @@ Fixture coverage:
 | `arg_echo` | `BeaconDataParse`, `BeaconDataExtract`, and `BeaconDataInt` |
 | `winapi_call` | common WinAPI import resolution |
 | `data_reloc` | global data and pointer relocations |
+| `bss_reloc` | zero-filled uninitialized `.bss` section handling |
 | `callback_ptr` | relocated function pointer invocation |
 | `parser_all` | `BeaconDataShort`, `BeaconDataLength`, `BeaconOutput`, and binary arg extraction |
 | `unresolved` | expected unresolved-symbol failure |

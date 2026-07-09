@@ -6,6 +6,7 @@ It implements the first real execution path:
 
 - parse COFF file headers,
 - map sections into executable memory,
+- zero-fill COFF uninitialized-data sections such as `.bss`,
 - apply AMD64 relocations,
 - resolve Beacon compatibility symbols,
 - resolve common WinAPI imports,
@@ -51,6 +52,7 @@ The Windows lab smoke exercises the loader with small benign BOFs under `testdat
 | `arg_echo` | packed string and integer parsing |
 | `winapi_call` | WinAPI import lookup |
 | `data_reloc` | static/global data and pointer relocations |
+| `bss_reloc` | zero-filled uninitialized-data section mapping |
 | `callback_ptr` | function pointer relocation and call-through |
 | `parser_all` | short parsing, binary extraction, length tracking, and `BeaconOutput` |
 | `unresolved` | unresolved external failure report |

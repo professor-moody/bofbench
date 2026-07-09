@@ -10,7 +10,7 @@ This version is convention-first and operator-shaped:
 - Cobra command surface with direct verbs: `new`, `fetch`, `list`, `build`, `inspect`, `analyze`, `preflight`, `run`, `test`, `stage`, `lab`, `doctor`, `tui`, and `docs`.
 - Bubble Tea/Lip Gloss TUI for arsenal details, command previews, run-history filters, event snippets, and analyzer navigation.
 - Static artifact analysis for Windows COFF, Linux ELF, and macOS Mach-O relocatable objects.
-- Analysis reports include runtime compatibility, the versioned loader-capability catalog, structured blockers/warnings, host requirements, and next run/test commands.
+- Analysis reports include bounded COFF structural diagnostics, toolchain and resolved-entrypoint evidence, section alignment/storage, runtime compatibility, the versioned loader-capability catalog, structured blockers/warnings, host requirements, and next run/test commands.
 - Real Windows x64 native execution is handled by `native/loader/bofbench-loader.exe`.
 - Run and test reports include normalized runtime event timelines for load, args, entry calls, output/errors, and terminal state.
 - Persisted JSON carries versioned schema, run lineage, tool build identity, host metadata, and relevant object/loader/configuration fingerprints.
@@ -29,6 +29,7 @@ work/bin/bofbench version --format json
 work/bin/bofbench build bofs/smoke
 work/bin/bofbench inspect dist/smoke.x64.o
 work/bin/bofbench analyze dist/smoke.x64.o --format md
+work/bin/bofbench analyze dist/smoke.x64.o --suppress memory_api --format md
 work/bin/bofbench preflight dist/smoke.x64.o
 work/bin/bofbench analyze dist/smoke.x64.o --baseline runs/<old-analysis>/analysis.json --format md
 work/bin/bofbench stage dist/smoke.x64.o --target cobaltstrike --args z:hello i:3
@@ -66,7 +67,7 @@ Each fetched arsenal gets a `source.json` with URL, ref, type, adapter, fetch ti
 
 HTTP downloads are bounded and ZIP acquisition is transactional. Unsafe paths, symlinks, special files, duplicate/case-colliding entries, excessive entry counts, and oversized expansion are rejected before an existing arsenal is replaced.
 
-`inspect`, `analyze`, and `preflight` derive Windows COFF compatibility from the loader's authoritative catalog. `run` and `test` enforce the same gate before native execution.
+`inspect`, `analyze`, and `preflight` derive Windows COFF compatibility from the loader's authoritative catalog. Malformed layouts become structured preflight blockers, and `run`/`test` enforce the same gate before native execution. Finding suppressions mark acknowledged evidence without deleting it.
 
 `bofbench.toml` supports named test profiles and expected exits for repeatable positive and negative fixture checks.
 

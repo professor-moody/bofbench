@@ -244,12 +244,13 @@ func buildCommand(stdout io.Writer) *cobra.Command {
 
 func inspectCommand(stdout io.Writer) *cobra.Command {
 	var entry string
+	var suppressions []string
 	cmd := &cobra.Command{
 		Use:   "inspect <artifact>",
 		Short: "Print human-readable artifact analysis",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := artifact.Analyze(args[0], entry)
+			a, err := artifact.AnalyzeWithOptions(args[0], artifact.AnalysisOptions{Entrypoint: entry, Suppressions: suppressions})
 			if err != nil {
 				return err
 			}
@@ -258,6 +259,7 @@ func inspectCommand(stdout io.Writer) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&entry, "entry", "go", "entrypoint symbol")
+	cmd.Flags().StringSliceVar(&suppressions, "suppress", nil, "mark finding category or category=evidence-glob as suppressed; repeatable")
 	return cmd
 }
 
@@ -265,12 +267,13 @@ func analyzeCommand(stdout io.Writer) *cobra.Command {
 	var entry string
 	var format string
 	var baselinePath string
+	var suppressions []string
 	cmd := &cobra.Command{
 		Use:   "analyze <artifact>",
 		Short: "Analyze an artifact and write JSON/Markdown reports",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			persisted, err := artifact.AnalyzeAndPersist(args[0], entry)
+			persisted, err := artifact.AnalyzeAndPersistWithOptions(args[0], artifact.AnalysisOptions{Entrypoint: entry, Suppressions: suppressions})
 			if err != nil {
 				return err
 			}
@@ -321,6 +324,7 @@ func analyzeCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&entry, "entry", "go", "entrypoint symbol")
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json or md")
 	cmd.Flags().StringVar(&baselinePath, "baseline", "", "previous analysis.json to diff against")
+	cmd.Flags().StringSliceVar(&suppressions, "suppress", nil, "mark finding category or category=evidence-glob as suppressed; repeatable")
 	return cmd
 }
 
@@ -916,6 +920,8 @@ func appCompatibilityMessage(compatibility capability.Compatibility) string {
 			value += ": " + issue.Symbol
 		} else if issue.Relocation != "" {
 			value += ": " + issue.Relocation
+		} else if issue.Diagnostic != "" {
+			value += ": " + issue.Diagnostic
 		}
 		parts = append(parts, value)
 	}
@@ -1078,11 +1084,17 @@ func printAnalysis(w io.Writer, a artifact.Analysis) {
 	fmt.Fprintf(w, "object: %s\n", a.Path)
 	fmt.Fprintf(w, "kind: %s\n", a.Kind)
 	fmt.Fprintf(w, "arch: %s\n", a.Arch)
+	if a.Toolchain.Family != "" {
+		fmt.Fprintf(w, "toolchain: %s confidence=%s compiler=%s\n", a.Toolchain.Family, a.Toolchain.Confidence, a.Toolchain.Compiler)
+	}
 	fmt.Fprintf(w, "size: %d\n", a.Size)
 	if a.SHA256 != "" {
 		fmt.Fprintf(w, "sha256: %s\n", a.SHA256)
 	}
 	fmt.Fprintf(w, "entry %q: %s\n", a.Entrypoint, yesNo(a.EntrypointOK))
+	if a.EntrypointSymbol != "" {
+		fmt.Fprintf(w, "  symbol=%s section=%s offset=0x%x\n", a.EntrypointSymbol, a.EntrypointSection, a.EntrypointOffset)
+	}
 	if a.Runtime.Runtime != "" {
 		fmt.Fprintf(w, "runtime compatibility:\n")
 		fmt.Fprintf(w, "  runtime=%s status=%s can_run=%s host=%s/%s required=%s/%s\n",
@@ -1120,10 +1132,31 @@ func printAnalysis(w io.Writer, a artifact.Analysis) {
 			fmt.Fprintln(w)
 		}
 	}
+	if len(a.COFFDiagnostics) > 0 {
+		fmt.Fprintf(w, "COFF diagnostics:\n")
+		for _, diagnostic := range a.COFFDiagnostics {
+			location := diagnostic.Section
+			if diagnostic.Symbol != "" {
+				if location != "" {
+					location += "/"
+				}
+				location += diagnostic.Symbol
+			}
+			fmt.Fprintf(w, "  %-7s %-30s %s", diagnostic.Severity, diagnostic.Code, diagnostic.Detail)
+			if location != "" {
+				fmt.Fprintf(w, " (%s)", location)
+			}
+			fmt.Fprintln(w)
+		}
+	}
 	if len(a.Findings) > 0 {
-		fmt.Fprintf(w, "findings:\n")
+		fmt.Fprintf(w, "findings: active=%d suppressed=%d total=%d\n", a.FindingSummary.Active, a.FindingSummary.Suppressed, a.FindingSummary.Total)
 		for _, finding := range a.Findings {
-			fmt.Fprintf(w, "  %-7s %-18s %s", finding.Severity, finding.Category, finding.Detail)
+			state := "active"
+			if finding.Suppressed {
+				state = "suppressed"
+			}
+			fmt.Fprintf(w, "  %-10s %-7s %-18s %s", state, finding.Severity, finding.Category, finding.Detail)
 			if finding.Evidence != "" {
 				fmt.Fprintf(w, " (%s)", finding.Evidence)
 			}
@@ -1132,7 +1165,11 @@ func printAnalysis(w io.Writer, a artifact.Analysis) {
 	}
 	fmt.Fprintf(w, "sections:\n")
 	for _, section := range a.Sections {
-		fmt.Fprintf(w, "  %-18s size=%-8d relocs=%-4d flags=%s\n", section.Name, section.Size, section.Relocations, section.Flags)
+		storage := "file"
+		if section.Uninitialized {
+			storage = "zero-fill"
+		}
+		fmt.Fprintf(w, "  %-18s size=%-8d relocs=%-4d align=%-5d storage=%-9s flags=%s\n", section.Name, section.Size, section.Relocations, section.Alignment, storage, section.Flags)
 	}
 	if len(a.Imports) > 0 {
 		fmt.Fprintf(w, "imports:\n")

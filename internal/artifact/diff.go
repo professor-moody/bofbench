@@ -21,14 +21,16 @@ type DiffReport struct {
 }
 
 type DiffSummary struct {
-	HashChanged       bool  `json:"hash_changed"`
-	SizeDelta         int64 `json:"size_delta"`
-	RelocationsDelta  int   `json:"relocations_delta"`
-	ImportsAdded      int   `json:"imports_added"`
-	ImportsRemoved    int   `json:"imports_removed"`
-	FindingsAdded     int   `json:"findings_added"`
-	FindingsRemoved   int   `json:"findings_removed"`
-	EntrypointChanged bool  `json:"entrypoint_changed"`
+	HashChanged             bool  `json:"hash_changed"`
+	SizeDelta               int64 `json:"size_delta"`
+	RelocationsDelta        int   `json:"relocations_delta"`
+	ImportsAdded            int   `json:"imports_added"`
+	ImportsRemoved          int   `json:"imports_removed"`
+	FindingsAdded           int   `json:"findings_added"`
+	FindingsRemoved         int   `json:"findings_removed"`
+	ActiveFindingsDelta     int   `json:"active_findings_delta"`
+	SuppressedFindingsDelta int   `json:"suppressed_findings_delta"`
+	EntrypointChanged       bool  `json:"entrypoint_changed"`
 }
 
 type DiffChange struct {
@@ -52,16 +54,20 @@ func LoadAnalysis(path string) (Analysis, error) {
 }
 
 func CompareAnalysis(baseline, current Analysis) DiffReport {
+	baselineFindings := normalizedFindingSummary(baseline)
+	currentFindings := normalizedFindingSummary(current)
 	report := DiffReport{
 		Header:      evidence.New(evidence.SchemaAnalysisDiff, "", ""),
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Baseline:    baseline.Path,
 		Current:     current.Path,
 		Summary: DiffSummary{
-			HashChanged:       baseline.SHA256 != current.SHA256,
-			SizeDelta:         current.Size - baseline.Size,
-			RelocationsDelta:  current.Relocations - baseline.Relocations,
-			EntrypointChanged: baseline.EntrypointOK != current.EntrypointOK || baseline.Entrypoint != current.Entrypoint,
+			HashChanged:             baseline.SHA256 != current.SHA256,
+			SizeDelta:               current.Size - baseline.Size,
+			RelocationsDelta:        current.Relocations - baseline.Relocations,
+			EntrypointChanged:       baseline.EntrypointOK != current.EntrypointOK || baseline.Entrypoint != current.Entrypoint || baseline.EntrypointSymbol != current.EntrypointSymbol || baseline.EntrypointSection != current.EntrypointSection || baseline.EntrypointOffset != current.EntrypointOffset,
+			ActiveFindingsDelta:     currentFindings.Active - baselineFindings.Active,
+			SuppressedFindingsDelta: currentFindings.Suppressed - baselineFindings.Suppressed,
 		},
 	}
 	if baseline.Kind != current.Kind {
@@ -72,6 +78,9 @@ func CompareAnalysis(baseline, current Analysis) DiffReport {
 	}
 	if baseline.EntrypointOK != current.EntrypointOK {
 		report.Changes = append(report.Changes, DiffChange{Category: "entrypoint", Name: current.Entrypoint, Change: "changed", Before: fmt.Sprintf("%t", baseline.EntrypointOK), After: fmt.Sprintf("%t", current.EntrypointOK)})
+	}
+	if baseline.EntrypointSymbol != current.EntrypointSymbol || baseline.EntrypointSection != current.EntrypointSection || baseline.EntrypointOffset != current.EntrypointOffset {
+		report.Changes = append(report.Changes, DiffChange{Category: "entrypoint", Name: current.Entrypoint, Change: "location", Before: entrypointSummary(baseline), After: entrypointSummary(current)})
 	}
 	report.Changes = append(report.Changes, diffSet("import", importKeys(baseline.Imports), importKeys(current.Imports), &report.Summary.ImportsRemoved, &report.Summary.ImportsAdded)...)
 	report.Changes = append(report.Changes, diffSet("finding", findingKeys(baseline.Findings), findingKeys(current.Findings), &report.Summary.FindingsRemoved, &report.Summary.FindingsAdded)...)
@@ -89,6 +98,25 @@ func CompareAnalysis(baseline, current Analysis) DiffReport {
 	return report
 }
 
+func normalizedFindingSummary(analysis Analysis) FindingSummary {
+	if analysis.FindingSummary.Total == len(analysis.Findings) {
+		return analysis.FindingSummary
+	}
+	summary := FindingSummary{Total: len(analysis.Findings)}
+	for _, finding := range analysis.Findings {
+		if finding.Suppressed {
+			summary.Suppressed++
+		} else {
+			summary.Active++
+		}
+	}
+	return summary
+}
+
+func entrypointSummary(analysis Analysis) string {
+	return fmt.Sprintf("symbol=%s section=%s offset=0x%x", analysis.EntrypointSymbol, analysis.EntrypointSection, analysis.EntrypointOffset)
+}
+
 func DiffMarkdown(report DiffReport) string {
 	var b strings.Builder
 	b.WriteString("# Analysis Diff\n\n")
@@ -103,6 +131,7 @@ func DiffMarkdown(report DiffReport) string {
 	fmt.Fprintf(&b, "- Relocations delta: `%+d`\n", report.Summary.RelocationsDelta)
 	fmt.Fprintf(&b, "- Imports: `%+d added`, `%+d removed`\n", report.Summary.ImportsAdded, report.Summary.ImportsRemoved)
 	fmt.Fprintf(&b, "- Findings: `%+d added`, `%+d removed`\n\n", report.Summary.FindingsAdded, report.Summary.FindingsRemoved)
+	fmt.Fprintf(&b, "- Finding state: `%+d active`, `%+d suppressed`\n\n", report.Summary.ActiveFindingsDelta, report.Summary.SuppressedFindingsDelta)
 	if len(report.Changes) == 0 {
 		b.WriteString("No structural changes detected in the tracked fields.\n")
 		return b.String()
@@ -152,7 +181,7 @@ func diffSectionChanges(before, after []Section) []DiffChange {
 			changes = append(changes, DiffChange{Category: "section", Name: name, Change: "removed", Before: sectionSummary(oldSection)})
 			continue
 		}
-		if oldSection.Flags != newSection.Flags || oldSection.Size != newSection.Size || oldSection.Relocations != newSection.Relocations {
+		if oldSection.Flags != newSection.Flags || oldSection.Size != newSection.Size || oldSection.Relocations != newSection.Relocations || oldSection.Alignment != newSection.Alignment || oldSection.Uninitialized != newSection.Uninitialized {
 			changes = append(changes, DiffChange{Category: "section", Name: name, Change: "changed", Before: sectionSummary(oldSection), After: sectionSummary(newSection)})
 		}
 	}
@@ -165,7 +194,7 @@ func diffSectionChanges(before, after []Section) []DiffChange {
 }
 
 func sectionSummary(section Section) string {
-	return fmt.Sprintf("size=%d relocs=%d flags=%s", section.Size, section.Relocations, section.Flags)
+	return fmt.Sprintf("size=%d relocs=%d align=%d zero_fill=%t flags=%s", section.Size, section.Relocations, section.Alignment, section.Uninitialized, section.Flags)
 }
 
 func importKeys(imports []Import) map[string]string {
@@ -180,7 +209,7 @@ func importKeys(imports []Import) map[string]string {
 func findingKeys(findings []Finding) map[string]string {
 	out := map[string]string{}
 	for _, finding := range findings {
-		key := strings.Join([]string{finding.Severity, finding.Category, finding.Evidence, finding.Detail}, ":")
+		key := strings.Join([]string{finding.Severity, finding.Category, finding.Evidence, finding.Detail, fmt.Sprintf("suppressed=%t", finding.Suppressed), finding.Suppression}, ":")
 		out[key] = finding.Detail
 	}
 	return out

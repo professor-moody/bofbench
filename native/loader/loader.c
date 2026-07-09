@@ -559,7 +559,7 @@ int main(int argc, char **argv) {
     for (si = 0; si < hdr->number_of_sections; si++) {
         size_t size = sections[si].size_of_raw_data;
         section_bases[si] = cursor;
-        if (size && sections[si].pointer_to_raw_data + size <= file_size) {
+        if (size && !(sections[si].characteristics & SECTION_CNT_UNINITIALIZED_DATA) && sections[si].pointer_to_raw_data + size <= file_size) {
             memcpy(cursor, file_base + sections[si].pointer_to_raw_data, size);
         }
         cursor += (size + 0xfff) & ~((size_t)0xfff);

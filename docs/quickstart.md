@@ -55,9 +55,11 @@ Example inspect output:
 object: dist/smoke.x64.o
 kind: coff
 arch: x64
+toolchain: mingw-gcc confidence=reported compiler=GCC: (GNU) ...
 entry "go": yes
+  symbol=go section=.text offset=0x0
 sections:
-  .text              size=48       relocs=2    flags=R-X
+  .text              size=48       relocs=2    align=16    storage=file      flags=R-X
 unresolved externals:
   BeaconPrintf
 ```
@@ -69,7 +71,7 @@ work/bin/bofbench analyze dist/smoke.x64.o --format md
 ```
 
 Reports are written under `runs/<timestamp>-analysis-*/analysis.json` and `analysis.md`.
-The report includes import classification, visible strings, and review findings.
+The report includes bounded COFF diagnostics, toolchain/entrypoint/section evidence, loader compatibility, import classification, visible strings, and review findings. Use repeatable `--suppress category` or `--suppress 'category=evidence-glob'` rules to mark acknowledged findings without deleting them.
 
 Run a named profile from `bofbench.toml`:
 

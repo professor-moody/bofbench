@@ -27,6 +27,7 @@ type Catalog struct {
 	Format                 string       `json:"format"`
 	Machine                Machine      `json:"machine"`
 	DefaultEntrypoint      string       `json:"default_entrypoint"`
+	SectionFlags           SectionFlags `json:"section_flags"`
 	Relocations            []Relocation `json:"relocations"`
 	BeaconAPIs             []string     `json:"beacon_apis"`
 	ImportPointerPrefixes  []string     `json:"import_pointer_prefixes"`
@@ -38,6 +39,10 @@ type Machine struct {
 	Name string `json:"name"`
 	Arch string `json:"arch"`
 	Code uint16 `json:"code"`
+}
+
+type SectionFlags struct {
+	UninitializedData uint32 `json:"uninitialized_data"`
 }
 
 type Relocation struct {
@@ -67,6 +72,9 @@ func (c Catalog) Validate() error {
 	}
 	if c.Machine.Name != "AMD64" || c.Machine.Arch != "x64" || c.Machine.Code != 0x8664 {
 		return fmt.Errorf("catalog machine must be AMD64/x64/0x8664")
+	}
+	if c.SectionFlags.UninitializedData != 0x00000080 {
+		return fmt.Errorf("catalog uninitialized-data section flag must be 0x00000080")
 	}
 	if c.DefaultEntrypoint == "" || len(c.Relocations) == 0 || len(c.BeaconAPIs) == 0 || len(c.FallbackLibraries) == 0 {
 		return fmt.Errorf("catalog capability lists are incomplete")

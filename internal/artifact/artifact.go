@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	goruntime "runtime"
 	"sort"
@@ -37,7 +38,11 @@ type Analysis struct {
 	Kind                Kind                      `json:"kind"`
 	Arch                string                    `json:"arch,omitempty"`
 	Format              string                    `json:"format,omitempty"`
+	Toolchain           ToolchainInfo             `json:"toolchain,omitempty"`
 	Entrypoint          string                    `json:"entrypoint,omitempty"`
+	EntrypointSymbol    string                    `json:"entrypoint_symbol,omitempty"`
+	EntrypointSection   string                    `json:"entrypoint_section,omitempty"`
+	EntrypointOffset    uint32                    `json:"entrypoint_offset,omitempty"`
 	EntrypointOK        bool                      `json:"entrypoint_ok"`
 	Size                int64                     `json:"size"`
 	SHA256              string                    `json:"sha256,omitempty"`
@@ -47,8 +52,11 @@ type Analysis struct {
 	Imports             []Import                  `json:"imports,omitempty"`
 	Strings             []String                  `json:"strings,omitempty"`
 	Findings            []Finding                 `json:"findings,omitempty"`
+	FindingSummary      FindingSummary            `json:"finding_summary"`
+	Suppressions        []string                  `json:"suppressions,omitempty"`
 	Relocations         int                       `json:"relocations"`
 	RelocationDetails   []Relocation              `json:"relocation_details,omitempty"`
+	COFFDiagnostics     []coff.Diagnostic         `json:"coff_diagnostics,omitempty"`
 	LoaderCompatibility *capability.Compatibility `json:"loader_compatibility,omitempty"`
 	Runtime             RuntimeInfo               `json:"runtime_compatibility,omitempty"`
 	GeneratedAt         string                    `json:"generated_at"`
@@ -57,10 +65,19 @@ type Analysis struct {
 }
 
 type Section struct {
-	Name        string `json:"name"`
-	Size        uint64 `json:"size"`
-	Relocations int    `json:"relocations"`
-	Flags       string `json:"flags,omitempty"`
+	Name          string `json:"name"`
+	Size          uint64 `json:"size"`
+	Relocations   int    `json:"relocations"`
+	Flags         string `json:"flags,omitempty"`
+	Alignment     uint32 `json:"alignment,omitempty"`
+	Uninitialized bool   `json:"uninitialized,omitempty"`
+}
+
+type ToolchainInfo struct {
+	Family     string   `json:"family,omitempty"`
+	Compiler   string   `json:"compiler,omitempty"`
+	Confidence string   `json:"confidence,omitempty"`
+	Evidence   []string `json:"evidence,omitempty"`
 }
 
 type Symbol struct {
@@ -83,10 +100,23 @@ type String struct {
 }
 
 type Finding struct {
-	Severity string `json:"severity"`
-	Category string `json:"category"`
-	Detail   string `json:"detail"`
-	Evidence string `json:"evidence,omitempty"`
+	Severity    string `json:"severity"`
+	Category    string `json:"category"`
+	Detail      string `json:"detail"`
+	Evidence    string `json:"evidence,omitempty"`
+	Suppressed  bool   `json:"suppressed,omitempty"`
+	Suppression string `json:"suppression,omitempty"`
+}
+
+type FindingSummary struct {
+	Active     int `json:"active"`
+	Suppressed int `json:"suppressed"`
+	Total      int `json:"total"`
+}
+
+type AnalysisOptions struct {
+	Entrypoint   string
+	Suppressions []string
 }
 
 type Relocation struct {
@@ -148,6 +178,11 @@ func Detect(path string) (Kind, error) {
 }
 
 func Analyze(path, entry string) (Analysis, error) {
+	return AnalyzeWithOptions(path, AnalysisOptions{Entrypoint: entry})
+}
+
+func AnalyzeWithOptions(path string, opts AnalysisOptions) (Analysis, error) {
+	entry := opts.Entrypoint
 	if entry == "" {
 		entry = "go"
 	}
@@ -186,11 +221,18 @@ func Analyze(path, entry string) (Analysis, error) {
 		return out, err
 	}
 	finishAnalysis(path, &out)
+	if err := applyFindingSuppressions(&out, opts.Suppressions); err != nil {
+		return out, err
+	}
 	return out, nil
 }
 
 func AnalyzeAndPersist(path, entry string) (Persisted, error) {
-	a, err := Analyze(path, entry)
+	return AnalyzeAndPersistWithOptions(path, AnalysisOptions{Entrypoint: entry})
+}
+
+func AnalyzeAndPersistWithOptions(path string, opts AnalysisOptions) (Persisted, error) {
+	a, err := AnalyzeWithOptions(path, opts)
 	if err != nil {
 		return Persisted{}, err
 	}
@@ -220,7 +262,13 @@ func Markdown(a Analysis) string {
 	fmt.Fprintf(&b, "- Path: `%s`\n", a.Path)
 	fmt.Fprintf(&b, "- Kind: `%s`\n", a.Kind)
 	fmt.Fprintf(&b, "- Arch: `%s`\n", a.Arch)
+	if a.Toolchain.Family != "" {
+		fmt.Fprintf(&b, "- Toolchain: `%s` (%s)\n", a.Toolchain.Family, a.Toolchain.Confidence)
+	}
 	fmt.Fprintf(&b, "- Entry `%s`: `%t`\n", a.Entrypoint, a.EntrypointOK)
+	if a.EntrypointSymbol != "" {
+		fmt.Fprintf(&b, "- Entry symbol: `%s` in `%s` at `0x%x`\n", a.EntrypointSymbol, a.EntrypointSection, a.EntrypointOffset)
+	}
 	fmt.Fprintf(&b, "- Size: `%d`\n", a.Size)
 	fmt.Fprintf(&b, "- Relocations: `%d`\n\n", a.Relocations)
 	if a.Runtime.Runtime != "" {
@@ -250,16 +298,32 @@ func Markdown(a Analysis) string {
 		}
 		b.WriteString("\n")
 	}
-	if len(a.Findings) > 0 {
-		b.WriteString("## Findings\n\n| Severity | Category | Detail | Evidence |\n| --- | --- | --- | --- |\n")
-		for _, finding := range a.Findings {
-			fmt.Fprintf(&b, "| `%s` | `%s` | %s | `%s` |\n", finding.Severity, finding.Category, escapeTable(finding.Detail), escapeTable(finding.Evidence))
+	if len(a.COFFDiagnostics) > 0 {
+		b.WriteString("## COFF Diagnostics\n\n| Severity | Code | Section | Symbol | Detail |\n| --- | --- | --- | --- | --- |\n")
+		for _, diagnostic := range a.COFFDiagnostics {
+			fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%s` | %s |\n", diagnostic.Severity, diagnostic.Code, escapeTable(diagnostic.Section), escapeTable(diagnostic.Symbol), escapeTable(diagnostic.Detail))
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("## Sections\n\n| Name | Size | Relocations | Flags |\n| --- | ---: | ---: | --- |\n")
+	if len(a.Findings) > 0 {
+		fmt.Fprintf(&b, "## Findings\n\n- Active: `%d`\n- Suppressed: `%d`\n- Total: `%d`\n\n", a.FindingSummary.Active, a.FindingSummary.Suppressed, a.FindingSummary.Total)
+		b.WriteString("| State | Severity | Category | Detail | Evidence | Suppression |\n| --- | --- | --- | --- | --- | --- |\n")
+		for _, finding := range a.Findings {
+			state := "active"
+			if finding.Suppressed {
+				state = "suppressed"
+			}
+			fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | %s | `%s` | `%s` |\n", state, finding.Severity, finding.Category, escapeTable(finding.Detail), escapeTable(finding.Evidence), escapeTable(finding.Suppression))
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("## Sections\n\n| Name | Size | Relocations | Alignment | Storage | Flags |\n| --- | ---: | ---: | ---: | --- | --- |\n")
 	for _, section := range a.Sections {
-		fmt.Fprintf(&b, "| `%s` | %d | %d | `%s` |\n", section.Name, section.Size, section.Relocations, section.Flags)
+		storage := "file"
+		if section.Uninitialized {
+			storage = "zero-fill"
+		}
+		fmt.Fprintf(&b, "| `%s` | %d | %d | %d | `%s` | `%s` |\n", section.Name, section.Size, section.Relocations, section.Alignment, storage, section.Flags)
 	}
 	if len(a.Imports) > 0 {
 		b.WriteString("\n## Imports\n\n| Symbol | Library | API | Category |\n| --- | --- | --- | --- |\n")
@@ -274,11 +338,15 @@ func Markdown(a Analysis) string {
 		}
 	}
 	if len(a.RelocationDetails) > 0 {
-		b.WriteString("\n## Relocation Detail\n\n| Section | Offset | Type | Symbol |\n| --- | ---: | --- | --- |\n")
+		b.WriteString("\n## Relocation Detail\n\n| Section | Offset | Code | Type | Symbol |\n| --- | ---: | ---: | --- | --- |\n")
 		limit := minInt(len(a.RelocationDetails), 120)
 		for i := 0; i < limit; i++ {
 			rel := a.RelocationDetails[i]
-			fmt.Fprintf(&b, "| `%s` | `0x%x` | `%s` | `%s` |\n", rel.Section, rel.Offset, rel.Type, escapeTable(rel.Symbol))
+			code := ""
+			if rel.Code != nil {
+				code = fmt.Sprintf("0x%04x", *rel.Code)
+			}
+			fmt.Fprintf(&b, "| `%s` | `0x%x` | `%s` | `%s` | `%s` |\n", rel.Section, rel.Offset, code, rel.Type, escapeTable(rel.Symbol))
 		}
 		if len(a.RelocationDetails) > limit {
 			fmt.Fprintf(&b, "\n_%d additional relocations omitted from Markdown; see JSON report._\n", len(a.RelocationDetails)-limit)
@@ -307,12 +375,16 @@ func analyzeCOFF(path, entry string, a Analysis) (Analysis, error) {
 	a.Arch = info.Machine
 	a.Format = "COFF"
 	a.SHA256 = info.SHA256
+	a.Toolchain = detectCOFFToolchain(info)
+	a.COFFDiagnostics = append(a.COFFDiagnostics, info.Diagnostics...)
 	for _, section := range info.Sections {
 		a.Sections = append(a.Sections, Section{
-			Name:        section.Name,
-			Size:        uint64(section.Size),
-			Relocations: len(section.Relocations),
-			Flags:       coffFlags(section),
+			Name:          section.Name,
+			Size:          uint64(section.Size),
+			Relocations:   len(section.Relocations),
+			Flags:         coffFlags(section),
+			Alignment:     section.Alignment,
+			Uninitialized: section.Uninitialized,
 		})
 		a.Relocations += len(section.Relocations)
 		for _, rel := range section.Relocations {
@@ -326,18 +398,66 @@ func analyzeCOFF(path, entry string, a Analysis) (Analysis, error) {
 			})
 		}
 	}
+	var entryMatches []coff.Symbol
 	for _, sym := range info.Symbols {
 		undefined := sym.External && sym.SectionNumber == 0
-		a.Symbols = append(a.Symbols, Symbol{Name: sym.Name, Undefined: undefined, External: sym.External})
-		if sym.Name == entry && sym.SectionNumber > 0 {
-			a.EntrypointOK = true
+		sectionName := ""
+		if sym.SectionNumber > 0 && int(sym.SectionNumber) <= len(info.Sections) {
+			sectionName = info.Sections[sym.SectionNumber-1].Name
+		}
+		a.Symbols = append(a.Symbols, Symbol{Name: sym.Name, Section: sectionName, Undefined: undefined, External: sym.External})
+		if entrypointMatches(sym.Name, entry, info.Machine) && sym.SectionNumber > 0 {
+			entryMatches = append(entryMatches, sym)
 		}
 		if undefined {
 			a.Unresolved = append(a.Unresolved, sym.Name)
 		}
 	}
+	if len(entryMatches) > 1 {
+		a.COFFDiagnostics = append(a.COFFDiagnostics, coff.Diagnostic{Severity: "error", Code: "entrypoint_ambiguous", Detail: fmt.Sprintf("%d defined symbols normalize to entrypoint %q", len(entryMatches), entry), Symbol: entry})
+	}
+	if len(entryMatches) > 0 {
+		match := entryMatches[0]
+		a.EntrypointSymbol = match.Name
+		a.EntrypointOffset = match.Value
+		if int(match.SectionNumber) <= len(info.Sections) {
+			section := info.Sections[match.SectionNumber-1]
+			a.EntrypointSection = section.Name
+			if section.Size == 0 || match.Value >= section.Size {
+				a.COFFDiagnostics = append(a.COFFDiagnostics, coff.Diagnostic{Severity: "error", Code: "entrypoint_offset_range", Detail: fmt.Sprintf("entrypoint offset 0x%x is outside section size 0x%x", match.Value, section.Size), Section: section.Name, Symbol: match.Name})
+			} else {
+				a.EntrypointOK = true
+			}
+			if !section.Executable {
+				a.COFFDiagnostics = append(a.COFFDiagnostics, coff.Diagnostic{Severity: "warning", Code: "entrypoint_section_nonexec", Detail: "entrypoint is defined in a non-executable section", Section: section.Name, Symbol: match.Name})
+			}
+		}
+		if match.Type&0x20 == 0 {
+			a.COFFDiagnostics = append(a.COFFDiagnostics, coff.Diagnostic{Severity: "warning", Code: "entrypoint_type", Detail: "entrypoint symbol is not marked as a COFF function", Section: a.EntrypointSection, Symbol: match.Name})
+		}
+	}
 	a.AnalyzerNotes = append(a.AnalyzerNotes, "Windows COFF execution requires windows-coff runtime")
 	return a, nil
+}
+
+func entrypointMatches(symbol, entry, arch string) bool {
+	if symbol == entry {
+		return true
+	}
+	if arch != "x86" {
+		return false
+	}
+	normalized := strings.TrimPrefix(symbol, "_")
+	normalized = strings.TrimPrefix(normalized, "@")
+	if base, suffix, ok := strings.Cut(normalized, "@"); ok && base != "" && suffix != "" {
+		for _, char := range suffix {
+			if char < '0' || char > '9' {
+				return false
+			}
+		}
+		normalized = base
+	}
+	return normalized == entry
 }
 
 func finishAnalysis(path string, a *Analysis) {
@@ -346,6 +466,13 @@ func finishAnalysis(path string, a *Analysis) {
 		a.LoaderCompatibility = &compatibility
 	}
 	a.Runtime = runtimeInfo(*a)
+	for _, diagnostic := range a.COFFDiagnostics {
+		severity := "review"
+		if diagnostic.Severity == "error" {
+			severity = "high"
+		}
+		addFinding(a, Finding{Severity: severity, Category: "coff_layout", Detail: diagnostic.Detail, Evidence: diagnosticEvidence(diagnostic)})
+	}
 	if !a.EntrypointOK && a.Entrypoint != "" && a.Kind != KindUnknown {
 		a.Warnings = append(a.Warnings, fmt.Sprintf("entrypoint %q was not found", a.Entrypoint))
 		addFinding(a, Finding{Severity: "high", Category: "entrypoint", Detail: "requested entrypoint was not found", Evidence: a.Entrypoint})
@@ -372,6 +499,7 @@ func finishAnalysis(path string, a *Analysis) {
 		}
 	}
 	sortFindings(a.Findings)
+	updateFindingSummary(a)
 }
 
 func runtimeInfo(a Analysis) RuntimeInfo {
@@ -480,6 +608,13 @@ func classifyImport(symbol string) Import {
 
 func assessLoaderCompatibility(a Analysis) capability.Compatibility {
 	relocations := make([]capability.RelocationUse, 0, len(a.RelocationDetails))
+	layoutIssues := make([]capability.LayoutIssue, 0, len(a.COFFDiagnostics))
+	for _, diagnostic := range a.COFFDiagnostics {
+		if diagnostic.Severity != "error" {
+			continue
+		}
+		layoutIssues = append(layoutIssues, capability.LayoutIssue{Code: diagnostic.Code, Detail: diagnostic.Detail, Section: diagnostic.Section, Symbol: diagnostic.Symbol})
+	}
 	for _, relocation := range a.RelocationDetails {
 		if relocation.Code == nil {
 			continue
@@ -495,9 +630,70 @@ func assessLoaderCompatibility(a Analysis) capability.Compatibility {
 		Arch:         a.Arch,
 		Entrypoint:   a.Entrypoint,
 		EntrypointOK: a.EntrypointOK,
+		LayoutIssues: layoutIssues,
 		Relocations:  relocations,
 		Unresolved:   a.Unresolved,
 	})
+}
+
+func diagnosticEvidence(diagnostic coff.Diagnostic) string {
+	parts := []string{diagnostic.Code}
+	if diagnostic.Section != "" {
+		parts = append(parts, "section="+diagnostic.Section)
+	}
+	if diagnostic.Symbol != "" {
+		parts = append(parts, "symbol="+diagnostic.Symbol)
+	}
+	if diagnostic.Offset != 0 {
+		parts = append(parts, fmt.Sprintf("offset=0x%x", diagnostic.Offset))
+	}
+	return strings.Join(parts, " ")
+}
+
+func detectCOFFToolchain(info *coff.File) ToolchainInfo {
+	if info == nil {
+		return ToolchainInfo{}
+	}
+	toolchain := ToolchainInfo{Family: "unknown", Confidence: "unknown"}
+	for _, value := range info.Strings {
+		trimmed := strings.TrimSpace(value)
+		lower := strings.ToLower(trimmed)
+		switch {
+		case strings.HasPrefix(trimmed, "GCC:"):
+			return ToolchainInfo{Family: "mingw-gcc", Compiler: trimmed, Confidence: "reported", Evidence: []string{"compiler string"}}
+		case strings.Contains(lower, "clang version"):
+			return ToolchainInfo{Family: "clang-coff", Compiler: trimmed, Confidence: "reported", Evidence: []string{"compiler string"}}
+		case strings.Contains(lower, "microsoft (r) c/c++"):
+			return ToolchainInfo{Family: "msvc", Compiler: trimmed, Confidence: "reported", Evidence: []string{"compiler string"}}
+		}
+	}
+	markers := map[string]bool{}
+	for _, section := range info.Sections {
+		switch section.Name {
+		case ".drectve", ".debug$S", ".debug$T", ".llvm_addrsig":
+			markers[section.Name] = true
+		}
+	}
+	for _, symbol := range info.Symbols {
+		if symbol.Name == "@feat.00" {
+			markers["@feat.00"] = true
+		}
+	}
+	if markers[".llvm_addrsig"] {
+		toolchain.Family = "clang-coff"
+		toolchain.Compiler = "Clang-compatible COFF producer"
+		toolchain.Confidence = "inferred"
+	} else if markers["@feat.00"] || markers[".debug$S"] || markers[".debug$T"] {
+		toolchain.Family = "msvc-coff"
+		toolchain.Compiler = "MSVC-compatible COFF producer"
+		toolchain.Confidence = "inferred"
+	}
+	for _, marker := range []string{"@feat.00", ".debug$S", ".debug$T", ".drectve", ".llvm_addrsig"} {
+		if markers[marker] {
+			toolchain.Evidence = append(toolchain.Evidence, marker)
+		}
+	}
+	return toolchain
 }
 
 func importFindings(imp Import) []Finding {
@@ -644,6 +840,87 @@ func addFinding(a *Analysis, finding Finding) {
 		}
 	}
 	a.Findings = append(a.Findings, finding)
+}
+
+func applyFindingSuppressions(a *Analysis, rules []string) error {
+	if a == nil {
+		return nil
+	}
+	parsed := make([]suppressionRule, 0, len(rules))
+	seen := map[string]bool{}
+	for _, raw := range rules {
+		raw = strings.TrimSpace(raw)
+		if raw == "" || seen[raw] {
+			continue
+		}
+		rule, err := parseSuppressionRule(raw)
+		if err != nil {
+			return err
+		}
+		seen[raw] = true
+		parsed = append(parsed, rule)
+		a.Suppressions = append(a.Suppressions, raw)
+	}
+	for i := range a.Findings {
+		for _, rule := range parsed {
+			if rule.matches(a.Findings[i]) {
+				a.Findings[i].Suppressed = true
+				a.Findings[i].Suppression = rule.raw
+				break
+			}
+		}
+	}
+	updateFindingSummary(a)
+	return nil
+}
+
+type suppressionRule struct {
+	raw      string
+	category string
+	evidence string
+}
+
+func parseSuppressionRule(raw string) (suppressionRule, error) {
+	category, evidence, scoped := strings.Cut(raw, "=")
+	category = strings.TrimSpace(category)
+	evidence = strings.TrimSpace(evidence)
+	if category == "" || strings.ContainsAny(category, "*?[]") && category != "*" {
+		return suppressionRule{}, fmt.Errorf("invalid finding suppression %q: category must be exact or *", raw)
+	}
+	if scoped && evidence == "" {
+		return suppressionRule{}, fmt.Errorf("invalid finding suppression %q: evidence pattern is empty", raw)
+	}
+	if scoped {
+		if _, err := path.Match(evidence, "validation"); err != nil {
+			return suppressionRule{}, fmt.Errorf("invalid finding suppression %q: %w", raw, err)
+		}
+	}
+	return suppressionRule{raw: raw, category: category, evidence: evidence}, nil
+}
+
+func (rule suppressionRule) matches(finding Finding) bool {
+	if rule.category != "*" && rule.category != finding.Category {
+		return false
+	}
+	if rule.evidence == "" {
+		return true
+	}
+	matched, _ := path.Match(rule.evidence, finding.Evidence)
+	return matched
+}
+
+func updateFindingSummary(a *Analysis) {
+	if a == nil {
+		return
+	}
+	a.FindingSummary = FindingSummary{Total: len(a.Findings)}
+	for _, finding := range a.Findings {
+		if finding.Suppressed {
+			a.FindingSummary.Suppressed++
+		} else {
+			a.FindingSummary.Active++
+		}
+	}
 }
 
 func sortFindings(findings []Finding) {

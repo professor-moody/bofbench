@@ -71,10 +71,11 @@ Write structured analysis reports:
 bofbench analyze ./dist/whoami.x64.o --format json
 bofbench analyze ./dist/whoami.x64.o --format md
 bofbench analyze ./dist/whoami.x64.o --baseline runs/<old-analysis>/analysis.json --format md
+bofbench analyze ./dist/whoami.x64.o --suppress memory_api --suppress 'external_symbol=Missing*'
 ```
 
 Outputs land in `runs/<timestamp>-analysis-*/analysis.json` and `analysis.md`.
-Reports include runtime compatibility, loader-catalog identity, structured compatibility blockers/warnings, import classification, numeric relocation details, visible strings, review findings, and optional baseline diffs. See [Analysis Reports](analysis.md).
+Reports include runtime compatibility, loader-catalog identity, bounded COFF structural diagnostics, toolchain inference, resolved entrypoint location, section alignment/storage, structured compatibility blockers/warnings, import classification, numeric relocation details, visible strings, review findings, and optional baseline diffs. `--suppress` marks matching findings without removing their evidence. See [Analysis Reports](analysis.md).
 
 ## `preflight`
 
