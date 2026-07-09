@@ -13,6 +13,7 @@ This version is convention-first and operator-shaped:
 - Analysis reports include runtime compatibility, host requirements, and next run/test commands.
 - Real Windows x64 native execution is handled by `native/loader/bofbench-loader.exe`.
 - Run and test reports include normalized runtime event timelines for load, args, entry calls, output/errors, and terminal state.
+- Persisted JSON carries versioned schema, run lineage, tool build identity, host metadata, and relevant object/loader/configuration fingerprints.
 - Stage manifests are versioned and carry SHA-256/size records for every packaged file; directories and ZIPs can be verified after handoff.
 - BOF source builds prefer MinGW-w64 and fall back to MSVC `cl.exe` on Windows x64.
 - Non-matching hosts can still fetch, build, inspect, analyze, test statically, stage, and build docs.
@@ -24,6 +25,7 @@ go build -o work/bin/bofbench ./cmd/bofbench
 work/bin/bofbench new smoke
 work/bin/bofbench new pidcheck --template winapi
 work/bin/bofbench doctor
+work/bin/bofbench version --format json
 work/bin/bofbench build bofs/smoke
 work/bin/bofbench inspect dist/smoke.x64.o
 work/bin/bofbench analyze dist/smoke.x64.o --format md

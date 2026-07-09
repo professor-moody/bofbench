@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"bofbench/internal/coff"
+	"bofbench/internal/evidence"
 	"bofbench/internal/runlog"
 )
 
@@ -30,6 +31,7 @@ const (
 )
 
 type Analysis struct {
+	evidence.Header
 	Path              string       `json:"path"`
 	Kind              Kind         `json:"kind"`
 	Arch              string       `json:"arch,omitempty"`
@@ -155,6 +157,7 @@ func Analyze(path, entry string) (Analysis, error) {
 		return Analysis{}, err
 	}
 	a := Analysis{
+		Header:      evidence.New(evidence.SchemaAnalysis, "", ""),
 		Path:        path,
 		Kind:        kind,
 		Entrypoint:  entry,
@@ -192,6 +195,7 @@ func AnalyzeAndPersist(path, entry string) (Persisted, error) {
 	if err != nil {
 		return Persisted{}, err
 	}
+	a.Header = evidence.New(evidence.SchemaAnalysis, runlog.ID(runDir), "")
 	jsonPath := filepath.Join(runDir, "analysis.json")
 	mdPath := filepath.Join(runDir, "analysis.md")
 	if err := writeJSON(jsonPath, a); err != nil {
@@ -206,6 +210,10 @@ func AnalyzeAndPersist(path, entry string) (Persisted, error) {
 func Markdown(a Analysis) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Artifact Analysis\n\n")
+	fmt.Fprintf(&b, "- Schema: `%s` version `%d`\n", a.Schema, a.SchemaVersion)
+	if a.RunID != "" {
+		fmt.Fprintf(&b, "- Run ID: `%s`\n", a.RunID)
+	}
 	fmt.Fprintf(&b, "- Path: `%s`\n", a.Path)
 	fmt.Fprintf(&b, "- Kind: `%s`\n", a.Kind)
 	fmt.Fprintf(&b, "- Arch: `%s`\n", a.Arch)

@@ -173,3 +173,14 @@ Serve or build the MkDocs site:
 bofbench docs serve
 bofbench docs build
 ```
+
+## `version`
+
+Inspect the binary's release/commit identity and current host fingerprint:
+
+```sh
+bofbench version
+bofbench version --format json
+```
+
+JSON output uses the shared `bofbench.version` evidence contract.

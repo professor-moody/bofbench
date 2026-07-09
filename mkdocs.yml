@@ -12,6 +12,7 @@ nav:
   - Quickstart: quickstart.md
   - Commands: commands.md
   - Analysis Reports: analysis.md
+  - Evidence Contracts: evidence.md
   - Native Loader: native-loader.md
   - Windows Lab: windows-lab.md
   - Runtime Model: runtime.md

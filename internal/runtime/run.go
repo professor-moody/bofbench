@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"bofbench/internal/artifact"
+	"bofbench/internal/evidence"
 	"bofbench/internal/loader"
 )
 
@@ -27,17 +28,21 @@ type Request struct {
 }
 
 type Result struct {
-	Object     string   `json:"object"`
-	Kind       string   `json:"kind"`
-	Runtime    string   `json:"runtime"`
-	Entry      string   `json:"entry"`
-	Status     string   `json:"status"`
-	ExitState  string   `json:"exit_state"`
-	Output     []string `json:"output,omitempty"`
-	Errors     []string `json:"errors,omitempty"`
-	Events     []Event  `json:"events,omitempty"`
-	DurationMS int64    `json:"duration_ms"`
-	Loader     string   `json:"loader,omitempty"`
+	evidence.Header
+	ObjectFingerprint *evidence.FileFingerprint `json:"object_fingerprint,omitempty"`
+	LoaderFingerprint *evidence.FileFingerprint `json:"loader_fingerprint,omitempty"`
+	ConfigFingerprint *evidence.FileFingerprint `json:"config_fingerprint,omitempty"`
+	Object            string                    `json:"object"`
+	Kind              string                    `json:"kind"`
+	Runtime           string                    `json:"runtime"`
+	Entry             string                    `json:"entry"`
+	Status            string                    `json:"status"`
+	ExitState         string                    `json:"exit_state"`
+	Output            []string                  `json:"output,omitempty"`
+	Errors            []string                  `json:"errors,omitempty"`
+	Events            []Event                   `json:"events,omitempty"`
+	DurationMS        int64                     `json:"duration_ms"`
+	Loader            string                    `json:"loader,omitempty"`
 }
 
 type Event struct {
@@ -108,7 +113,10 @@ func Run(req Request) (Result, error) {
 }
 
 func baseResult(req Request, kind artifact.Kind, runtimeName string, start time.Time) Result {
-	res := Result{Object: req.Path, Kind: string(kind), Runtime: runtimeName, Entry: req.Entry}
+	res := Result{Header: evidence.New(evidence.SchemaRun, "", ""), Object: req.Path, Kind: string(kind), Runtime: runtimeName, Entry: req.Entry}
+	if fingerprint, err := evidence.FingerprintFile(req.Path); err == nil {
+		res.ObjectFingerprint = &fingerprint
+	}
 	addTimedEvent(&res, start, "artifact", "detected", fmt.Sprintf("kind=%s path=%s", kind, req.Path))
 	addTimedEvent(&res, start, "arg_pack", "pass", fmt.Sprintf("tokens=%d packed_bytes=%d", len(req.Tokens), packedBytes(req.ArgHex)))
 	return res
@@ -146,6 +154,11 @@ func addTimedEvent(res *Result, start time.Time, eventType, status, message stri
 func finalizeEvents(res *Result, start time.Time) {
 	if res == nil {
 		return
+	}
+	if res.Loader != "" && res.LoaderFingerprint == nil {
+		if fingerprint, err := evidence.FingerprintFile(res.Loader); err == nil {
+			res.LoaderFingerprint = &fingerprint
+		}
 	}
 	loadStatus := "pass"
 	if res.Status != "pass" {

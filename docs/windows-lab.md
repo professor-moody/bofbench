@@ -51,6 +51,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows-lab-smoke.ps1 -RepoRo
 
 The script writes `runs\<timestamp>-lab-smoke\lab-smoke.json` with each step, status, duration, and error text. It covers positive fixtures, expected negative fixtures (`unresolved`, `timeout`), and the selected TrustedSec arsenal smoke.
 
+The summary also carries the shared evidence header and fingerprints the lab environment: Windows version/architecture, PowerShell, Go, compiler path, machine identity, and SHA-256 for the BOFBench and loader binaries.
+
 Fixture coverage:
 
 | Fixture | Purpose |

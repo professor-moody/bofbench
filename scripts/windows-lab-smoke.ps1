@@ -124,13 +124,34 @@ $steps.Add((Invoke-Step "trustedsec arsenal smoke" {
 }))
 
 $failed = @($steps | Where-Object { $_.status -ne "pass" })
+$versionInfo = & $BofbenchExe version --format json | ConvertFrom-Json
+$bofbenchResolved = (Resolve-Path $BofbenchExe).Path
+$loaderItem = Resolve-Path "native\loader\bofbench-loader.exe" -ErrorAction SilentlyContinue
+$loaderResolved = if ($loaderItem) { $loaderItem.Path } else { $null }
+$compilerCommand = Get-Command cl -ErrorAction SilentlyContinue
+$labEnvironment = [pscustomobject]@{
+    computer_name = $env:COMPUTERNAME
+    os_version = [Environment]::OSVersion.VersionString
+    os_architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+    powershell = $PSVersionTable.PSVersion.ToString()
+    go_version = (go version)
+    compiler = if ($compilerCommand) { $compilerCommand.Source } else { $null }
+    bofbench_sha256 = (Get-FileHash -Algorithm SHA256 $bofbenchResolved).Hash.ToLowerInvariant()
+    loader_sha256 = if ($loaderResolved) { (Get-FileHash -Algorithm SHA256 $loaderResolved).Hash.ToLowerInvariant() } else { $null }
+}
 $summary = [pscustomobject]@{
+    schema = "bofbench.lab-smoke"
+    schema_version = 1
+    run_id = "$runId-lab-smoke"
+    tool = $versionInfo.tool
+    host = $versionInfo.host
     generated_at = (Get-Date).ToUniversalTime().ToString("o")
     repo_root = (Resolve-Path $RepoRoot).Path
     selection = $Select
     timeout_ms = $TimeoutMS
     status = if ($failed.Count -eq 0) { "pass" } else { "fail" }
     steps = $steps
+    environment = $labEnvironment
 }
 
 $summaryPath = Join-Path $runDir "lab-smoke.json"

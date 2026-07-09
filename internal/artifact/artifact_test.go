@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"bofbench/internal/coff"
+	"bofbench/internal/evidence"
 )
 
 func TestAnalyzeCOFF(t *testing.T) {
@@ -22,6 +23,9 @@ func TestAnalyzeCOFF(t *testing.T) {
 	}
 	if a.Kind != KindCOFF || a.Arch != "x64" || !a.EntrypointOK {
 		t.Fatalf("unexpected analysis: %+v", a)
+	}
+	if a.Schema != evidence.SchemaAnalysis || a.SchemaVersion != evidence.ContractVersion || a.Tool.Name != "bofbench" || a.Host.OS == "" {
+		t.Fatalf("analysis evidence header = %+v", a.Header)
 	}
 	if len(a.Unresolved) == 0 {
 		t.Fatal("expected unresolved symbol")
@@ -117,6 +121,9 @@ func TestCompareAnalysis(t *testing.T) {
 	current.Findings = append(current.Findings, Finding{Severity: "review", Category: "memory_api", Detail: "memory allocation/protection API imported", Evidence: "KERNEL32$VirtualAlloc"})
 	current.Sections = []Section{{Name: ".text", Size: 12, Relocations: 2, Flags: "R-X"}}
 	diff := CompareAnalysis(baseline, current)
+	if diff.Schema != evidence.SchemaAnalysisDiff || diff.SchemaVersion != evidence.ContractVersion {
+		t.Fatalf("diff evidence header = %+v", diff.Header)
+	}
 	if !diff.Summary.HashChanged || diff.Summary.SizeDelta != 20 || diff.Summary.RelocationsDelta != 1 {
 		t.Fatalf("unexpected diff summary: %+v", diff.Summary)
 	}
@@ -125,6 +132,20 @@ func TestCompareAnalysis(t *testing.T) {
 	}
 	if !strings.Contains(DiffMarkdown(diff), "Analysis Diff") {
 		t.Fatal("diff markdown missing title")
+	}
+}
+
+func TestLoadLegacyAnalysisWithoutEvidenceHeader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "analysis.json")
+	if err := os.WriteFile(path, []byte(`{"path":"legacy.o","kind":"coff","size":1,"entrypoint_ok":false,"relocations":0,"generated_at":"2026-07-09T00:00:00Z"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	analysis, err := LoadAnalysis(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.Path != "legacy.o" || analysis.Kind != KindCOFF || analysis.Schema != "" || analysis.SchemaVersion != 0 {
+		t.Fatalf("legacy analysis = %+v", analysis)
 	}
 }
 

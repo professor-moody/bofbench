@@ -9,6 +9,8 @@ import (
 	goruntime "runtime"
 	"strings"
 	"time"
+
+	"bofbench/internal/evidence"
 )
 
 type Status string
@@ -20,6 +22,7 @@ const (
 )
 
 type Report struct {
+	evidence.Header
 	GeneratedAt string  `json:"generated_at"`
 	OS          string  `json:"os"`
 	Arch        string  `json:"arch"`
@@ -34,8 +37,10 @@ type Check struct {
 }
 
 func Run() Report {
+	generated := time.Now().UTC()
 	r := Report{
-		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		Header:      evidence.New(evidence.SchemaDoctor, "doctor-"+generated.Format("20060102T150405.000000000Z"), ""),
+		GeneratedAt: generated.Format(time.RFC3339),
 		OS:          goruntime.GOOS,
 		Arch:        goruntime.GOARCH,
 	}
@@ -79,6 +84,8 @@ func (r Report) JSON() ([]byte, error) {
 func (r Report) Text() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "bofbench doctor\n")
+	fmt.Fprintf(&b, "schema: %s version %d\n", r.Schema, r.SchemaVersion)
+	fmt.Fprintf(&b, "run: %s\n", r.RunID)
 	fmt.Fprintf(&b, "host: %s/%s\n\n", r.OS, r.Arch)
 	for _, check := range r.Checks {
 		path := ""

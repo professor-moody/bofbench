@@ -17,11 +17,12 @@ import (
 
 	"bofbench/internal/argpack"
 	"bofbench/internal/artifact"
+	"bofbench/internal/evidence"
 )
 
 const (
 	VerificationSchema        = "bofbench.stage-verification"
-	VerificationSchemaVersion = 1
+	VerificationSchemaVersion = evidence.ContractVersion
 	maxVerificationFiles      = 10000
 	maxVerificationFileBytes  = int64(128 << 20)
 	maxVerificationTotalBytes = int64(512 << 20)
@@ -30,18 +31,17 @@ const (
 )
 
 type Verification struct {
-	Schema        string              `json:"schema"`
-	SchemaVersion int                 `json:"schema_version"`
-	Input         string              `json:"input"`
-	Kind          string              `json:"kind,omitempty"`
-	Status        string              `json:"status"`
-	Name          string              `json:"name,omitempty"`
-	Target        string              `json:"target,omitempty"`
-	Object        string              `json:"object,omitempty"`
-	StagedObject  string              `json:"staged_object,omitempty"`
-	CheckedAt     string              `json:"checked_at"`
-	Summary       VerificationSummary `json:"summary"`
-	Checks        []VerificationCheck `json:"checks"`
+	evidence.Header
+	Input        string              `json:"input"`
+	Kind         string              `json:"kind,omitempty"`
+	Status       string              `json:"status"`
+	Name         string              `json:"name,omitempty"`
+	Target       string              `json:"target,omitempty"`
+	Object       string              `json:"object,omitempty"`
+	StagedObject string              `json:"staged_object,omitempty"`
+	CheckedAt    string              `json:"checked_at"`
+	Summary      VerificationSummary `json:"summary"`
+	Checks       []VerificationCheck `json:"checks"`
 }
 
 type VerificationSummary struct {
@@ -74,13 +74,13 @@ type packageView struct {
 }
 
 func Verify(input string) Verification {
+	checkedAt := time.Now().UTC()
 	report := Verification{
-		Schema:        VerificationSchema,
-		SchemaVersion: VerificationSchemaVersion,
-		Input:         input,
-		CheckedAt:     time.Now().UTC().Format(time.RFC3339),
-		Status:        "fail",
-		Checks:        []VerificationCheck{},
+		Header:    evidence.New(VerificationSchema, "verify-"+checkedAt.Format("20060102T150405.000000000Z"), ""),
+		Input:     input,
+		CheckedAt: checkedAt.Format(time.RFC3339),
+		Status:    "fail",
+		Checks:    []VerificationCheck{},
 	}
 	view, err := openPackageView(input)
 	if err != nil {
@@ -415,6 +415,16 @@ func verifyManifestMetadata(report *Verification, manifest Manifest) {
 	} else {
 		report.add("manifest.schema", "fail", "manifest.json", fmt.Sprintf("expected %s version %d, got %q version %d", ManifestSchema, ManifestSchemaVersion, manifest.Schema, manifest.SchemaVersion))
 	}
+	if manifest.RunID != "" {
+		report.add("manifest.run_id", "pass", "manifest.json", manifest.RunID)
+	} else {
+		report.add("manifest.run_id", "warn", "manifest.json", "legacy manifest has no run lineage")
+	}
+	if manifest.Tool.Name == "bofbench" && manifest.Tool.Version != "" && manifest.Host.OS != "" && manifest.Host.Arch != "" {
+		report.add("manifest.provenance", "pass", "manifest.json", fmt.Sprintf("tool=%s@%s host=%s/%s", manifest.Tool.Name, manifest.Tool.Version, manifest.Host.OS, manifest.Host.Arch))
+	} else {
+		report.add("manifest.provenance", "warn", "manifest.json", "legacy manifest has no complete tool/host provenance")
+	}
 	if validPackageName(manifest.Name) {
 		report.add("manifest.name", "pass", "manifest.json", manifest.Name)
 	} else {
@@ -578,6 +588,13 @@ func verifyAnalysisReports(report *Verification, view *packageView, manifest Man
 		report.add("analysis.object", "fail", manifest.Analysis, "analysis object hash, size, entrypoint, or source path does not match manifest")
 	} else {
 		report.add("analysis.object", "pass", manifest.Analysis, "analysis matches the staged object and manifest")
+	}
+	if manifest.RunID != "" {
+		if analysis.ParentRunID != manifest.RunID || analysis.RunID != manifest.RunID+"/analysis" {
+			report.add("analysis.lineage", "fail", manifest.Analysis, "analysis run lineage does not point to the stage manifest")
+		} else {
+			report.add("analysis.lineage", "pass", manifest.Analysis, "analysis is linked to the stage manifest run")
+		}
 	}
 	markdown, err := view.read(manifest.AnalysisMD, maxMetadataBytes)
 	if err != nil || strings.TrimSpace(string(markdown)) == "" {

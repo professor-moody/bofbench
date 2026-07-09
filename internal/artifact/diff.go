@@ -7,9 +7,12 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"bofbench/internal/evidence"
 )
 
 type DiffReport struct {
+	evidence.Header
 	GeneratedAt string       `json:"generated_at"`
 	Baseline    string       `json:"baseline"`
 	Current     string       `json:"current"`
@@ -50,6 +53,7 @@ func LoadAnalysis(path string) (Analysis, error) {
 
 func CompareAnalysis(baseline, current Analysis) DiffReport {
 	report := DiffReport{
+		Header:      evidence.New(evidence.SchemaAnalysisDiff, "", ""),
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Baseline:    baseline.Path,
 		Current:     current.Path,
@@ -88,6 +92,10 @@ func CompareAnalysis(baseline, current Analysis) DiffReport {
 func DiffMarkdown(report DiffReport) string {
 	var b strings.Builder
 	b.WriteString("# Analysis Diff\n\n")
+	fmt.Fprintf(&b, "- Schema: `%s` version `%d`\n", report.Schema, report.SchemaVersion)
+	if report.RunID != "" {
+		fmt.Fprintf(&b, "- Run ID: `%s`\n", report.RunID)
+	}
 	fmt.Fprintf(&b, "- Baseline: `%s`\n", report.Baseline)
 	fmt.Fprintf(&b, "- Current: `%s`\n", report.Current)
 	fmt.Fprintf(&b, "- Hash changed: `%t`\n", report.Summary.HashChanged)

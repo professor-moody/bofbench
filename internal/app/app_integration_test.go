@@ -103,22 +103,32 @@ func TestCLIAnalyzeBaselineWritesDiff(t *testing.T) {
 		t.Fatalf("inspect missing runtime compatibility:\n%s", inspect)
 	}
 	var first struct {
+		Analysis struct {
+			Schema        string `json:"schema"`
+			SchemaVersion int    `json:"schema_version"`
+			RunID         string `json:"run_id"`
+		} `json:"analysis"`
 		JSONPath string `json:"json_path"`
 	}
 	if err := json.Unmarshal([]byte(runOK(t, tmp, bin, "analyze", obj)), &first); err != nil {
 		t.Fatal(err)
 	}
-	if first.JSONPath == "" {
-		t.Fatal("missing baseline analysis path")
+	if first.JSONPath == "" || first.Analysis.Schema != "bofbench.analysis" || first.Analysis.SchemaVersion != 1 || first.Analysis.RunID == "" {
+		t.Fatalf("missing versioned baseline analysis evidence: %+v", first)
 	}
 	var second struct {
+		Diff *struct {
+			Schema      string `json:"schema"`
+			RunID       string `json:"run_id"`
+			ParentRunID string `json:"parent_run_id"`
+		} `json:"diff"`
 		DiffJSON string `json:"diff_json_path"`
 		DiffMD   string `json:"diff_md_path"`
 	}
 	if err := json.Unmarshal([]byte(runOK(t, tmp, bin, "analyze", obj, "--baseline", first.JSONPath)), &second); err != nil {
 		t.Fatal(err)
 	}
-	if second.DiffJSON == "" || second.DiffMD == "" {
+	if second.DiffJSON == "" || second.DiffMD == "" || second.Diff == nil || second.Diff.Schema != "bofbench.analysis-diff" || second.Diff.RunID == "" || second.Diff.ParentRunID == "" {
 		t.Fatalf("missing diff paths: %+v", second)
 	}
 	mustExist(t, filepath.Join(tmp, second.DiffJSON))
@@ -140,6 +150,9 @@ func TestCLIRunRequiresWindowsOnNonWindows(t *testing.T) {
 	}
 	if !strings.Contains(out, "requires Windows x64") {
 		t.Fatalf("unexpected run output:\n%s", out)
+	}
+	if !strings.Contains(out, `"schema": "bofbench.run"`) || !strings.Contains(out, `"object_fingerprint"`) || !strings.Contains(out, `"run_id"`) {
+		t.Fatalf("run failure missing evidence contract:\n%s", out)
 	}
 }
 
@@ -187,6 +200,32 @@ func TestCLIArsenalTestWritesReports(t *testing.T) {
 	}
 	if !strings.Contains(string(b), `"status": "analyze_pass"`) {
 		t.Fatalf("unexpected report:\n%s", b)
+	}
+	if !strings.Contains(string(b), `"schema": "bofbench.arsenal-test"`) || !strings.Contains(string(b), `"parent_run_id"`) {
+		t.Fatalf("arsenal report missing evidence lineage:\n%s", b)
+	}
+}
+
+func TestCLIVersionJSON(t *testing.T) {
+	bin := buildTestBinary(t)
+	out := runOK(t, t.TempDir(), bin, "version", "--format", "json")
+	var report struct {
+		Schema        string `json:"schema"`
+		SchemaVersion int    `json:"schema_version"`
+		Tool          struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"tool"`
+		Host struct {
+			OS   string `json:"os"`
+			Arch string `json:"arch"`
+		} `json:"host"`
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Schema != "bofbench.version" || report.SchemaVersion != 1 || report.Tool.Name != "bofbench" || report.Tool.Version == "" || report.Host.OS == "" || report.Host.Arch == "" {
+		t.Fatalf("version evidence = %+v", report)
 	}
 }
 

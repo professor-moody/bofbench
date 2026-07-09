@@ -5,6 +5,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="${VERSION:-dev}"
 OUT="$ROOT/dist/release"
 TMP="$ROOT/work/release"
+GIT_COMMIT="$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+LDFLAGS="-s -w -X bofbench/internal/evidence.Version=$VERSION -X bofbench/internal/evidence.Commit=$GIT_COMMIT -X bofbench/internal/evidence.BuildTime=$BUILD_TIME"
 export COPYFILE_DISABLE=1
 
 rm -rf "$OUT" "$TMP"
@@ -31,7 +34,7 @@ echo "[release] verifying stage package contract"
 SMOKE_ROOT="$TMP/stage-smoke"
 SMOKE_BIN="$TMP/bofbench-release-smoke"
 mkdir -p "$SMOKE_ROOT"
-go build -trimpath -o "$SMOKE_BIN" ./cmd/bofbench
+go build -trimpath -ldflags "$LDFLAGS" -o "$SMOKE_BIN" ./cmd/bofbench
 printf 'bofbench release stage smoke\n' > "$SMOKE_ROOT/smoke.x64.o"
 (
   cd "$SMOKE_ROOT"
@@ -48,7 +51,7 @@ build_cli() {
   local dir="$TMP/$name"
   mkdir -p "$dir"
   echo "[release] building $name"
-  GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags "-s -w" -o "$dir/bofbench$ext" ./cmd/bofbench
+  GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags "$LDFLAGS" -o "$dir/bofbench$ext" ./cmd/bofbench
   cp README.md "$dir/"
   cp -R docs "$dir/docs"
   cp -R scripts "$dir/scripts"

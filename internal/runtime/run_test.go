@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"bofbench/internal/artifact"
+	"bofbench/internal/evidence"
 )
 
 func TestSelectRuntime(t *testing.T) {
@@ -38,6 +39,9 @@ func TestLinuxELFRequiresLinux(t *testing.T) {
 	}
 	if res.ExitState != "requires_linux" {
 		t.Fatalf("expected requires_linux: %+v", res)
+	}
+	if res.Schema != evidence.SchemaRun || res.SchemaVersion != evidence.ContractVersion || res.ObjectFingerprint == nil || res.ObjectFingerprint.SHA256 == "" {
+		t.Fatalf("runtime evidence = %+v", res)
 	}
 }
 

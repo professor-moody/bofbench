@@ -3,6 +3,7 @@ package buildsys
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,22 +14,27 @@ import (
 	"time"
 
 	"bofbench/internal/config"
+	"bofbench/internal/evidence"
 	"bofbench/internal/runlog"
 )
 
 type Result struct {
-	Name     string   `json:"name"`
-	Arch     string   `json:"arch"`
-	Object   string   `json:"object"`
-	Command  []string `json:"command,omitempty"`
-	LogPath  string   `json:"log_path"`
-	Status   string   `json:"status"`
-	Duration string   `json:"duration"`
+	evidence.Header
+	Source            string                    `json:"source"`
+	ConfigFingerprint *evidence.FileFingerprint `json:"config_fingerprint,omitempty"`
+	ObjectFingerprint *evidence.FileFingerprint `json:"object_fingerprint,omitempty"`
+	Name              string                    `json:"name"`
+	Arch              string                    `json:"arch"`
+	Object            string                    `json:"object"`
+	Command           []string                  `json:"command,omitempty"`
+	LogPath           string                    `json:"log_path"`
+	Status            string                    `json:"status"`
+	Duration          string                    `json:"duration"`
 }
 
 func Build(input, arch string) (Result, error) {
 	start := time.Now()
-	cfg, _, err := config.LoadFor(input)
+	cfg, cfgPath, err := config.LoadFor(input)
 	if err != nil {
 		return Result{}, err
 	}
@@ -46,7 +52,13 @@ func Build(input, arch string) (Result, error) {
 		return Result{}, err
 	}
 	logPath := filepath.Join(runDir, "build.log")
-	res := Result{Name: name, Arch: arch, Object: out, LogPath: logPath}
+	res := Result{Header: evidence.New(evidence.SchemaBuild, runlog.ID(runDir), ""), Source: input, Name: name, Arch: arch, Object: out, LogPath: logPath}
+	if cfgPath != "" {
+		if fingerprint, err := evidence.FingerprintFile(cfgPath); err == nil {
+			res.ConfigFingerprint = &fingerprint
+		}
+	}
+	defer func() { _ = writeBuildResult(filepath.Join(runDir, "build.json"), res) }()
 	if strings.HasSuffix(strings.ToLower(input), ".o") || strings.HasSuffix(strings.ToLower(input), ".obj") {
 		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 			return res, err
@@ -57,6 +69,7 @@ func Build(input, arch string) (Result, error) {
 		_ = os.WriteFile(logPath, []byte("copied existing object\n"), 0o644)
 		res.Status = "copied"
 		res.Duration = time.Since(start).String()
+		setObjectFingerprint(&res)
 		return res, nil
 	}
 	var cmd []string
@@ -102,6 +115,7 @@ func Build(input, arch string) (Result, error) {
 			}
 			res.Status = "built"
 			res.Duration = time.Since(start).String()
+			setObjectFingerprint(&res)
 			return res, nil
 		}
 		candidate := newestObject(commandDir(input), arch)
@@ -116,7 +130,26 @@ func Build(input, arch string) (Result, error) {
 	}
 	res.Status = "built"
 	res.Duration = time.Since(start).String()
+	setObjectFingerprint(&res)
 	return res, nil
+}
+
+func setObjectFingerprint(res *Result) {
+	if res == nil || res.Object == "" {
+		return
+	}
+	if fingerprint, err := evidence.FingerprintFile(res.Object); err == nil {
+		res.ObjectFingerprint = &fingerprint
+	}
+}
+
+func writeBuildResult(path string, result Result) error {
+	b, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	return os.WriteFile(path, b, 0o644)
 }
 
 func compilerFor(arch string) string {

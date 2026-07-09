@@ -36,7 +36,7 @@ Add native Windows execution CI, provenance-bearing releases, team validation, s
 | --- | --- | --- | --- |
 | 0. Baseline freeze | Complete | Establish the recovered tree, source-control boundary, baseline commit, and tag. | A clean checkout reproduces tests, builds, loader, docs, and releases. |
 | 1. Input and package safety | Complete | Transactional acquisition, safe ZIP handling, bounded downloads, versioned stage manifests, and directory/ZIP verification. | Adversarial archives are rejected without replacing an existing arsenal; all target packages verify in directory/ZIP form locally and Windows lab smoke passes. |
-| 2. Evidence contracts | Pending | Add schema versions, tool/run/source/object/loader/config hashes, parent IDs, and environment fingerprints to all evidence. | Golden compatibility tests cover every JSON artifact. |
+| 2. Evidence contracts | Complete | Shared schema/tool/host/run headers, lineage, collision-safe run IDs, build persistence, and object/loader/config/source/lab fingerprints are implemented. | Contract/legacy tests, release metadata inspection, and fingerprinted Windows lab smoke pass. |
 | 3. Capability registry | Pending | One source of truth for architectures, relocations, Beacon shims, import conventions, and runtimes. | Analyzer claims cannot disagree with declared loader capabilities. |
 
 ## Phase B: Predictive Analysis and Builds

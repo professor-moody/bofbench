@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"bofbench/internal/evidence"
 )
 
 const TrustedSecURL = "https://github.com/trustedsec/CS-Situational-Awareness-BOF.git"
@@ -42,13 +44,15 @@ type FetchOptions struct {
 }
 
 type SourceMetadata struct {
-	Name      string `json:"name"`
-	URL       string `json:"url"`
-	Ref       string `json:"ref,omitempty"`
-	Type      string `json:"type"`
-	Adapter   string `json:"adapter"`
-	FetchedAt string `json:"fetched_at"`
-	Path      string `json:"path"`
+	evidence.Header
+	Content   *evidence.TreeFingerprint `json:"content_fingerprint,omitempty"`
+	Name      string                    `json:"name"`
+	URL       string                    `json:"url"`
+	Ref       string                    `json:"ref,omitempty"`
+	Type      string                    `json:"type"`
+	Adapter   string                    `json:"adapter"`
+	FetchedAt string                    `json:"fetched_at"`
+	Path      string                    `json:"path"`
 }
 
 func Fetch(source string) (string, error) {
@@ -100,14 +104,21 @@ func FetchWithOptions(opts FetchOptions) (SourceMetadata, error) {
 	default:
 		return SourceMetadata{}, fmt.Errorf("unsupported fetch type %q", kind)
 	}
+	fetchedAt := time.Now().UTC()
 	meta := SourceMetadata{
+		Header:    evidence.New(evidence.SchemaSource, "fetch-"+safeName(opts.Name)+"-"+fetchedAt.Format("20060102T150405.000000000Z"), ""),
 		Name:      opts.Name,
 		URL:       opts.Source,
 		Ref:       opts.Ref,
 		Type:      kind,
 		Adapter:   opts.Adapter,
-		FetchedAt: time.Now().UTC().Format(time.RFC3339),
+		FetchedAt: fetchedAt.Format(time.RFC3339),
 		Path:      path,
+	}
+	if fingerprint, err := evidence.FingerprintTree(path); err == nil {
+		meta.Content = &fingerprint
+	} else {
+		return meta, fmt.Errorf("fingerprint fetched arsenal: %w", err)
 	}
 	if err := writeSource(path, meta); err != nil {
 		return meta, err

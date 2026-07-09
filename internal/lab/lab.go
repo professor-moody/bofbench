@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"bofbench/internal/evidence"
 )
 
 type SmokeOptions struct {
@@ -24,13 +26,26 @@ type SmokeOptions struct {
 }
 
 type Summary struct {
-	Path        string `json:"path,omitempty"`
-	GeneratedAt string `json:"generated_at"`
-	RepoRoot    string `json:"repo_root"`
-	Selection   string `json:"selection"`
-	TimeoutMS   int    `json:"timeout_ms"`
-	Status      string `json:"status"`
-	Steps       []Step `json:"steps"`
+	evidence.Header
+	Path        string         `json:"path,omitempty"`
+	GeneratedAt string         `json:"generated_at"`
+	RepoRoot    string         `json:"repo_root"`
+	Selection   string         `json:"selection"`
+	TimeoutMS   int            `json:"timeout_ms"`
+	Status      string         `json:"status"`
+	Steps       []Step         `json:"steps"`
+	Environment LabEnvironment `json:"environment"`
+}
+
+type LabEnvironment struct {
+	ComputerName   string `json:"computer_name,omitempty"`
+	OSVersion      string `json:"os_version,omitempty"`
+	OSArchitecture string `json:"os_architecture,omitempty"`
+	PowerShell     string `json:"powershell,omitempty"`
+	GoVersion      string `json:"go_version,omitempty"`
+	Compiler       string `json:"compiler,omitempty"`
+	BofbenchSHA256 string `json:"bofbench_sha256,omitempty"`
+	LoaderSHA256   string `json:"loader_sha256,omitempty"`
 }
 
 type Step struct {
@@ -166,6 +181,12 @@ func LoadSummary(path string) (Summary, error) {
 func Text(summary Summary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Lab Smoke Summary\n\n")
+	if summary.Schema != "" {
+		fmt.Fprintf(&b, "- Schema: `%s` version `%d`\n", summary.Schema, summary.SchemaVersion)
+	}
+	if summary.RunID != "" {
+		fmt.Fprintf(&b, "- Run ID: `%s`\n", summary.RunID)
+	}
 	if summary.Path != "" {
 		fmt.Fprintf(&b, "- Path: `%s`\n", summary.Path)
 	}
@@ -174,6 +195,11 @@ func Text(summary Summary) string {
 	fmt.Fprintf(&b, "- Repo: `%s`\n", summary.RepoRoot)
 	fmt.Fprintf(&b, "- Selection: `%s`\n", summary.Selection)
 	fmt.Fprintf(&b, "- Timeout: `%dms`\n\n", summary.TimeoutMS)
+	if summary.Environment.OSVersion != "" {
+		fmt.Fprintf(&b, "- Lab OS: `%s` (`%s`)\n", summary.Environment.OSVersion, summary.Environment.OSArchitecture)
+		fmt.Fprintf(&b, "- BOFBench SHA-256: `%s`\n", summary.Environment.BofbenchSHA256)
+		fmt.Fprintf(&b, "- Loader SHA-256: `%s`\n\n", summary.Environment.LoaderSHA256)
+	}
 	b.WriteString("| Step | Status | Duration | Error |\n")
 	b.WriteString("| --- | --- | ---: | --- |\n")
 	for _, step := range summary.Steps {

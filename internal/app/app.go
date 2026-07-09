@@ -20,6 +20,7 @@ import (
 	"bofbench/internal/buildsys"
 	"bofbench/internal/config"
 	"bofbench/internal/doctor"
+	"bofbench/internal/evidence"
 	"bofbench/internal/lab"
 	"bofbench/internal/runlog"
 	runtimesvc "bofbench/internal/runtime"
@@ -33,6 +34,7 @@ type codedError struct {
 }
 
 type arsenalTestReport struct {
+	evidence.Header
 	Root        string              `json:"root"`
 	Selected    string              `json:"selected,omitempty"`
 	Runtime     string              `json:"runtime"`
@@ -112,14 +114,25 @@ func rootCommand(stdout, stderr io.Writer) *cobra.Command {
 }
 
 func versionCommand(stdout io.Writer) *cobra.Command {
-	return &cobra.Command{
+	var format string
+	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print version",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Fprintln(stdout, "bofbench multi-platform")
-			return nil
+			header := evidence.New(evidence.SchemaVersionInfo, "", "")
+			switch format {
+			case "text":
+				fmt.Fprintf(stdout, "bofbench multi-platform version=%s commit=%s host=%s/%s\n", header.Tool.Version, header.Tool.Commit, header.Host.OS, header.Host.Arch)
+				return nil
+			case "json":
+				return printJSON(stdout, header)
+			default:
+				return fmt.Errorf("unknown version format %q", format)
+			}
 		},
 	}
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	return cmd
 }
 
 func newCommand(stdout io.Writer) *cobra.Command {
@@ -267,6 +280,7 @@ func analyzeCommand(stdout io.Writer) *cobra.Command {
 					return err
 				}
 				report := artifact.CompareAnalysis(baseline, persisted.Analysis)
+				report.Header = evidence.New(evidence.SchemaAnalysisDiff, persisted.Analysis.RunID+"/diff", persisted.Analysis.RunID)
 				diff = &report
 				diffJSONPath = filepath.Join(filepath.Dir(persisted.JSONPath), "diff.json")
 				diffMDPath = filepath.Join(filepath.Dir(persisted.JSONPath), "diff.md")
@@ -337,6 +351,7 @@ func runCommand(stdout io.Writer) *cobra.Command {
 				TimeoutMS: timeout,
 				Runtime:   runtimeName,
 			})
+			res.Header = evidence.New(evidence.SchemaRun, runlog.ID(runDir), "")
 			_ = os.WriteFile(filepath.Join(runDir, "result.md"), []byte(runMarkdown(res, items)), 0o644)
 			_ = writeJSON(filepath.Join(runDir, "result.json"), res)
 			_ = printJSON(stdout, res)
@@ -378,7 +393,7 @@ func testCommand(stdout io.Writer) *cobra.Command {
 			if entries, err := arsenal.List(args[0]); err == nil && len(entries) > 0 {
 				return testArsenal(stdout, args[0], entries, selectList, entry, argTokens, runtimeName, timeout, profile)
 			}
-			cfg, _, err := config.LoadFor(args[0])
+			cfg, cfgPath, err := config.LoadFor(args[0])
 			if err != nil {
 				return err
 			}
@@ -409,6 +424,11 @@ func testCommand(stdout io.Writer) *cobra.Command {
 				effectiveTimeout = cfg.TimeoutMS
 			}
 			res, err := runtimesvc.Run(runtimesvc.Request{Path: object, Entry: entry, ArgHex: argpack.Hex(packed), Tokens: argTokens, Runtime: runtimeName, TimeoutMS: effectiveTimeout})
+			if cfgPath != "" {
+				if fingerprint, fingerprintErr := evidence.FingerprintFile(cfgPath); fingerprintErr == nil {
+					res.ConfigFingerprint = &fingerprint
+				}
+			}
 			expected, expectedErr := applyExpectedResult(&res, cfg)
 			if expectedErr != nil {
 				err = expectedErr
@@ -416,7 +436,11 @@ func testCommand(stdout io.Writer) *cobra.Command {
 			if err == nil || expected {
 				err = applyOutputChecks(&res, cfg.Expect, cfg.Forbid)
 			}
-			runDir, _ := runlog.NewDir("test-" + safeName(objectBase(object)))
+			runDir, runDirErr := runlog.NewDir("test-" + safeName(objectBase(object)))
+			if runDirErr != nil {
+				return runDirErr
+			}
+			res.Header = evidence.New(evidence.SchemaRun, runlog.ID(runDir), "")
 			_ = os.WriteFile(filepath.Join(runDir, "result.md"), []byte(runMarkdown(res, items)), 0o644)
 			_ = writeJSON(filepath.Join(runDir, "result.json"), res)
 			_ = printJSON(stdout, res)
@@ -669,6 +693,7 @@ func testArsenal(stdout io.Writer, root string, entries []arsenal.Entry, selectL
 		return err
 	}
 	report := arsenalTestReport{
+		Header:     evidence.New(evidence.SchemaArsenalTest, runlog.ID(runDir), ""),
 		Root:       root,
 		Selected:   selectList,
 		Runtime:    runtimeName,
@@ -683,6 +708,7 @@ func testArsenal(stdout io.Writer, root string, entries []arsenal.Entry, selectL
 		object := item.X64
 		if object == "" {
 			res, err := buildsys.Build(item.Path, "x64")
+			res.ParentRunID = report.RunID
 			itemResult.Build = &res
 			if err != nil {
 				fmt.Fprintf(stdout, "%s: build fail: %v\n", item.Name, err)
@@ -697,6 +723,7 @@ func testArsenal(stdout io.Writer, root string, entries []arsenal.Entry, selectL
 		}
 		itemResult.Object = object
 		a, err := artifact.Analyze(object, entry)
+		a.Header = evidence.New(evidence.SchemaAnalysis, report.RunID+"/"+safeName(item.Name)+"/analysis", report.RunID)
 		itemResult.Analysis = &a
 		if err != nil {
 			fmt.Fprintf(stdout, "%s: analyze fail: %v\n", item.Name, err)
@@ -721,7 +748,7 @@ func testArsenal(stdout io.Writer, root string, entries []arsenal.Entry, selectL
 			continue
 		}
 		itemEntry := entry
-		cfg, _, err := config.LoadFor(item.Path)
+		cfg, cfgPath, err := config.LoadFor(item.Path)
 		if err != nil {
 			fmt.Fprintf(stdout, "%s: config fail: %v\n", item.Name, err)
 			itemResult.Status = "fail"
@@ -761,6 +788,12 @@ func testArsenal(stdout io.Writer, root string, entries []arsenal.Entry, selectL
 			effectiveTimeout = 5000
 		}
 		res, err := runtimesvc.Run(runtimesvc.Request{Path: object, Entry: itemEntry, ArgHex: argpack.Hex(packed), Tokens: argTokens, Runtime: runtimeName, TimeoutMS: effectiveTimeout})
+		res.Header = evidence.New(evidence.SchemaRun, report.RunID+"/"+safeName(item.Name)+"/run", report.RunID)
+		if cfgPath != "" {
+			if fingerprint, fingerprintErr := evidence.FingerprintFile(cfgPath); fingerprintErr == nil {
+				res.ConfigFingerprint = &fingerprint
+			}
+		}
 		expected, expectedErr := applyExpectedResult(&res, cfg)
 		if expectedErr != nil {
 			err = expectedErr
@@ -841,6 +874,8 @@ func arsenalReportStatus(summary arsenalTestSummary) string {
 func arsenalTestMarkdown(report arsenalTestReport) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Arsenal Test\n\n")
+	fmt.Fprintf(&b, "- Schema: `%s` version `%d`\n", report.Schema, report.SchemaVersion)
+	fmt.Fprintf(&b, "- Run ID: `%s`\n", report.RunID)
 	fmt.Fprintf(&b, "- Root: `%s`\n", report.Root)
 	fmt.Fprintf(&b, "- Selection: `%s`\n", report.Selected)
 	fmt.Fprintf(&b, "- Runtime: `%s`\n", report.Runtime)
@@ -1046,6 +1081,13 @@ func printAnalysis(w io.Writer, a artifact.Analysis) {
 func runMarkdown(res runtimesvc.Result, items []argpack.Item) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Artifact Run\n\n")
+	fmt.Fprintf(&b, "- Schema: `%s` version `%d`\n", res.Schema, res.SchemaVersion)
+	if res.RunID != "" {
+		fmt.Fprintf(&b, "- Run ID: `%s`\n", res.RunID)
+	}
+	if res.ParentRunID != "" {
+		fmt.Fprintf(&b, "- Parent Run ID: `%s`\n", res.ParentRunID)
+	}
 	fmt.Fprintf(&b, "- Object: `%s`\n", res.Object)
 	fmt.Fprintf(&b, "- Kind: `%s`\n", res.Kind)
 	fmt.Fprintf(&b, "- Runtime: `%s`\n", res.Runtime)
@@ -1056,6 +1098,12 @@ func runMarkdown(res runtimesvc.Result, items []argpack.Item) string {
 	fmt.Fprintf(&b, "- Duration: `%dms`\n", res.DurationMS)
 	if res.Loader != "" {
 		fmt.Fprintf(&b, "- Loader: `%s`\n", res.Loader)
+	}
+	if res.ObjectFingerprint != nil {
+		fmt.Fprintf(&b, "- Object SHA-256: `%s`\n", res.ObjectFingerprint.SHA256)
+	}
+	if res.LoaderFingerprint != nil {
+		fmt.Fprintf(&b, "- Loader SHA-256: `%s`\n", res.LoaderFingerprint.SHA256)
 	}
 	if len(res.Events) > 0 {
 		b.WriteString("\n## Events\n\n| Time | Type | Status | Message |\n| ---: | --- | --- | --- |\n")

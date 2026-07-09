@@ -94,7 +94,7 @@ func TestStageIncludesAnalysisAndLatestReport(t *testing.T) {
 	if manifest.Analysis == "" || len(manifest.LatestReport) != 2 {
 		t.Fatalf("unexpected manifest: %+v", manifest)
 	}
-	if manifest.Schema != ManifestSchema || manifest.SchemaVersion != ManifestSchemaVersion || len(manifest.Files) == 0 {
+	if manifest.Schema != ManifestSchema || manifest.SchemaVersion != ManifestSchemaVersion || manifest.RunID == "" || manifest.Tool.Name != "bofbench" || manifest.Host.OS == "" || len(manifest.Files) == 0 {
 		t.Fatalf("manifest contract missing: %+v", manifest)
 	}
 }

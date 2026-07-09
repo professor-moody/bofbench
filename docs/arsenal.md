@@ -84,6 +84,8 @@ Each fetch writes `arsenal/<name>/source.json`:
 }
 ```
 
+Current source metadata also includes the shared schema/tool/host/run header and a deterministic `content_fingerprint` over fetched content, excluding `.git` internals and `source.json` itself.
+
 ## Acquisition Safety
 
 ZIP and raw HTTP acquisition use a 256 MiB compressed/download limit. ZIP archives are limited to 100,000 entries and 512 MiB expanded content. Extraction rejects traversal and absolute paths, Windows drive/backslash paths, symlinks, special files, and duplicate or case-colliding destinations.

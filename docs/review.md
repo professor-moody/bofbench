@@ -10,6 +10,7 @@ This page captures the current design review so future work starts from evidence
 - Linux ELF and macOS Mach-O have matching-host linked native runners for platform object fixtures.
 - Analysis reports include structured runtime compatibility with host requirements and next commands.
 - Run and test reports now include a normalized event timeline across runtime types.
+- Persisted evidence uses shared schema/tool/host/run headers with lineage and relevant object, loader, configuration, and lab fingerprints.
 - Windows lab smoke and summary evidence are available through the main CLI.
 - Stage packages include objects, manifests, analysis reports, and latest run/test reports when available.
 - Stage manifests are versioned, hash every packaged file, and can be verified in directory or ZIP form.

@@ -14,11 +14,12 @@ import (
 
 	"bofbench/internal/argpack"
 	"bofbench/internal/artifact"
+	"bofbench/internal/evidence"
 )
 
 const (
 	ManifestSchema        = "bofbench.stage"
-	ManifestSchemaVersion = 1
+	ManifestSchemaVersion = evidence.ContractVersion
 )
 
 type Result struct {
@@ -30,8 +31,7 @@ type Result struct {
 }
 
 type Manifest struct {
-	Schema        string         `json:"schema"`
-	SchemaVersion int            `json:"schema_version"`
+	evidence.Header
 	Name          string         `json:"name"`
 	Target        string         `json:"target"`
 	Object        string         `json:"object"`
@@ -57,6 +57,8 @@ func Stage(object, target, entry string, args []argpack.Item) (Result, error) {
 		entry = "go"
 	}
 	name := baseName(object)
+	generatedAt := time.Now().UTC()
+	stageRunID := fmt.Sprintf("stage-%s-%s-%s", safeAlias(name), target, generatedAt.Format("20060102T150405.000000000Z"))
 	root := filepath.Join("stage", fmt.Sprintf("%s-%s", name, target))
 	if err := os.RemoveAll(root); err != nil {
 		return Result{}, err
@@ -70,15 +72,14 @@ func Stage(object, target, entry string, args []argpack.Item) (Result, error) {
 	}
 	var files []string
 	manifest := Manifest{
-		Schema:        ManifestSchema,
-		SchemaVersion: ManifestSchemaVersion,
-		Name:          name,
-		Target:        target,
-		Object:        object,
-		StagedObject:  filepath.ToSlash(filepath.Join("objects", filepath.Base(object))),
-		Entrypoint:    entry,
-		Arguments:     args,
-		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+		Header:       evidence.New(ManifestSchema, stageRunID, ""),
+		Name:         name,
+		Target:       target,
+		Object:       object,
+		StagedObject: filepath.ToSlash(filepath.Join("objects", filepath.Base(object))),
+		Entrypoint:   entry,
+		Arguments:    args,
+		GeneratedAt:  generatedAt.Format(time.RFC3339),
 	}
 	add := func(path string) {
 		rel, err := filepath.Rel(root, path)
@@ -87,7 +88,7 @@ func Stage(object, target, entry string, args []argpack.Item) (Result, error) {
 		}
 	}
 	add(dstObj)
-	reportFiles, err := writeReports(root, object, entry, name)
+	reportFiles, err := writeReports(root, object, entry, name, stageRunID)
 	if err != nil {
 		return Result{}, err
 	}
@@ -247,7 +248,7 @@ func stageReadme(target, object, entry string, args []argpack.Item) string {
 		target, object, entry, args, time.Now().UTC().Format(time.RFC3339))
 }
 
-func writeReports(root, object, entry, name string) ([]string, error) {
+func writeReports(root, object, entry, name, parentRunID string) ([]string, error) {
 	reportsDir := filepath.Join(root, "reports")
 	if err := os.MkdirAll(reportsDir, 0o755); err != nil {
 		return nil, err
@@ -261,6 +262,7 @@ func writeReports(root, object, entry, name string) ([]string, error) {
 		}
 		files = append(files, p)
 	} else {
+		a.Header = evidence.New(evidence.SchemaAnalysis, parentRunID+"/analysis", parentRunID)
 		jsonPath := filepath.Join(reportsDir, "analysis.json")
 		mdPath := filepath.Join(reportsDir, "analysis.md")
 		if err := writeJSON(jsonPath, a); err != nil {

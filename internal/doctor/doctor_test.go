@@ -1,11 +1,18 @@
 package doctor
 
-import "testing"
+import (
+	"testing"
+
+	"bofbench/internal/evidence"
+)
 
 func TestRunReportHasCoreChecks(t *testing.T) {
 	r := Run()
 	if r.OS == "" || r.Arch == "" {
 		t.Fatalf("missing host info: %+v", r)
+	}
+	if r.Schema != evidence.SchemaDoctor || r.SchemaVersion != evidence.ContractVersion || r.RunID == "" {
+		t.Fatalf("missing evidence header: %+v", r.Header)
 	}
 	names := map[string]bool{}
 	for _, check := range r.Checks {

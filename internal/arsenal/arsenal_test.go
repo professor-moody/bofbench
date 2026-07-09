@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"bofbench/internal/evidence"
 )
 
 func TestFetchRawURLWritesSourceMetadata(t *testing.T) {
@@ -42,6 +44,9 @@ func TestFetchRawURLWritesSourceMetadata(t *testing.T) {
 	}
 	if got.Name != "raw-demo" {
 		t.Fatalf("source metadata = %+v", got)
+	}
+	if got.Schema != evidence.SchemaSource || got.SchemaVersion != evidence.ContractVersion || got.RunID == "" || got.Tool.Name != "bofbench" || got.Content == nil || got.Content.Files != 1 || got.Content.SHA256 == "" {
+		t.Fatalf("source evidence header = %+v", got.Header)
 	}
 }
 

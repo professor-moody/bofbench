@@ -20,6 +20,7 @@ It performs:
 - native loader build when MinGW-w64 is available and the loader binary is missing
 - staged-directory and staged-ZIP contract verification
 - CLI builds for `darwin/amd64`, `darwin/arm64`, `linux/amd64`, and `windows/amd64`
+- embedded release label, Git commit, and UTC build time in each CLI binary
 - packaging under `dist/release/`
 - `SHA256SUMS`
 

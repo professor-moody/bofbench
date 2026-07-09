@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"bofbench/internal/evidence"
 )
 
 func TestSmokeArgs(t *testing.T) {
@@ -76,6 +78,7 @@ func TestLatestSummaryAndLoad(t *testing.T) {
 
 func TestTextSummary(t *testing.T) {
 	summary := Summary{
+		Header:      evidence.New(evidence.SchemaLabSmoke, "20260709-180000-lab-smoke", ""),
 		Path:        "runs/demo/lab-smoke.json",
 		GeneratedAt: "2026-07-09T18:00:00Z",
 		RepoRoot:    `C:\bofbench`,
@@ -85,9 +88,10 @@ func TestTextSummary(t *testing.T) {
 		Steps: []Step{
 			{Name: "go test", Status: "pass", DurationMS: 123},
 		},
+		Environment: LabEnvironment{OSVersion: "Windows 11", OSArchitecture: "X64", BofbenchSHA256: "toolhash", LoaderSHA256: "loaderhash"},
 	}
 	text := Text(summary)
-	for _, want := range []string{"Lab Smoke Summary", "Status: `pass`", "`go test`", "`123ms`"} {
+	for _, want := range []string{"Lab Smoke Summary", "Schema: `bofbench.lab-smoke`", "Run ID: `20260709-180000-lab-smoke`", "Status: `pass`", "Windows 11", "toolhash", "loaderhash", "`go test`", "`123ms`"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in:\n%s", want, text)
 		}
