@@ -1,0 +1,6 @@
+name = "unresolved"
+entry = "go"
+args = []
+expect = []
+expect_exit = "relocation_error"
+timeout_ms = 5000

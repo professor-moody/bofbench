@@ -1,0 +1,90 @@
+# Quickstart
+
+Build the CLI:
+
+```sh
+go build -o work/bin/bofbench ./cmd/bofbench
+```
+
+Create a payload:
+
+```sh
+work/bin/bofbench new smoke
+```
+
+Starter templates are available:
+
+```sh
+work/bin/bofbench new pidcheck --template winapi
+work/bin/bofbench new badlink --template unresolved
+work/bin/bofbench new slow --template timeout
+```
+
+Build it:
+
+```text
+created BOF payload workspace bofs/smoke
+```
+
+```sh
+work/bin/bofbench build bofs/smoke
+```
+
+The default compiler is MinGW-w64. On Windows x64, `bofbench` falls back to MSVC `cl.exe` when MinGW is not installed.
+
+Example build output:
+
+```json
+{
+  "name": "smoke",
+  "arch": "x64",
+  "object": "dist/smoke.x64.o",
+  "status": "built"
+}
+```
+
+Inspect:
+
+```sh
+work/bin/bofbench inspect dist/smoke.x64.o
+```
+
+Example inspect output:
+
+```text
+object: dist/smoke.x64.o
+kind: coff
+arch: x64
+entry "go": yes
+sections:
+  .text              size=48       relocs=2    flags=R-X
+unresolved externals:
+  BeaconPrintf
+```
+
+Write analysis reports:
+
+```sh
+work/bin/bofbench analyze dist/smoke.x64.o --format md
+```
+
+Reports are written under `runs/<timestamp>-analysis-*/analysis.json` and `analysis.md`.
+The report includes import classification, visible strings, and review findings.
+
+Run a named profile from `bofbench.toml`:
+
+```sh
+work/bin/bofbench test bofs/smoke --profile alt
+```
+
+Stage for Cobalt Strike:
+
+```sh
+work/bin/bofbench stage dist/smoke.x64.o --target cobaltstrike --args z:hello i:3
+```
+
+Open the terminal UI:
+
+```sh
+work/bin/bofbench tui
+```

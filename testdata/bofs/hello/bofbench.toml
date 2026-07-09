@@ -1,0 +1,5 @@
+name = "hello"
+entry = "go"
+args = []
+expect = ["hello from native loader fixture"]
+timeout_ms = 5000

@@ -1,0 +1,5 @@
+name = "data_reloc"
+entry = "go"
+args = []
+expect = ["data_reloc: beta 13 len=0"]
+timeout_ms = 5000

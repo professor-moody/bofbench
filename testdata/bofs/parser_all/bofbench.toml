@@ -1,0 +1,5 @@
+name = "parser_all"
+entry = "go"
+args = ["s:9", "b:cGluZw=="]
+expect = ["parser_all: short=9 blob_len=4 remaining=0", "ping"]
+timeout_ms = 5000

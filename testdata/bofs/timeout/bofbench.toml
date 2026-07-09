@@ -1,0 +1,5 @@
+name = "timeout"
+entry = "go"
+args = []
+expect_exit = "timeout"
+timeout_ms = 250

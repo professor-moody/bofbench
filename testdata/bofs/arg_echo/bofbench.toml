@@ -1,0 +1,5 @@
+name = "arg_echo"
+entry = "go"
+args = ["z:test-message", "i:42"]
+expect = ["arg_echo: test-message 42"]
+timeout_ms = 5000

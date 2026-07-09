@@ -1,0 +1,5 @@
+name = "winapi_call"
+entry = "go"
+args = []
+expect = ["GetCurrentProcessId="]
+timeout_ms = 5000

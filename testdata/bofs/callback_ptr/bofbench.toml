@@ -1,0 +1,5 @@
+name = "callback_ptr"
+entry = "go"
+args = []
+expect = ["callback_ptr: 7"]
+timeout_ms = 5000

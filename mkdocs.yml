@@ -1,0 +1,30 @@
+site_name: bofbench
+site_description: Offensive BOF build, load, test, and stage workbench
+repo_url: https://github.com/example/bofbench
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.instant
+    - content.code.copy
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Commands: commands.md
+  - Analysis Reports: analysis.md
+  - Native Loader: native-loader.md
+  - Windows Lab: windows-lab.md
+  - Runtime Model: runtime.md
+  - Argument Packing: arg-packing.md
+  - Developer Loop: development.md
+  - Public BOF Arsenal: arsenal.md
+  - Staging: staging.md
+  - TUI: tui.md
+  - Engineering Review: review.md
+  - Roadmap: roadmap.md
+  - Release: release.md
+  - Troubleshooting: troubleshooting.md
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences
+  - pymdownx.highlight

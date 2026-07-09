@@ -1,0 +1,11 @@
+/work/
+/dist/
+/runs/
+/stage/
+/site/
+/bofs/
+/arsenal/
+/outputs/
+/corpus/
+/native/loader/bofbench-loader.exe
+.DS_Store
