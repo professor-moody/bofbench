@@ -50,6 +50,18 @@ type TargetFixtureState struct {
 	CertificateStore      string `json:"certificate_store,omitempty"`
 	CertificateSubject    string `json:"certificate_subject,omitempty"`
 	CertificateThumbprint string `json:"certificate_thumbprint,omitempty"`
+	RemoteRegistryHive    string `json:"remote_registry_hive,omitempty"`
+	RemoteRegistryPath    string `json:"remote_registry_path,omitempty"`
+	RemoteRegistryName    string `json:"remote_registry_name,omitempty"`
+	RemoteRegistrySHA256  string `json:"remote_registry_sha256,omitempty"`
+	RemoteRegistrySize    int    `json:"remote_registry_size,omitempty"`
+	RemoteRegistryStatus  string `json:"remote_registry_previous_status,omitempty"`
+	RemoteRegistryStart   string `json:"remote_registry_previous_start_type,omitempty"`
+	RemoteRegistryKeyMade bool   `json:"remote_registry_key_created,omitempty"`
+	RemoteComputerName    string `json:"remote_computer_name,omitempty"`
+	RemoteStageShare      string `json:"remote_stage_share,omitempty"`
+	RemoteStageRelative   string `json:"remote_stage_relative_root,omitempty"`
+	RemoteStageLocal      string `json:"remote_stage_local_root,omitempty"`
 	CreatedAt             string `json:"created_at"`
 }
 
@@ -96,13 +108,13 @@ func DeployTarget(ctx context.Context, name string, profile Profile, repository 
 	}
 	remoteExecutable := windowsJoin(profile.RemoteRoot, "target", "bofbench-target.exe")
 	remoteServiceFixture := windowsJoin(profile.RemoteRoot, "target", "bofbench-service-fixture.exe")
+	targetDirectory := windowsJoin(profile.RemoteRoot, "target")
 	report.ServiceBinary = remoteServiceFixture
+	if _, stderr, err := remoteExecute(ctx, opts, targetCleanupScript(targetDirectory)); err != nil {
+		return report, fmt.Errorf("clean prior disposable target: %w: %s", err, boundedText(string(stderr), 2048))
+	}
 	if _, stderr, err := remoteExecute(ctx, opts, fmt.Sprintf(`New-Item -ItemType Directory -Force -Path %s | Out-Null`, powerShellQuote(windowsDir(remoteExecutable)))); err != nil {
 		return report, fmt.Errorf("prepare disposable target directory: %w: %s", err, boundedText(string(stderr), 2048))
-	}
-	stopScript := fmt.Sprintf(`$existing=Get-Service -Name %s -ErrorAction SilentlyContinue; if($existing){if($existing.Status -ne 'Stopped'){Stop-Service -Name %s -Force}; sc.exe delete %s | Out-Null; Start-Sleep -Milliseconds 500}; Write-Output 'ready'`, powerShellQuote(TargetServiceName), powerShellQuote(TargetServiceName), TargetServiceName)
-	if _, stderr, err := remoteExecute(ctx, opts, stopScript); err != nil {
-		return report, fmt.Errorf("stop prior disposable target: %w: %s", err, boundedText(string(stderr), 2048))
 	}
 	if _, stderr, err := remoteUploadFile(ctx, opts, executable, remoteExecutable); err != nil {
 		return report, fmt.Errorf("deploy disposable target: %w: %s", err, boundedText(string(stderr), 2048))
@@ -110,11 +122,22 @@ func DeployTarget(ctx context.Context, name string, profile Profile, repository 
 	if _, stderr, err := remoteUploadFile(ctx, opts, serviceFixture, remoteServiceFixture); err != nil {
 		return report, fmt.Errorf("deploy disposable service fixture: %w: %s", err, boundedText(string(stderr), 2048))
 	}
+	remoteFixtureOutput, remoteFixtureStderr, remoteFixtureErr := remoteExecute(ctx, opts, targetRemoteFixtureScript(targetDirectory))
+	if remoteFixtureErr != nil {
+		_, _, _ = remoteExecute(ctx, opts, targetCleanupScript(targetDirectory))
+		return report, fmt.Errorf("prepare remote-operation fixtures: %w: %s", remoteFixtureErr, boundedText(string(remoteFixtureStderr), 2048))
+	}
+	var remoteFixtures TargetFixtureState
+	if err := json.Unmarshal(remoteFixtureOutput, &remoteFixtures); err != nil {
+		_, _, _ = remoteExecute(ctx, opts, targetCleanupScript(targetDirectory))
+		return report, fmt.Errorf("decode remote-operation fixtures: %w", err)
+	}
 	statePath := windowsJoin(profile.RemoteRoot, "target", "target.json")
 	script := fmt.Sprintf(`$ErrorActionPreference='Stop'; Remove-Item -LiteralPath %s -Force -ErrorAction SilentlyContinue; New-Service -Name %s -BinaryPathName %s -DisplayName 'BOFBench disposable capability target' -StartupType Manual | Out-Null; Start-Service -Name %s; $deadline=(Get-Date).AddSeconds(15); do { Start-Sleep -Milliseconds 250 } until ((Test-Path %s) -or (Get-Date) -gt $deadline); if(-not (Test-Path %s)){throw 'target state file was not created'}; Get-Content -LiteralPath %s -Raw`, powerShellQuote(statePath), powerShellQuote(TargetServiceName), powerShellQuote(remoteExecutable), powerShellQuote(TargetServiceName), powerShellQuote(statePath), powerShellQuote(statePath), powerShellQuote(statePath))
 	stdout, stderr, err := remoteExecute(ctx, opts, script)
 	if err != nil {
 		report.Error = boundedText(string(stderr), 4096)
+		_, _, _ = remoteExecute(ctx, opts, targetCleanupScript(targetDirectory))
 		return report, fmt.Errorf("start disposable target: %w: %s", err, report.Error)
 	}
 	if err := json.Unmarshal(stdout, &report.State); err != nil {
@@ -129,6 +152,7 @@ func DeployTarget(ctx context.Context, name string, profile Profile, repository 
 	} else if report.State.FixtureError == "" {
 		return report, fmt.Errorf("read disposable target fixtures: %w: %s", fixtureErr, boundedText(string(fixtureStderr), 2048))
 	}
+	mergeRemoteFixtures(&report.Fixtures, remoteFixtures)
 	report.Status = "pass"
 	return report, nil
 }
@@ -161,6 +185,16 @@ func TargetStatus(ctx context.Context, name string, profile Profile) (TargetRepo
 		report.Error = boundedText(string(fixtureStderr), 4096)
 		return report, fmt.Errorf("read disposable target fixtures: %w: %s", fixtureErr, report.Error)
 	}
+	remoteFixturePath := windowsJoin(profile.RemoteRoot, "target", "remote-fixture.json")
+	remoteFixtureOutput, remoteFixtureStderr, remoteFixtureErr := remoteExecute(ctx, opts, fmt.Sprintf(`$ErrorActionPreference='Stop'; Get-Content -LiteralPath %s -Raw`, powerShellQuote(remoteFixturePath)))
+	if remoteFixtureErr != nil {
+		return report, fmt.Errorf("read remote-operation fixtures: %w: %s", remoteFixtureErr, boundedText(string(remoteFixtureStderr), 2048))
+	}
+	var remoteFixtures TargetFixtureState
+	if err := json.Unmarshal(remoteFixtureOutput, &remoteFixtures); err != nil {
+		return report, fmt.Errorf("decode remote-operation fixtures: %w", err)
+	}
+	mergeRemoteFixtures(&report.Fixtures, remoteFixtures)
 	report.Status = "pass"
 	return report, nil
 }
@@ -173,7 +207,7 @@ func RemoveTarget(ctx context.Context, name string, profile Profile) (TargetRepo
 		return report, resolveErr
 	}
 	targetDirectory := windowsJoin(profile.RemoteRoot, "target")
-	script := fmt.Sprintf(`$ErrorActionPreference='Continue'; $service=Get-Service -Name %s -ErrorAction SilentlyContinue; if($service -and $service.Status -ne 'Stopped'){Stop-Service -Name %s -Force}; if($service){sc.exe delete %s | Out-Null}; Start-Sleep -Milliseconds 500; Remove-Item -LiteralPath %s -Recurse -Force -ErrorAction SilentlyContinue; if(Get-Service -Name %s -ErrorAction SilentlyContinue){throw 'target service still exists'}; if(Test-Path -LiteralPath %s){throw 'target directory still exists'}; Write-Output 'removed'`, powerShellQuote(TargetServiceName), powerShellQuote(TargetServiceName), TargetServiceName, powerShellQuote(targetDirectory), powerShellQuote(TargetServiceName), powerShellQuote(targetDirectory))
+	script := targetCleanupScript(targetDirectory)
 	_, stderr, err := remoteExecute(ctx, opts, script)
 	if err != nil {
 		report.Error = boundedText(string(stderr), 4096)
@@ -183,9 +217,38 @@ func RemoveTarget(ctx context.Context, name string, profile Profile) (TargetRepo
 	return report, nil
 }
 
+func targetRemoteFixtureScript(targetDirectory string) string {
+	fixturePath := windowsJoin(targetDirectory, "remote-fixture.json")
+	return fmt.Sprintf(`$ErrorActionPreference='Stop'; $service=Get-Service -Name 'RemoteRegistry' -ErrorAction Stop; $previousStatus=[string]$service.Status; $previousStart=[string]$service.StartType; if($service.StartType -eq 'Disabled'){Set-Service -Name 'RemoteRegistry' -StartupType Manual}; if((Get-Service -Name 'RemoteRegistry').Status -ne 'Running'){Start-Service -Name 'RemoteRegistry'}; $bytes=New-Object byte[] 48; $rng=[Security.Cryptography.RandomNumberGenerator]::Create(); try{$rng.GetBytes($bytes)}finally{$rng.Dispose()}; $sha=[BitConverter]::ToString(([Security.Cryptography.SHA256]::Create()).ComputeHash($bytes)).Replace('-','').ToLowerInvariant(); $registryPath='Software\BOFBench'; $registryProvider='HKLM:\'+$registryPath; $registryKeyCreated=-not (Test-Path -LiteralPath $registryProvider); New-Item -Path $registryProvider -Force | Out-Null; New-ItemProperty -Path $registryProvider -Name 'RemoteCanary' -PropertyType Binary -Value $bytes -Force | Out-Null; $stageLocal='C:\bofbench\proof'; New-Item -ItemType Directory -Path $stageLocal -Force | Out-Null; $record=[ordered]@{schema='bofbench.target-remote-fixtures';schema_version=1;remote_computer_name=$env:COMPUTERNAME;remote_registry_hive='HKLM';remote_registry_path=$registryPath;remote_registry_name='RemoteCanary';remote_registry_sha256=$sha;remote_registry_size=$bytes.Length;remote_registry_previous_status=$previousStatus;remote_registry_previous_start_type=$previousStart;remote_registry_key_created=$registryKeyCreated;remote_stage_share='C$';remote_stage_relative_root='bofbench\proof';remote_stage_local_root=$stageLocal;created_at=[DateTime]::UtcNow.ToString('o')}; $json=$record|ConvertTo-Json -Compress; [IO.File]::WriteAllText(%s,$json,(New-Object Text.UTF8Encoding($false))); Write-Output $json`, powerShellQuote(fixturePath))
+}
+
+func targetCleanupScript(targetDirectory string) string {
+	fixturePath := windowsJoin(targetDirectory, "remote-fixture.json")
+	return fmt.Sprintf(`$ErrorActionPreference='Continue'; $fixture=$null; if(Test-Path -LiteralPath %s){try{$fixture=Get-Content -LiteralPath %s -Raw|ConvertFrom-Json}catch{}}; $service=Get-Service -Name %s -ErrorAction SilentlyContinue; if($service -and $service.Status -ne 'Stopped'){Stop-Service -Name %s -Force}; if($service){sc.exe delete %s|Out-Null}; Start-Sleep -Milliseconds 500; if($fixture){$key='HKLM:\'+[string]$fixture.remote_registry_path; Remove-ItemProperty -LiteralPath $key -Name ([string]$fixture.remote_registry_name) -Force -ErrorAction SilentlyContinue; if([bool]$fixture.remote_registry_key_created){Remove-Item -LiteralPath $key -Force -ErrorAction SilentlyContinue}; Remove-Item -LiteralPath ([string]$fixture.remote_stage_local_root) -Recurse -Force -ErrorAction SilentlyContinue; $remote=Get-Service -Name 'RemoteRegistry' -ErrorAction SilentlyContinue; if($remote){if($remote.Status -ne 'Stopped'){Stop-Service -Name 'RemoteRegistry' -Force -ErrorAction SilentlyContinue}; switch([string]$fixture.remote_registry_previous_start_type){'Automatic'{Set-Service -Name 'RemoteRegistry' -StartupType Automatic};'Manual'{Set-Service -Name 'RemoteRegistry' -StartupType Manual};'Disabled'{Set-Service -Name 'RemoteRegistry' -StartupType Disabled}}; if([string]$fixture.remote_registry_previous_status -eq 'Running'){Start-Service -Name 'RemoteRegistry'}else{Stop-Service -Name 'RemoteRegistry' -Force -ErrorAction SilentlyContinue}; $after=Get-Service -Name 'RemoteRegistry'; if([string]$after.Status -ne [string]$fixture.remote_registry_previous_status){throw 'RemoteRegistry status was not restored'}; if([string]$after.StartType -ne [string]$fixture.remote_registry_previous_start_type){throw 'RemoteRegistry start type was not restored'}}}; Remove-Item -LiteralPath %s -Recurse -Force -ErrorAction SilentlyContinue; if(Get-Service -Name %s -ErrorAction SilentlyContinue){throw 'target service still exists'}; if(Test-Path -LiteralPath %s){throw 'target directory still exists'}; Write-Output 'removed'`, powerShellQuote(fixturePath), powerShellQuote(fixturePath), powerShellQuote(TargetServiceName), powerShellQuote(TargetServiceName), TargetServiceName, powerShellQuote(targetDirectory), powerShellQuote(TargetServiceName), powerShellQuote(targetDirectory))
+}
+
+func mergeRemoteFixtures(target *TargetFixtureState, remote TargetFixtureState) {
+	target.RemoteRegistryHive = remote.RemoteRegistryHive
+	target.RemoteRegistryPath = remote.RemoteRegistryPath
+	target.RemoteRegistryName = remote.RemoteRegistryName
+	target.RemoteRegistrySHA256 = remote.RemoteRegistrySHA256
+	target.RemoteRegistrySize = remote.RemoteRegistrySize
+	target.RemoteRegistryStatus = remote.RemoteRegistryStatus
+	target.RemoteRegistryStart = remote.RemoteRegistryStart
+	target.RemoteRegistryKeyMade = remote.RemoteRegistryKeyMade
+	target.RemoteComputerName = remote.RemoteComputerName
+	target.RemoteStageShare = remote.RemoteStageShare
+	target.RemoteStageRelative = remote.RemoteStageRelative
+	target.RemoteStageLocal = remote.RemoteStageLocal
+}
+
 func TargetReportText(report TargetReport) string {
 	if report.Status == "pass" && report.Operation != "remove" {
-		text := fmt.Sprintf("BOFBench target %s\nprofile     %s\ncomputer    %s\nservice     %s\npid         %d\nalertable   tid=%d\nknown handle %s\nnamed pipe  %s\nmemory      address=%s bytes=%d sha256=%s\nfile        %s\ncredential  %s user=%s bytes=%d\ndpapi user  %s\ndpapi host  %s\nvault       %s resource=%s identity=%s bytes=%d\ncertificate store=%s thumbprint=%s subject=%s\nwmi marker  %s\n", strings.ToUpper(report.Status), report.Profile, report.Host, report.Service, report.State.PID, report.State.AlertableTID, report.State.KnownHandle, report.State.NamedPipe, report.State.MemoryCanaryAddress, report.State.MemoryCanarySize, report.State.MemoryCanarySHA256, report.State.CanaryFile, report.Fixtures.CredentialTarget, report.Fixtures.User, report.Fixtures.CredentialSize, report.Fixtures.DPAPIUserPath, report.Fixtures.DPAPIMachinePath, report.Fixtures.VaultGUID, report.Fixtures.VaultResource, report.Fixtures.VaultIdentity, report.Fixtures.VaultSize, report.Fixtures.CertificateStore, report.Fixtures.CertificateThumbprint, report.Fixtures.CertificateSubject, report.Fixtures.WMIMarkerPath)
+		computer := report.Fixtures.RemoteComputerName
+		if computer == "" {
+			computer = report.Host
+		}
+		text := fmt.Sprintf("BOFBench target %s\nprofile     %s\ncomputer    %s\nservice     %s\npid         %d\nalertable   tid=%d\nknown handle %s\nnamed pipe  %s\nmemory      address=%s bytes=%d sha256=%s\nfile        %s\ncredential  %s user=%s bytes=%d\ndpapi user  %s\ndpapi host  %s\nvault       %s resource=%s identity=%s bytes=%d\ncertificate store=%s thumbprint=%s subject=%s\nwmi marker  %s\nremote reg  %s\\%s\\%s bytes=%d sha256=%s previous=%s/%s\nremote file share=%s root=%s local=%s\n", strings.ToUpper(report.Status), report.Profile, computer, report.Service, report.State.PID, report.State.AlertableTID, report.State.KnownHandle, report.State.NamedPipe, report.State.MemoryCanaryAddress, report.State.MemoryCanarySize, report.State.MemoryCanarySHA256, report.State.CanaryFile, report.Fixtures.CredentialTarget, report.Fixtures.User, report.Fixtures.CredentialSize, report.Fixtures.DPAPIUserPath, report.Fixtures.DPAPIMachinePath, report.Fixtures.VaultGUID, report.Fixtures.VaultResource, report.Fixtures.VaultIdentity, report.Fixtures.VaultSize, report.Fixtures.CertificateStore, report.Fixtures.CertificateThumbprint, report.Fixtures.CertificateSubject, report.Fixtures.WMIMarkerPath, report.Fixtures.RemoteRegistryHive, report.Fixtures.RemoteRegistryPath, report.Fixtures.RemoteRegistryName, report.Fixtures.RemoteRegistrySize, report.Fixtures.RemoteRegistrySHA256, report.Fixtures.RemoteRegistryStatus, report.Fixtures.RemoteRegistryStart, report.Fixtures.RemoteStageShare, report.Fixtures.RemoteStageRelative, report.Fixtures.RemoteStageLocal)
 		if report.State.FixtureError != "" {
 			text += fmt.Sprintf("fixtures    unavailable: %s\n", report.State.FixtureError)
 		}

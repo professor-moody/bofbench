@@ -23,6 +23,7 @@ Status prints the exact values used by later commands:
 - exact Windows Vault GUID, resource, identity, secret size, and expected SHA-256;
 - generated exportable certificate store, subject, and thumbprint;
 - a unique WMI marker path.
+- actual Windows computer name, exact HKLM Remote Registry canary, and admin-share staging root.
 
 The generated manifest contains identifiers, paths, limits, and hashes—not plaintext fixture values.
 
@@ -205,7 +206,7 @@ WMI process creation takes exactly one target and command:
 bofbench new wmi-create --pack internal/wmi-process-create
 bofbench analyze bofs/wmi-create
 bofbench run bofs/wmi-create --via lab --lab devbox \
-  --arg target_host=. \
+  --arg target_host=DEVBOX \
   --arg command='cmd.exe /d /c echo BOFBench-WMI-Proof> <WMI_MARKER_PATH>'
 
 bofbench new marker-cleanup --pack internal/file-remove
@@ -214,6 +215,8 @@ bofbench run bofs/marker-cleanup --via lab --lab devbox \
 ```
 
 There is no host discovery or propagation in the execution pack. The operator supplies one host and one command.
+
+For native remote service/task execution, hash-guarded SMB staging, Remote Registry, and named-host inventory, continue with [Standalone Remote Operations](remote-operations.md).
 
 ## Use the same object through Sliver
 

@@ -864,6 +864,248 @@ static void bofbench_feature_certificate_store_inventory(datap *parser) {
 		Call: "bofbench_feature_certificate_store_inventory($PARSER);",
 	},
 	{
+		Name:        "remote-host-info",
+		Description: "report bounded workstation and server identity for one explicitly supplied Windows host",
+		Declaration: `#include <lm.h>
+NET_API_STATUS NET_API_FUNCTION NETAPI32$NetWkstaGetInfo(LMSTR, DWORD, LPBYTE *);
+NET_API_STATUS NET_API_FUNCTION NETAPI32$NetServerGetInfo(LMSTR, DWORD, LPBYTE *);
+NET_API_STATUS NET_API_FUNCTION NETAPI32$NetApiBufferFree(LPVOID);
+
+static void bofbench_remote_host_text(const WCHAR *source, char *target, DWORD capacity) {
+    DWORD index = 0;
+    if (capacity == 0) return;
+    while (source != NULL && source[index] != L'\0' && index + 1 < capacity) {
+        target[index] = source[index] < 128 ? (char)source[index] : '?';
+        index++;
+    }
+    target[index] = '\0';
+}
+
+static void bofbench_feature_remote_host_info(datap *parser) {
+    int host_bytes = 0;
+    WCHAR *host = (WCHAR *)BeaconDataExtract(parser, &host_bytes);
+    LPBYTE workstation_buffer = NULL, server_buffer = NULL;
+    WKSTA_INFO_100 *workstation;
+    SERVER_INFO_101 *server;
+    NET_API_STATUS workstation_status, server_status;
+    char host_text[256], computer[256], workgroup[256], comment[256];
+    if (host == NULL || host_bytes < 2) {
+        BeaconPrintf(CALLBACK_ERROR, "[remote-host-info] status=bad-arguments");
+        return;
+    }
+    bofbench_remote_host_text(host, host_text, sizeof(host_text));
+    workstation_status = NETAPI32$NetWkstaGetInfo(host, 100, &workstation_buffer);
+    server_status = NETAPI32$NetServerGetInfo(host, 101, &server_buffer);
+    if (workstation_status != NERR_Success || workstation_buffer == NULL) {
+        BeaconPrintf(CALLBACK_ERROR, "[remote-host-info] status=failed target=%s api=NetWkstaGetInfo error=%lu", host_text, workstation_status);
+        if (server_buffer != NULL) NETAPI32$NetApiBufferFree(server_buffer);
+        return;
+    }
+    workstation = (WKSTA_INFO_100 *)workstation_buffer;
+    bofbench_remote_host_text(workstation->wki100_computername, computer, sizeof(computer));
+    bofbench_remote_host_text(workstation->wki100_langroup, workgroup, sizeof(workgroup));
+    if (server_status == NERR_Success && server_buffer != NULL) {
+        server = (SERVER_INFO_101 *)server_buffer;
+        bofbench_remote_host_text(server->sv101_comment, comment, sizeof(comment));
+        BeaconPrintf(CALLBACK_OUTPUT, "[remote-host-info] target=%s computer=%s workgroup=%s platform=%lu major=%lu minor=%lu server_type=0x%08lx comment=%s",
+            host_text, computer, workgroup, workstation->wki100_platform_id, workstation->wki100_ver_major, workstation->wki100_ver_minor, server->sv101_type, comment);
+    } else {
+        BeaconPrintf(CALLBACK_OUTPUT, "[remote-host-info] target=%s computer=%s workgroup=%s platform=%lu major=%lu minor=%lu server_type=unavailable server_error=%lu",
+            host_text, computer, workgroup, workstation->wki100_platform_id, workstation->wki100_ver_major, workstation->wki100_ver_minor, server_status);
+    }
+    BeaconPrintf(CALLBACK_OUTPUT, "[remote-host-info] status=complete target=%s", host_text);
+    if (server_buffer != NULL) NETAPI32$NetApiBufferFree(server_buffer);
+    NETAPI32$NetApiBufferFree(workstation_buffer);
+}`,
+		Call: "bofbench_feature_remote_host_info($PARSER);",
+	},
+	{
+		Name:        "remote-service-inventory",
+		Description: "enumerate a bounded filtered service inventory from one explicitly supplied Windows host",
+		Declaration: `SC_HANDLE WINAPI ADVAPI32$OpenSCManagerW(LPCWSTR, LPCWSTR, DWORD);
+BOOL WINAPI ADVAPI32$EnumServicesStatusExW(SC_HANDLE, SC_ENUM_TYPE, DWORD, DWORD, LPBYTE, DWORD, LPDWORD, LPDWORD, LPDWORD, LPCWSTR);
+BOOL WINAPI ADVAPI32$CloseServiceHandle(SC_HANDLE);
+DWORD WINAPI KERNEL32$GetLastError(void);
+
+static BYTE bofbench_remote_service_buffer[65536];
+
+static void bofbench_remote_service_text(const WCHAR *source, char *target, DWORD capacity) {
+    DWORD index = 0;
+    if (capacity == 0) return;
+    while (source != NULL && source[index] != L'\0' && index + 1 < capacity) {
+        target[index] = source[index] < 128 ? (char)source[index] : '?';
+        index++;
+    }
+    target[index] = '\0';
+}
+
+static BOOL bofbench_remote_service_match(const WCHAR *value, const WCHAR *filter, int filter_bytes) {
+    int length = filter_bytes > 1 ? (filter_bytes / (int)sizeof(WCHAR)) - 1 : 0;
+    int start = 0;
+    if (filter == NULL || length <= 0) return TRUE;
+    while (value != NULL && value[start] != L'\0') {
+        int index = 0;
+        while (index < length && value[start + index] != L'\0') {
+            WCHAR left = value[start + index], right = filter[index];
+            if (left >= L'A' && left <= L'Z') left = (WCHAR)(left + 32);
+            if (right >= L'A' && right <= L'Z') right = (WCHAR)(right + 32);
+            if (left != right) break;
+            index++;
+        }
+        if (index == length) return TRUE;
+        start++;
+    }
+    return FALSE;
+}
+
+static void bofbench_feature_remote_service_inventory(datap *parser) {
+    int host_bytes = 0, filter_bytes = 0, state_bytes = 0;
+    WCHAR *host = (WCHAR *)BeaconDataExtract(parser, &host_bytes);
+    WCHAR *filter = (WCHAR *)BeaconDataExtract(parser, &filter_bytes);
+    char *state_filter = BeaconDataExtract(parser, &state_bytes);
+    int requested = BeaconDataInt(parser);
+    DWORD limit = requested > 0 ? (DWORD)requested : 32;
+    DWORD resume = 0, needed = 0, returned = 0, shown = 0, examined = 0, pages = 0, error = ERROR_SUCCESS;
+    SC_HANDLE manager;
+    char host_text[256], name[256], display[256];
+    BOOL more = TRUE;
+    if (host == NULL || host_bytes < 2) { BeaconPrintf(CALLBACK_ERROR, "[remote-service-inventory] status=bad-arguments"); return; }
+    if (limit > 256) limit = 256;
+    bofbench_remote_service_text(host, host_text, sizeof(host_text));
+    manager = ADVAPI32$OpenSCManagerW(host, NULL, SC_MANAGER_ENUMERATE_SERVICE);
+    if (manager == NULL) { BeaconPrintf(CALLBACK_ERROR, "[remote-service-inventory] status=failed target=%s api=OpenSCManagerW error=%lu", host_text, KERNEL32$GetLastError()); return; }
+    while (more && shown < limit) {
+        DWORD index;
+        ENUM_SERVICE_STATUS_PROCESSW *entries;
+        returned = 0; needed = 0;
+        more = ADVAPI32$EnumServicesStatusExW(manager, SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_STATE_ALL,
+            bofbench_remote_service_buffer, sizeof(bofbench_remote_service_buffer), &needed, &returned, &resume, NULL);
+        error = more ? ERROR_SUCCESS : KERNEL32$GetLastError();
+        if (!more && error != ERROR_MORE_DATA) break;
+        pages++;
+        entries = (ENUM_SERVICE_STATUS_PROCESSW *)bofbench_remote_service_buffer;
+        for (index = 0; index < returned && shown < limit; index++) {
+            DWORD current_state = entries[index].ServiceStatusProcess.dwCurrentState;
+            BOOL state_match = TRUE;
+            examined++;
+            if (state_filter != NULL && state_bytes > 1) {
+                if ((state_filter[0] == 'r' || state_filter[0] == 'R') && current_state != SERVICE_RUNNING) state_match = FALSE;
+                if ((state_filter[0] == 's' || state_filter[0] == 'S') && current_state != SERVICE_STOPPED) state_match = FALSE;
+            }
+            if (!state_match || (!bofbench_remote_service_match(entries[index].lpServiceName, filter, filter_bytes) && !bofbench_remote_service_match(entries[index].lpDisplayName, filter, filter_bytes))) continue;
+            bofbench_remote_service_text(entries[index].lpServiceName, name, sizeof(name));
+            bofbench_remote_service_text(entries[index].lpDisplayName, display, sizeof(display));
+            BeaconPrintf(CALLBACK_OUTPUT, "[remote-service-inventory] target=%s name=%s display=%s state=%lu type=0x%08lx pid=%lu",
+                host_text, name, display, current_state, entries[index].ServiceStatusProcess.dwServiceType, entries[index].ServiceStatusProcess.dwProcessId);
+            shown++;
+        }
+        if (more || error != ERROR_MORE_DATA || resume == 0) break;
+    }
+    ADVAPI32$CloseServiceHandle(manager);
+    if (error != ERROR_SUCCESS && error != ERROR_MORE_DATA) {
+        BeaconPrintf(CALLBACK_ERROR, "[remote-service-inventory] status=failed target=%s api=EnumServicesStatusExW error=%lu", host_text, error);
+        return;
+    }
+    BeaconPrintf(CALLBACK_OUTPUT, "[remote-service-inventory] status=complete target=%s shown=%lu examined=%lu pages=%lu limit=%lu filter=%s state=%s",
+        host_text, shown, examined, pages, limit, filter_bytes > 2 ? "set" : "*", state_bytes > 1 ? state_filter : "all");
+}`,
+		Call: "bofbench_feature_remote_service_inventory($PARSER);",
+	},
+	{
+		Name:        "remote-task-inventory",
+		Description: "enumerate bounded Task Scheduler metadata from one explicitly supplied Windows host",
+		Declaration: `#ifndef COBJMACROS
+#define COBJMACROS
+#endif
+#include <taskschd.h>
+#include <oleauto.h>
+HRESULT WINAPI OLE32$CoInitializeEx(LPVOID, DWORD);
+HRESULT WINAPI OLE32$CoInitializeSecurity(PSECURITY_DESCRIPTOR, LONG, SOLE_AUTHENTICATION_SERVICE *, LPVOID, DWORD, DWORD, LPVOID, DWORD, LPVOID);
+HRESULT WINAPI OLE32$CoCreateInstance(REFCLSID, LPUNKNOWN, DWORD, REFIID, LPVOID *);
+VOID WINAPI OLE32$CoUninitialize(void);
+BSTR WINAPI OLEAUT32$SysAllocString(const OLECHAR *);
+VOID WINAPI OLEAUT32$SysFreeString(BSTR);
+HRESULT WINAPI OLEAUT32$VariantClear(VARIANTARG *);
+
+static const CLSID BOFBENCH_CLSID_TaskSchedulerInventory = {0x0f87369f,0xa4e5,0x4cfc,{0xbd,0x3e,0x73,0xe6,0x15,0x45,0x72,0xdd}};
+static const IID BOFBENCH_IID_ITaskServiceInventory = {0x2faba4c7,0x4da9,0x4013,{0x96,0x97,0x20,0xcc,0x3f,0xd4,0x0f,0x85}};
+
+static void bofbench_remote_task_text(const WCHAR *source, char *target, DWORD capacity) {
+    DWORD index = 0;
+    if (capacity == 0) return;
+    while (source != NULL && source[index] != L'\0' && index + 1 < capacity) { target[index] = source[index] < 128 ? (char)source[index] : '?'; index++; }
+    target[index] = '\0';
+}
+
+static BOOL bofbench_remote_task_match(const WCHAR *value, const WCHAR *filter, int filter_bytes) {
+    int length = filter_bytes > 1 ? (filter_bytes / (int)sizeof(WCHAR)) - 1 : 0, start = 0;
+    if (filter == NULL || length <= 0) return TRUE;
+    while (value != NULL && value[start] != L'\0') {
+        int index = 0;
+        while (index < length && value[start + index] != L'\0') {
+            WCHAR left = value[start + index], right = filter[index];
+            if (left >= L'A' && left <= L'Z') left = (WCHAR)(left + 32);
+            if (right >= L'A' && right <= L'Z') right = (WCHAR)(right + 32);
+            if (left != right) break;
+            index++;
+        }
+        if (index == length) return TRUE;
+        start++;
+    }
+    return FALSE;
+}
+
+static void bofbench_feature_remote_task_inventory(datap *parser) {
+    int host_bytes = 0, filter_bytes = 0;
+    WCHAR *host = (WCHAR *)BeaconDataExtract(parser, &host_bytes);
+    WCHAR *filter = (WCHAR *)BeaconDataExtract(parser, &filter_bytes);
+    int requested = BeaconDataInt(parser);
+    LONG limit = requested > 0 ? requested : 32, count = 0, index, shown = 0;
+    HRESULT hr, security;
+    ITaskService *service = NULL;
+    ITaskFolder *folder = NULL;
+    IRegisteredTaskCollection *tasks = NULL;
+    BSTR server_name = NULL, root_name = NULL;
+    VARIANT server, empty;
+    char host_text[256];
+    if (host == NULL || host_bytes < 2) { BeaconPrintf(CALLBACK_ERROR, "[remote-task-inventory] status=bad-arguments"); return; }
+    if (limit > 256) limit = 256;
+    bofbench_remote_task_text(host, host_text, sizeof(host_text));
+    server.vt = VT_EMPTY; server.ullVal = 0; empty.vt = VT_EMPTY; empty.ullVal = 0;
+    hr = OLE32$CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) goto cleanup;
+    security = OLE32$CoInitializeSecurity(NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE, NULL);
+    if (FAILED(security) && security != RPC_E_TOO_LATE) { hr = security; goto cleanup; }
+    hr = OLE32$CoCreateInstance(&BOFBENCH_CLSID_TaskSchedulerInventory, NULL, CLSCTX_INPROC_SERVER, &BOFBENCH_IID_ITaskServiceInventory, (LPVOID *)&service); if (FAILED(hr)) goto cleanup;
+    server_name = OLEAUT32$SysAllocString(host); server.vt = VT_BSTR; server.bstrVal = server_name;
+    hr = ITaskService_Connect(service, server, empty, empty, empty); if (FAILED(hr)) goto cleanup;
+    root_name = OLEAUT32$SysAllocString(L"\\");
+    hr = ITaskService_GetFolder(service, root_name, &folder); if (FAILED(hr)) goto cleanup;
+    hr = ITaskFolder_GetTasks(folder, TASK_ENUM_HIDDEN, &tasks); if (FAILED(hr)) goto cleanup;
+    hr = IRegisteredTaskCollection_get_Count(tasks, &count); if (FAILED(hr)) goto cleanup;
+    for (index = 1; index <= count && shown < limit; index++) {
+        VARIANT item_index; IRegisteredTask *task = NULL; BSTR name = NULL; TASK_STATE state = TASK_STATE_UNKNOWN; LONG last_result = 0; char task_name[512];
+        item_index.vt = VT_I4; item_index.lVal = index;
+        if (FAILED(IRegisteredTaskCollection_get_Item(tasks, item_index, &task)) || task == NULL) continue;
+        if (SUCCEEDED(IRegisteredTask_get_Name(task, &name)) && bofbench_remote_task_match(name, filter, filter_bytes)) {
+            IRegisteredTask_get_State(task, &state); IRegisteredTask_get_LastTaskResult(task, &last_result);
+            bofbench_remote_task_text(name, task_name, sizeof(task_name));
+            BeaconPrintf(CALLBACK_OUTPUT, "[remote-task-inventory] target=%s name=%s state=%lu last_result=%ld", host_text, task_name, (DWORD)state, last_result);
+            shown++;
+        }
+        if (name != NULL) OLEAUT32$SysFreeString(name);
+        IRegisteredTask_Release(task);
+    }
+    BeaconPrintf(CALLBACK_OUTPUT, "[remote-task-inventory] status=complete target=%s shown=%ld total=%ld limit=%ld filter=%s", host_text, shown, count, limit, filter_bytes > 2 ? "set" : "*");
+cleanup:
+    if (FAILED(hr)) BeaconPrintf(CALLBACK_ERROR, "[remote-task-inventory] status=failed target=%s hresult=0x%08lx", host_text, hr);
+    if (tasks) IRegisteredTaskCollection_Release(tasks); if (folder) ITaskFolder_Release(folder); if (service) ITaskService_Release(service);
+    if (root_name) OLEAUT32$SysFreeString(root_name); if (server_name) OLEAUT32$SysFreeString(server_name);
+    OLEAUT32$VariantClear(&server); OLEAUT32$VariantClear(&empty); OLE32$CoUninitialize();
+}`,
+		Call: "bofbench_feature_remote_task_inventory($PARSER);",
+	},
+	{
 		Name:        "lab-file-write",
 		Description: "create a known BOFBench marker file in the Windows temporary directory",
 		Declaration: `DWORD WINAPI KERNEL32$GetTempPathA(DWORD, LPSTR);

@@ -52,6 +52,7 @@ nav:
       - Export: staging.md
       - Operator Playbooks: playbooks.md
       - Deep Capability Workflows: deep-capabilities.md
+      - Standalone Remote Operations: remote-operations.md
       - Live Capability Proof: live-proof.md
   - Reference:
       - Operator TUI: tui.md

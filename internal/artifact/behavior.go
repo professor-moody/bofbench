@@ -55,14 +55,15 @@ type SourceAndVersion struct {
 }
 
 type chainRule struct {
-	id              string
-	name            string
-	summary         string
-	confidence      string
-	steps           []chainRuleStep
-	effects         []string
-	needs           []string
-	requiredStrings []string
+	id                string
+	name              string
+	summary           string
+	confidence        string
+	steps             []chainRuleStep
+	effects           []string
+	needs             []string
+	requiredStrings   []string
+	requiredFunctions []string
 }
 
 type chainRuleStep struct {
@@ -243,6 +244,56 @@ var behaviorRules = []chainRule{
 		},
 	},
 	{
+		id: "remote_host_information", name: "Exact-host Windows information", summary: "Query workstation identity and server role/version details for one supplied Windows host.",
+		effects: []string{"reaches a supplied host", "reads host metadata"}, needs: []string{"one exact target host", "workstation and server information RPC access"},
+		steps: []chainRuleStep{{action: "query workstation identity", apis: []string{"netwkstagetinfo"}}, {action: "query server role and version", apis: []string{"netservergetinfo"}}},
+	},
+	{
+		id: "remote_service_inventory", name: "Remote service inventory", summary: "Open the Service Control Manager on one host and enumerate bounded service process state.",
+		effects: []string{"reaches a supplied host", "reads service metadata"}, needs: []string{"one exact target host", "remote SCM enumeration access"},
+		steps: []chainRuleStep{{action: "open remote service manager", apis: []string{"openscmanagera", "openscmanagerw"}}, {action: "enumerate service state", apis: []string{"enumservicesstatusexa", "enumservicesstatusexw"}}},
+	},
+	{
+		id: "remote_session_inventory", name: "Remote SMB session inventory", summary: "Enumerate bounded SMB session metadata from one supplied host.", confidence: "confirmed primitive",
+		effects: []string{"reaches a supplied host", "reads SMB session metadata"}, needs: []string{"one exact target host", "session enumeration access"},
+		steps: []chainRuleStep{{action: "enumerate SMB sessions", apis: []string{"netsessionenum"}}},
+	},
+	{
+		id: "remote_registry_read", name: "Remote registry value read", summary: "Connect to a supplied host registry, open one exact key, and read one exact value.",
+		effects: []string{"reaches a supplied host", "reads registry data"}, needs: []string{"one exact target host", "an exact hive, key, and value", "Remote Registry access"},
+		steps: []chainRuleStep{{action: "connect to remote registry", apis: []string{"regconnectregistrya", "regconnectregistryw"}}, {action: "open exact key", apis: []string{"regopenkeyexa", "regopenkeyexw"}}, {action: "read exact value", apis: []string{"regqueryvalueexa", "regqueryvalueexw"}}},
+	},
+	{
+		id: "remote_wmi_query", name: "Remote WMI query", summary: "Create a WMI client, authenticate its proxy, and issue a WQL query against a supplied namespace.",
+		effects: []string{"reaches a supplied host", "reads remote management data"}, needs: []string{"one exact target host and namespace", "a bounded WQL query", "DCOM/WMI access"}, requiredFunctions: []string{"wmi_query"},
+		steps: []chainRuleStep{{action: "create WMI client", apis: []string{"cocreateinstance"}}, {action: "apply WMI security context", apis: []string{"cosetproxyblanket"}}, {action: "prepare WQL query", apis: []string{"sysallocstring"}}},
+	},
+	{
+		id: "remote_file_stage", name: "Hash-guarded SMB file staging", summary: "Validate supplied content and write it to one exact UNC destination.",
+		effects: []string{"reaches a supplied host", "writes remote filesystem state"}, needs: []string{"one exact host/share/path", "supplied content and matching SHA-256", "SMB write access"}, requiredStrings: []string{"[remote-file-stage]"},
+		steps: []chainRuleStep{{action: "hash supplied content", apis: []string{"cryptcreatehash"}}, {action: "open exact destination", apis: []string{"createfilew"}}, {action: "write supplied content", apis: []string{"writefile"}}},
+	},
+	{
+		id: "remote_file_cleanup", name: "Hash-guarded SMB file cleanup", summary: "Hash one exact UNC file and remove it only when the expected digest matches.",
+		effects: []string{"reaches a supplied host", "removes exact remote filesystem state"}, needs: []string{"one exact host/share/path", "the expected SHA-256", "SMB delete access"}, requiredStrings: []string{"[remote-file-remove]"},
+		steps: []chainRuleStep{{action: "read exact destination", apis: []string{"createfilew"}}, {action: "hash existing content", apis: []string{"cryptcreatehash"}}, {action: "remove matching file", apis: []string{"deletefilew"}}},
+	},
+	{
+		id: "remote_task_execution", name: "Native remote scheduled-task execution", summary: "Connect to Task Scheduler on one supplied host, register one exact task, and start it.",
+		effects: []string{"reaches a supplied host", "writes remote task state", "starts remote execution"}, needs: []string{"one exact host and task name", "Task Scheduler administration rights"}, requiredStrings: []string{"[remote-task-execute]"},
+		steps: []chainRuleStep{{action: "create Task Scheduler client", apis: []string{"cocreateinstance"}}, {action: "prepare exact task definition", apis: []string{"sysallocstring"}}},
+	},
+	{
+		id: "remote_task_cleanup", name: "Native remote scheduled-task cleanup", summary: "Connect to Task Scheduler on one supplied host and delete only one exact task.",
+		effects: []string{"reaches a supplied host", "removes exact remote task state"}, needs: []string{"one exact host and task name", "Task Scheduler administration rights"}, requiredStrings: []string{"[remote-task-cleanup]"},
+		steps: []chainRuleStep{{action: "create Task Scheduler client", apis: []string{"cocreateinstance"}}, {action: "prepare exact task name", apis: []string{"sysallocstring"}}},
+	},
+	{
+		id: "remote_task_inventory", name: "Remote scheduled-task inventory", summary: "Connect to Task Scheduler on one supplied host and enumerate bounded task state.",
+		effects: []string{"reaches a supplied host", "reads scheduled-task metadata"}, needs: []string{"one exact host", "Task Scheduler query access"}, requiredStrings: []string{"task scheduler interface"},
+		steps: []chainRuleStep{{action: "create Task Scheduler client", apis: []string{"cocreateinstance"}}, {action: "prepare remote folder path", apis: []string{"sysallocstring"}}},
+	},
+	{
 		id: "credential_manager_inventory", name: "Credential Manager inventory", summary: "Enumerate bounded Credential Manager metadata in the current user context.", confidence: "confirmed primitive",
 		effects: []string{"reads credential metadata"}, needs: []string{"the matching Credential Manager user context", "a result limit"}, requiredStrings: []string{"[credential-list]"},
 		steps: []chainRuleStep{{action: "enumerate credential metadata", apis: []string{"credenumeratea", "credenumeratew"}}},
@@ -253,14 +304,14 @@ var behaviorRules = []chainRule{
 		steps: []chainRuleStep{{action: "read exact credential", apis: []string{"credreada", "credreadw"}}},
 	},
 	{
-		id: "scheduled_task_persistence", name: "Scheduled-task persistence", summary: "Launch schtasks to create one explicitly named logon task.",
+		id: "scheduled_task_persistence", name: "Scheduled-task persistence", summary: "Create one explicitly named logon task through the native Task Scheduler interfaces.",
 		effects: []string{"writes system state", "persists", "starts execution"}, needs: []string{"an exact task name", "a command", "task creation rights"}, requiredStrings: []string{"[scheduled-task]"},
-		steps: []chainRuleStep{{action: "launch scheduled-task creation", apis: []string{"createprocessa", "createprocessw"}}},
+		steps: []chainRuleStep{{action: "create Task Scheduler client", apis: []string{"cocreateinstance"}}, {action: "prepare exact task definition", apis: []string{"sysallocstring"}}},
 	},
 	{
-		id: "scheduled_task_cleanup", name: "Scheduled-task cleanup", summary: "Launch schtasks to remove one explicitly named task.",
+		id: "scheduled_task_cleanup", name: "Scheduled-task cleanup", summary: "Delete one explicitly named task through the native Task Scheduler interfaces.",
 		effects: []string{"writes system state"}, needs: []string{"an exact task name", "task deletion rights"}, requiredStrings: []string{"[scheduled-task-cleanup]"},
-		steps: []chainRuleStep{{action: "launch scheduled-task removal", apis: []string{"createprocessa", "createprocessw"}}},
+		steps: []chainRuleStep{{action: "create Task Scheduler client", apis: []string{"cocreateinstance"}}, {action: "prepare exact task name", apis: []string{"sysallocstring"}}},
 	},
 	{
 		id: "security_package_inventory", name: "Windows authentication-package inventory", summary: "Enumerate installed SSPI authentication and security-support packages.",
@@ -445,6 +496,9 @@ func inferBehaviorChainsWithRules(relocations []Relocation, visibleStrings []Str
 			if !stringsMatch(stringsLower, rule.requiredStrings) {
 				continue
 			}
+			if !functionsMatch(functions, rule.requiredFunctions) {
+				continue
+			}
 			steps, ok := matchRuleSteps(apis, rule.steps)
 			if !ok {
 				continue
@@ -468,6 +522,23 @@ func inferBehaviorChainsWithRules(relocations []Relocation, visibleStrings []Str
 		return chains[i].Function < chains[j].Function
 	})
 	return chains
+}
+
+func functionsMatch(functions, required []string) bool {
+	for _, needle := range required {
+		needle = strings.ToLower(strings.TrimSpace(needle))
+		found := false
+		for _, function := range functions {
+			if strings.Contains(strings.ToLower(function), needle) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // ApplyDeclarativeSignatures adds catalog-provided behavior matches while

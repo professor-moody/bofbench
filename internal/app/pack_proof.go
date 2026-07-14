@@ -291,6 +291,12 @@ func testOnePack(item packsvc.Resolved, registry *packsvc.Registry, compilers []
 func materializePackProject(root string, item packsvc.Resolved, registry *packsvc.Registry) (string, error) {
 	name := safeName("proof-" + item.Document.ID)
 	project := filepath.Join(root, "bofs", name)
+	// Cleanup packs can be reused by several proof cases in one run. Recreate
+	// the generated project so a stale lock cannot suppress source insertion
+	// after the template has been refreshed.
+	if err := os.RemoveAll(project); err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		return "", err
 	}
@@ -464,8 +470,30 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 				report.Results = append(report.Results, result)
 				continue
 			}
+			secretBytes, decodeErr := hex.DecodeString(proofSecret)
+			if decodeErr != nil {
+				result.Status, result.Error, report.Status = "fail", decodeErr.Error(), "fail"
+				report.Failed++
+				report.Results = append(report.Results, result)
+				continue
+			}
+			secretPath := filepath.Join(work, proofFileName(item.Document.ID+"-"+proof.ID)+"-secret.bin")
+			if err := os.WriteFile(secretPath, secretBytes, 0o600); err != nil {
+				result.Status, result.Error, report.Status = "fail", err.Error(), "fail"
+				report.Failed++
+				report.Results = append(report.Results, result)
+				continue
+			}
 			placeholders := proofPlaceholderValues(target, report.RunID, proofSecret)
 			placeholders["$PAYLOAD_RET_PATH"] = retPayload
+			placeholders["$PROOF_SECRET_PATH"] = secretPath
+			expectation, err := resolveProofExpectation(proof.Expect, placeholders)
+			if err != nil {
+				result.Status, result.Error, report.Status = "fail", err.Error(), "fail"
+				report.Failed++
+				report.Results = append(report.Results, result)
+				continue
+			}
 			arguments, err := resolveProofValues(proof.Arguments, placeholders)
 			if err != nil {
 				result.Status, result.Error, report.Status = "fail", err.Error(), "fail"
@@ -492,7 +520,7 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 				result.Output = appendUniqueStrings(result.Output, receiptOutput...)
 				result.Receipt, result.ObjectSHA256 = receiptPath, objectSHA
 			}
-			actionSucceeded := runErr == nil && matchesProofOutput(result.Output, proof.Expect)
+			actionSucceeded := runErr == nil && matchesProofOutput(result.Output, expectation)
 			if !actionSucceeded {
 				if runErr != nil && unavailableCoverage(runErr) {
 					result.Status, result.Error = "unavailable", runErr.Error()
@@ -509,8 +537,8 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 						result.Error = "structured output did not match proof expectation"
 					}
 				}
-			} else if proof.Expect.Payload != nil {
-				if err := verifyProofPayload(result.Output, *proof.Expect.Payload, placeholders); err != nil {
+			} else if expectation.Payload != nil {
+				if err := verifyProofPayload(result.Output, *expectation.Payload, placeholders); err != nil {
 					result.Status, result.Error, report.Status = "fail", "payload verification: "+err.Error(), "fail"
 					report.Failed++
 				} else {
@@ -581,6 +609,22 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 	return report, nil
 }
 
+func proofFileName(value string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	name := strings.Trim(b.String(), "-_")
+	if name == "" {
+		return "proof"
+	}
+	return name
+}
+
 func receiptOutputFromLines(lines []string) ([]string, string, string) {
 	seen := map[string]bool{}
 	for _, line := range lines {
@@ -640,7 +684,7 @@ func proofUsesTarget(proof packsvc.ProofCase) bool {
 		}
 	}
 	for _, value := range values {
-		for _, prefix := range []string{"$TARGET_", "$MEMORY_", "$CANARY_", "$CREDENTIAL_", "$DPAPI_", "$VAULT_", "$CERT_", "$LAB_HOST", "$SERVICE_BINARY", "$WMI_MARKER_PATH", "$TEMP"} {
+		for _, prefix := range []string{"$TARGET_", "$MEMORY_", "$CANARY_", "$CREDENTIAL_", "$DPAPI_", "$VAULT_", "$CERT_", "$LAB_HOST", "$SERVICE_BINARY", "$WMI_MARKER_PATH", "$REMOTE_", "$TEMP"} {
 			if strings.Contains(value, prefix) {
 				return true
 			}
@@ -662,6 +706,19 @@ func newProofSecret() (string, error) {
 }
 
 func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) map[string]string {
+	secretBytes, err := hex.DecodeString(proofSecret)
+	if err != nil {
+		secretBytes = []byte(proofSecret)
+	}
+	secretHash := sha256.Sum256(secretBytes)
+	remoteRelative := strings.TrimRight(target.Fixtures.RemoteStageRelative, `\`) + `\remote-stage-` + runID + `.bin`
+	remoteLocalPath := strings.TrimRight(target.Fixtures.RemoteStageLocal, `\`) + `\remote-stage-` + runID + `.bin`
+	remoteTaskName := "BOFBench-Remote-" + runID
+	remoteTaskMarker := strings.TrimRight(target.Fixtures.RemoteStageLocal, `\`) + `\remote-task-` + runID + `.txt`
+	labHost := target.Fixtures.RemoteComputerName
+	if labHost == "" {
+		labHost = target.Host
+	}
 	return map[string]string{
 		"$TARGET_PID": strconv.FormatUint(uint64(target.State.PID), 10), "$TARGET_TID": strconv.FormatUint(uint64(target.State.AlertableTID), 10), "$TARGET_HANDLE": target.State.KnownHandle,
 		"$MEMORY_ADDRESS": target.State.MemoryCanaryAddress, "$MEMORY_SIZE": strconv.FormatUint(uint64(target.State.MemoryCanarySize), 10),
@@ -673,8 +730,15 @@ func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) 
 		"$VAULT_GUID": target.Fixtures.VaultGUID, "$VAULT_RESOURCE": target.Fixtures.VaultResource, "$VAULT_IDENTITY": target.Fixtures.VaultIdentity,
 		"$VAULT_SHA256": target.Fixtures.VaultSHA256, "$VAULT_SIZE": strconv.Itoa(target.Fixtures.VaultSize),
 		"$CERT_THUMBPRINT": target.Fixtures.CertificateThumbprint, "$CERT_STORE": target.Fixtures.CertificateStore, "$CERT_SUBJECT": target.Fixtures.CertificateSubject,
-		"$LAB_HOST": target.Host, "$SERVICE_BINARY": target.ServiceBinary, "$WMI_MARKER_PATH": target.Fixtures.WMIMarkerPath,
+		"$LAB_HOST": labHost, "$SERVICE_BINARY": target.ServiceBinary, "$WMI_MARKER_PATH": target.Fixtures.WMIMarkerPath,
 		"$TEMP": `C:\bofbench\proof\` + runID, "$RUN_ID": runID, "$PROOF_SECRET": proofSecret,
+		"$PROOF_SECRET_SHA256":  hex.EncodeToString(secretHash[:]),
+		"$REMOTE_REGISTRY_HIVE": target.Fixtures.RemoteRegistryHive, "$REMOTE_REGISTRY_PATH": target.Fixtures.RemoteRegistryPath,
+		"$REMOTE_REGISTRY_NAME": target.Fixtures.RemoteRegistryName, "$REMOTE_REGISTRY_SHA256": target.Fixtures.RemoteRegistrySHA256,
+		"$REMOTE_REGISTRY_SIZE": strconv.Itoa(target.Fixtures.RemoteRegistrySize),
+		"$REMOTE_STAGE_SHARE":   target.Fixtures.RemoteStageShare, "$REMOTE_STAGE_RELATIVE_ROOT": target.Fixtures.RemoteStageRelative,
+		"$REMOTE_STAGE_LOCAL_ROOT": target.Fixtures.RemoteStageLocal, "$REMOTE_STAGE_RELATIVE": remoteRelative, "$REMOTE_STAGE_LOCAL_PATH": remoteLocalPath,
+		"$REMOTE_TASK_NAME": remoteTaskName, "$REMOTE_TASK_MARKER_PATH": remoteTaskMarker,
 	}
 }
 
@@ -686,6 +750,19 @@ func resolveProofValues(input map[string]string, placeholders map[string]string)
 			return nil, err
 		}
 		resolved[name] = value
+	}
+	return resolved, nil
+}
+
+func resolveProofExpectation(input packsvc.ProofExpectation, placeholders map[string]string) (packsvc.ProofExpectation, error) {
+	resolved := input
+	resolved.Fields = make(map[string]string, len(input.Fields))
+	for name, value := range input.Fields {
+		value, err := resolveProofString(value, placeholders)
+		if err != nil {
+			return packsvc.ProofExpectation{}, fmt.Errorf("resolve proof expectation %s: %w", name, err)
+		}
+		resolved.Fields[name] = value
 	}
 	return resolved, nil
 }

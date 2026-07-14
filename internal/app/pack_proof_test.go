@@ -15,15 +15,15 @@ import (
 
 func TestResolveProofArgumentsSupportsEmbeddedPlaceholders(t *testing.T) {
 	target := lab.TargetReport{
-		Host:     "DEVBOX",
+		Host:     "bofbench-winvm",
 		State:    lab.TargetState{PID: 42, AlertableTID: 84, MemoryCanaryAddress: "0x1234", MemoryCanarySize: 64, CanaryFile: `C:\bofbench\target\canary.txt`},
-		Fixtures: lab.TargetFixtureState{DPAPIUserPath: `C:\bofbench\target\fixtures\user.bin`, DPAPIMachinePath: `C:\bofbench\target\fixtures\machine.bin`},
+		Fixtures: lab.TargetFixtureState{DPAPIUserPath: `C:\bofbench\target\fixtures\user.bin`, DPAPIMachinePath: `C:\bofbench\target\fixtures\machine.bin`, RemoteComputerName: "DEVBOX", RemoteStageShare: "C$", RemoteStageRelative: `bofbench\proof`, RemoteStageLocal: `C:\bofbench\proof`, RemoteRegistryHive: "HKLM", RemoteRegistryPath: `Software\BOFBench`, RemoteRegistryName: "RemoteCanary", RemoteRegistrySHA256: "abc", RemoteRegistrySize: 48},
 	}
-	resolved, err := resolveProofArguments(map[string]string{"pid": "$TARGET_PID", "artifact": "BOFBench-$RUN_ID.cmd", "host": "$LAB_HOST"}, target, "run-123")
+	resolved, err := resolveProofArguments(map[string]string{"pid": "$TARGET_PID", "artifact": "BOFBench-$RUN_ID.cmd", "host": "$LAB_HOST", "remote": "$REMOTE_STAGE_RELATIVE", "task": "$REMOTE_TASK_NAME", "registry": "$REMOTE_REGISTRY_PATH"}, target, "run-123")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved["pid"] != "42" || resolved["artifact"] != "BOFBench-run-123.cmd" || resolved["host"] != "DEVBOX" {
+	if resolved["pid"] != "42" || resolved["artifact"] != "BOFBench-run-123.cmd" || resolved["host"] != "DEVBOX" || resolved["remote"] != `bofbench\proof\remote-stage-run-123.bin` || resolved["task"] != "BOFBench-Remote-run-123" || resolved["registry"] != `Software\BOFBench` {
 		t.Fatalf("resolved = %#v", resolved)
 	}
 }
@@ -48,6 +48,17 @@ func TestMatchesProofOutputRequiresTagAndFields(t *testing.T) {
 	}
 	if matchesProofOutput([]string{"[other] status=complete count=4"}, expect) || matchesProofOutput([]string{"[process-tree] status=failed count=0"}, expect) {
 		t.Fatal("unexpected structured output match")
+	}
+}
+
+func TestResolveProofExpectationSupportsPlaceholders(t *testing.T) {
+	input := packsvc.ProofExpectation{Tag: "remote-file-stage", Fields: map[string]string{"status": "complete", "sha256": "$PROOF_SECRET_SHA256"}}
+	resolved, err := resolveProofExpectation(input, map[string]string{"$PROOF_SECRET_SHA256": "abc123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matchesProofOutput([]string{"[remote-file-stage] status=complete sha256=abc123"}, resolved) {
+		t.Fatalf("resolved = %+v", resolved)
 	}
 }
 

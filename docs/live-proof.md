@@ -109,9 +109,11 @@ bofbench lab target deploy --lab dedicated
 bofbench lab target status --lab dedicated
 ```
 
-The status output provides the `BOFBenchTarget` PID, alertable thread ID, known handle, memory-canary address/size/hash, file canary, Credential Manager fixture, DPAPI paths, Vault item identifiers/hash, generated certificate thumbprint, service fixture, and WMI marker path. Use those exact values rather than a critical process or real credential material.
+The status output provides the `BOFBenchTarget` PID, alertable thread ID, known handle, memory-canary address/size/hash, file canary, Credential Manager fixture, DPAPI paths, Vault item identifiers/hash, generated certificate thumbprint, service fixture, WMI marker path, actual Windows computer name, Remote Registry canary, and admin-share staging root. Use those exact values rather than a critical process or real credential material.
 
 Continue with [Deep Capability Workflows](deep-capabilities.md) for bounded memory, handle, token, Credential Manager, DPAPI, WMI, and Sliver examples.
+
+For exact-host SMB, RPC, SCM, Task Scheduler, Remote Registry, and DCOM/WMI commands, use [Standalone Remote Operations](remote-operations.md). DEVBOX-on-DEVBOX results prove named network paths, not cross-host movement.
 
 ### Token and execution proof
 
@@ -214,7 +216,7 @@ The remote-service target is always explicit; BOFBench does not scan for hosts o
 bofbench lab target remove --lab dedicated
 ```
 
-Removal also deletes the exact generated Credential Manager entry, DPAPI blobs, WMI marker, and target state. Confirm `BOFBenchTarget`, every `BOFBench-*` service/task/value, generated dump, and test file are absent before retaining or reusing the host.
+Removal also deletes the exact generated Credential Manager entry, DPAPI blobs, WMI marker, remote-registry canary, staging root, and target state, then restores Remote Registry to its prior start mode and running state. Confirm `BOFBenchTarget`, every `BOFBench-*` service/task/value, generated dump, and test file are absent before retaining or reusing the host.
 
 ## What counts as proof
 

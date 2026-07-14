@@ -245,6 +245,48 @@ func TestAuthenticationBehaviorRulesRequireCompleteFunctionLocalChains(t *testin
 	}
 }
 
+func TestRemoteOperationRulesRequireCompleteFunctionLocalChains(t *testing.T) {
+	cases := []struct {
+		id      string
+		apis    []string
+		strings []String
+	}{
+		{"remote_host_information", []string{"NETAPI32$NetWkstaGetInfo", "NETAPI32$NetServerGetInfo"}, nil},
+		{"remote_service_inventory", []string{"ADVAPI32$OpenSCManagerW", "ADVAPI32$EnumServicesStatusExW"}, nil},
+		{"remote_registry_read", []string{"ADVAPI32$RegConnectRegistryW", "ADVAPI32$RegOpenKeyExW", "ADVAPI32$RegQueryValueExW"}, nil},
+		{"remote_wmi_query", []string{"OLE32$CoCreateInstance", "OLE32$CoSetProxyBlanket", "OLEAUT32$SysAllocString"}, nil},
+		{"remote_file_stage", []string{"ADVAPI32$CryptCreateHash", "KERNEL32$CreateFileW", "KERNEL32$WriteFile"}, []String{{Value: "[remote-file-stage]"}}},
+		{"remote_file_cleanup", []string{"KERNEL32$CreateFileW", "ADVAPI32$CryptCreateHash", "KERNEL32$DeleteFileW"}, []String{{Value: "[remote-file-remove]"}}},
+		{"remote_task_execution", []string{"OLE32$CoCreateInstance", "OLEAUT32$SysAllocString"}, []String{{Value: "[remote-task-execute]"}}},
+		{"remote_task_cleanup", []string{"OLE32$CoCreateInstance", "OLEAUT32$SysAllocString"}, []String{{Value: "[remote-task-cleanup]"}}},
+	}
+	for _, test := range cases {
+		t.Run(test.id, func(t *testing.T) {
+			var relocations []Relocation
+			function := "go"
+			if test.id == "remote_wmi_query" {
+				function = "Wmi_Query"
+			}
+			for _, api := range test.apis {
+				relocations = append(relocations, Relocation{Function: function, Symbol: api})
+			}
+			chain := requireBehavior(t, inferBehaviorChains(relocations, test.strings), test.id)
+			if chain.Confidence != "strong chain" || len(chain.Steps) != len(test.apis) {
+				t.Fatalf("chain = %+v", chain)
+			}
+			for _, candidate := range inferBehaviorChains(relocations[:len(relocations)-1], test.strings) {
+				if candidate.ID == test.id {
+					t.Fatalf("incomplete API sequence produced %s: %+v", test.id, candidate)
+				}
+			}
+		})
+	}
+	primitive := requireBehavior(t, inferBehaviorChains([]Relocation{{Function: "go", Symbol: "NETAPI32$NetSessionEnum"}}, nil), "remote_session_inventory")
+	if primitive.Confidence != "confirmed primitive" {
+		t.Fatalf("session primitive = %+v", primitive)
+	}
+}
+
 func TestTrustedSecAuthenticationCorpusMatchesX64X86Golden(t *testing.T) {
 	type expectedAnalysis struct {
 		Loader       string   `json:"loader"`
@@ -267,6 +309,55 @@ func TestTrustedSecAuthenticationCorpusMatchesX64X86Golden(t *testing.T) {
 	corpus := filepath.Join("..", "..", "arsenal", "trustedsec-sa-smoke", "SA")
 	if _, err := os.Stat(corpus); os.IsNotExist(err) {
 		t.Skip("local TrustedSec compatibility corpus is not installed")
+	}
+	for _, test := range cases {
+		t.Run(test.Name, func(t *testing.T) {
+			for arch, expected := range map[string]expectedAnalysis{"x64": test.X64, "x86": test.X86} {
+				analysis, err := Analyze(filepath.Join(corpus, test.Name, test.Name+"."+arch+".o"), "go")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var capabilities, chains []string
+				for _, capability := range analysis.Capabilities {
+					capabilities = append(capabilities, capability.ID)
+				}
+				for _, chain := range analysis.BehaviorChains {
+					chains = append(chains, chain.ID)
+				}
+				loader := ""
+				if analysis.LoaderCompatibility != nil {
+					loader = analysis.LoaderCompatibility.Status
+				}
+				if loader != expected.Loader || !slices.Equal(capabilities, expected.Capabilities) || !slices.Equal(chains, expected.Chains) {
+					t.Fatalf("%s analysis loader=%s capabilities=%v chains=%v; expected %+v", arch, loader, capabilities, chains, expected)
+				}
+			}
+		})
+	}
+}
+
+func TestTrustedSecRemoteCorpusMatchesX64X86Golden(t *testing.T) {
+	type expectedAnalysis struct {
+		Loader       string   `json:"loader"`
+		Capabilities []string `json:"capabilities"`
+		Chains       []string `json:"chains"`
+	}
+	type goldenCase struct {
+		Name string           `json:"name"`
+		X64  expectedAnalysis `json:"x64"`
+		X86  expectedAnalysis `json:"x86"`
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", "remote_corpus_golden.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []goldenCase
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	corpus := filepath.Join("..", "..", "arsenal", "trustedsec-sa", "SA")
+	if _, err := os.Stat(corpus); os.IsNotExist(err) {
+		t.Skip("local TrustedSec remote-operation corpus is not installed")
 	}
 	for _, test := range cases {
 		t.Run(test.Name, func(t *testing.T) {

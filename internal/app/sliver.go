@@ -537,7 +537,7 @@ func verifyActiveState(ctx context.Context, stdout io.Writer, opts lab.RemoteOpt
 }
 
 func verifyCleanState(ctx context.Context, stdout io.Writer, opts lab.RemoteOptions) error {
-	script := `$ProgressPreference='SilentlyContinue'; $run=Get-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -ErrorAction SilentlyContinue; $bad=(Test-Path "$env:TEMP\bofbench-active-marker.txt") -or (Test-Path "$env:TEMP\bofbench-process-marker.txt") -or ($null -ne (Get-ItemProperty -Path HKCU:\Software\BOFBench -ErrorAction SilentlyContinue)) -or ($null -ne $run.BOFBenchLab); if($bad){Write-Error "BOFBench-managed state remains";exit 1}; Write-Output "LAB STATE PASS  expected=clean artifacts=0"`
+	script := `$ProgressPreference='SilentlyContinue'; $run=Get-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -ErrorAction SilentlyContinue; $remoteCanary=Get-ItemProperty -Path HKLM:\Software\BOFBench -Name RemoteCanary -ErrorAction SilentlyContinue; $services=@(Get-Service -Name 'BOFBench-*' -ErrorAction SilentlyContinue); $tasks=@(Get-ScheduledTask -TaskName 'BOFBench-*' -ErrorAction SilentlyContinue); $bad=(Test-Path "$env:TEMP\bofbench-active-marker.txt") -or (Test-Path "$env:TEMP\bofbench-process-marker.txt") -or ($null -ne (Get-ItemProperty -Path HKCU:\Software\BOFBench -ErrorAction SilentlyContinue)) -or ($null -ne $run.BOFBenchLab) -or ($null -ne $remoteCanary) -or (Test-Path 'C:\bofbench\target') -or (Test-Path 'C:\bofbench\proof') -or ($services.Count -gt 0) -or ($tasks.Count -gt 0); if($bad){Write-Error "BOFBench-managed state remains";exit 1}; Write-Output "LAB STATE PASS  expected=clean artifacts=0"`
 	return runRemotePowerShell(ctx, stdout, opts, script)
 }
 

@@ -423,6 +423,59 @@ Read Windows product context from HKLM and report the current user.
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
 
+## `builtin/remote-host-info`
+
+report bounded workstation and server identity for one explicitly supplied Windows host
+
+- Can do: exact-host workstation identity; exact-host server role and version discovery
+- Effects: reaches a supplied host; reads host metadata
+- Needs: privilege=user; network=explicit host; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `remote_host_information`
+- Live proofs: named-host (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_host` | `wstring` | yes | no | `` | exact Windows host name |
+
+## `builtin/remote-service-inventory`
+
+enumerate a bounded filtered service inventory from one explicitly supplied Windows host
+
+- Can do: bounded exact-host service inventory; remote service state and process discovery
+- Effects: reaches a supplied host; reads service metadata
+- Needs: privilege=user; network=explicit host; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `remote_service_inventory`
+- Live proofs: target-service (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_host` | `wstring` | yes | no | `` | exact Windows host name |
+| `name_filter` | `wstring` | no | no | `` | case-insensitive service name or display-name substring |
+| `state_filter` | `string` | no | no | `all` | all, running, or stopped |
+| `result_limit` | `int` | no | no | `32` | maximum service rows (1-256) |
+
+## `builtin/remote-task-inventory`
+
+enumerate bounded Task Scheduler metadata from one explicitly supplied Windows host
+
+- Can do: bounded exact-host scheduled-task inventory; remote task state and result discovery
+- Effects: reaches a supplied host; reads scheduled-task metadata
+- Needs: privilege=user; network=explicit host; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `remote_task_inventory`
+- Live proofs: named-host (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_host` | `wstring` | yes | no | `` | exact Windows host name |
+| `name_filter` | `wstring` | no | no | `` | case-insensitive task-name substring |
+| `result_limit` | `int` | no | no | `32` | maximum task rows (1-256) |
+
 ## `builtin/security-package-inventory`
 
 enumerate bounded Windows authentication and security-support packages

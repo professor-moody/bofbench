@@ -1,0 +1,32 @@
+[
+  {
+    "name": "sc_enum",
+    "x64": {"loader": "compatible", "capabilities": ["service_inventory"], "chains": []},
+    "x86": {"loader": "compatible", "capabilities": ["service_inventory"], "chains": []}
+  },
+  {
+    "name": "schtasksquery",
+    "x64": {"loader": "compatible", "capabilities": ["wmi_access"], "chains": ["remote_task_inventory"]},
+    "x86": {"loader": "compatible", "capabilities": ["wmi_access"], "chains": ["remote_task_inventory"]}
+  },
+  {
+    "name": "netshares",
+    "x64": {"loader": "compatible", "capabilities": ["share_inventory"], "chains": []},
+    "x86": {"loader": "compatible", "capabilities": ["share_inventory"], "chains": []}
+  },
+  {
+    "name": "get-netsession2",
+    "x64": {"loader": "compatible", "capabilities": ["domain_context", "dynamic_loading", "network_tcp"], "chains": ["remote_session_inventory"]},
+    "x86": {"loader": "compatible_runtime_lookup", "capabilities": ["domain_context", "dynamic_loading", "network_tcp"], "chains": ["remote_session_inventory"]}
+  },
+  {
+    "name": "wmi_query",
+    "x64": {"loader": "compatible", "capabilities": ["wmi_access"], "chains": ["remote_wmi_query"]},
+    "x86": {"loader": "compatible", "capabilities": ["wmi_access"], "chains": ["remote_wmi_query"]}
+  },
+  {
+    "name": "reg_query",
+    "x64": {"loader": "compatible", "capabilities": ["registry_read"], "chains": ["remote_registry_read"]},
+    "x86": {"loader": "compatible", "capabilities": ["registry_read"], "chains": ["remote_registry_read"]}
+  }
+]

@@ -130,7 +130,7 @@ Every external pack uses strict `pack.json` metadata and source files that canno
 }
 ```
 
-Schema versions 1 and 2 remain readable and are not silently rewritten. Version 2 adds declarative analyzer signatures and proof cases. Version 3 adds sensitive arguments/output, cleanup argument mapping, payload hash verification, independent state checks, and proof-specific cleanup steps. Supported proof placeholders cover the disposable target PID/thread/handle, memory and file canaries, Credential Manager, Vault, DPAPI and certificate fixtures, lab host, temporary run root, generated proof secret, and run ID.
+Schema versions 1 and 2 remain readable and are not silently rewritten. Version 2 adds declarative analyzer signatures and proof cases. Version 3 adds sensitive arguments/output, cleanup argument mapping, payload hash verification, independent state checks, and proof-specific cleanup steps. Supported proof placeholders cover the disposable target PID/thread/handle, memory and file canaries, Credential Manager, Vault, DPAPI and certificate fixtures, the actual Windows computer name, remote-registry canary, admin-share staging paths, remote task names, temporary run root, generated proof secret and SHA-256, and run ID.
 
 Validate and generate reference documentation directly from the contracts:
 

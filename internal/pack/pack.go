@@ -760,6 +760,39 @@ func builtins() []Resolved {
 	certificates.AnalysisSignatures = []AnalysisSignature{{ID: "certificate_store_inventory", Name: "Certificate-store inventory", Summary: "Open an explicit Windows certificate store and enumerate bounded identity, validity, thumbprint, and private-key metadata.", Steps: []AnalysisStep{{Action: "open certificate store", APIs: []string{"CertOpenStore", "CertOpenSystemStoreW", "CertOpenSystemStoreA"}}, {Action: "enumerate certificates", APIs: []string{"CertEnumCertificatesInStore"}}, {Action: "inspect certificate properties", APIs: []string{"CertGetCertificateContextProperty", "CertGetNameStringW", "CertGetNameStringA"}}}, Effects: []string{"reads certificate metadata", "reads private-key availability metadata"}, Requirements: []string{"read access to the selected certificate store", "an explicit store scope and name"}}}
 	certificates.ProofCases = []ProofCase{{ID: "fixture-certificate", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"scope": "current_user", "store": "$CERT_STORE", "subject_filter": "$CERT_SUBJECT", "result_limit": "10"}, Expect: ProofExpectation{Tag: "certificate-store-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
 	byID["certificate-store-inventory"] = certificates
+	remoteHost := byID["remote-host-info"]
+	remoteHost.Title = "Remote Host Information"
+	remoteHost.Capabilities = []string{"exact-host workstation identity", "exact-host server role and version discovery"}
+	remoteHost.Effects = []string{"reaches a supplied host", "reads host metadata"}
+	remoteHost.Network = "explicit host"
+	remoteHost.Arguments = []Argument{{Name: "target_host", Type: "wstring", Description: "exact Windows host name", Required: true}}
+	remoteHost.ExpectedAnalysis = []string{"remote_host_information"}
+	remoteHost.OutputFields = []string{"target", "computer", "workgroup", "platform", "major", "minor", "server_type", "comment", "status"}
+	remoteHost.AnalysisSignatures = []AnalysisSignature{{ID: "remote_host_information", Name: "Exact-host workstation and server information", Summary: "Query workstation and server identity for one operator-supplied Windows host.", Steps: []AnalysisStep{{Action: "query workstation identity", APIs: []string{"NetWkstaGetInfo"}}, {Action: "query server role and version", APIs: []string{"NetServerGetInfo"}}}, RequiredStrings: []string{"[remote-host-info]"}, Effects: []string{"reaches a supplied host", "reads host metadata"}, Requirements: []string{"SMB/RPC access to the exact host"}}}
+	remoteHost.ProofCases = []ProofCase{{ID: "named-host", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_host": "$LAB_HOST"}, Expect: ProofExpectation{Tag: "remote-host-info", Fields: map[string]string{"status": "complete", "target": "*"}}}}
+	byID["remote-host-info"] = remoteHost
+	remoteServices := byID["remote-service-inventory"]
+	remoteServices.Title = "Remote Service Inventory"
+	remoteServices.Capabilities = []string{"bounded exact-host service inventory", "remote service state and process discovery"}
+	remoteServices.Effects = []string{"reaches a supplied host", "reads service metadata"}
+	remoteServices.Network = "explicit host"
+	remoteServices.Arguments = []Argument{{Name: "target_host", Type: "wstring", Description: "exact Windows host name", Required: true}, {Name: "name_filter", Type: "wstring", Description: "case-insensitive service name or display-name substring", Default: ""}, {Name: "state_filter", Type: "string", Description: "all, running, or stopped", Default: "all"}, {Name: "result_limit", Type: "int", Description: "maximum service rows (1-256)", Default: "32"}}
+	remoteServices.ExpectedAnalysis = []string{"remote_service_inventory"}
+	remoteServices.OutputFields = []string{"target", "name", "display", "state", "type", "pid", "shown", "examined", "pages", "limit", "filter", "status"}
+	remoteServices.AnalysisSignatures = []AnalysisSignature{{ID: "remote_service_inventory", Name: "Exact-host service inventory", Summary: "Open the remote Service Control Manager and enumerate bounded service state and process metadata.", Steps: []AnalysisStep{{Action: "open remote service control manager", APIs: []string{"OpenSCManagerW", "OpenSCManagerA"}}, {Action: "enumerate service process state", APIs: []string{"EnumServicesStatusExW", "EnumServicesStatusExA"}}}, RequiredStrings: []string{"[remote-service-inventory]"}, Effects: []string{"reaches a supplied host", "reads service metadata"}, Requirements: []string{"remote SCM enumeration access", "RPC to the exact host"}}}
+	remoteServices.ProofCases = []ProofCase{{ID: "target-service", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_host": "$LAB_HOST", "name_filter": "BOFBenchTarget", "state_filter": "running", "result_limit": "8"}, Expect: ProofExpectation{Tag: "remote-service-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["remote-service-inventory"] = remoteServices
+	remoteTasks := byID["remote-task-inventory"]
+	remoteTasks.Title = "Remote Scheduled Task Inventory"
+	remoteTasks.Capabilities = []string{"bounded exact-host scheduled-task inventory", "remote task state and result discovery"}
+	remoteTasks.Effects = []string{"reaches a supplied host", "reads scheduled-task metadata"}
+	remoteTasks.Network = "explicit host"
+	remoteTasks.Arguments = []Argument{{Name: "target_host", Type: "wstring", Description: "exact Windows host name", Required: true}, {Name: "name_filter", Type: "wstring", Description: "case-insensitive task-name substring", Default: ""}, {Name: "result_limit", Type: "int", Description: "maximum task rows (1-256)", Default: "32"}}
+	remoteTasks.ExpectedAnalysis = []string{"remote_task_inventory"}
+	remoteTasks.OutputFields = []string{"target", "name", "state", "last_result", "shown", "total", "limit", "filter", "status"}
+	remoteTasks.AnalysisSignatures = []AnalysisSignature{{ID: "remote_task_inventory", Name: "Exact-host Task Scheduler inventory", Summary: "Connect to Task Scheduler on one supplied host and enumerate bounded task state and last-result metadata.", Steps: []AnalysisStep{{Action: "initialize Task Scheduler COM", APIs: []string{"CoCreateInstance"}}, {Action: "read task metadata", APIs: []string{"SysAllocString", "VariantClear"}}}, RequiredStrings: []string{"[remote-task-inventory]"}, Effects: []string{"reaches a supplied host", "reads scheduled-task metadata"}, Requirements: []string{"Task Scheduler RPC access to the exact host"}}}
+	remoteTasks.ProofCases = []ProofCase{{ID: "named-host", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_host": "$LAB_HOST", "name_filter": "", "result_limit": "8"}, Expect: ProofExpectation{Tag: "remote-task-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["remote-task-inventory"] = remoteTasks
 	for id, document := range byID {
 		for _, feature := range document.Source.Features {
 			if signature, ok := builtinContextSignature(feature); ok && !hasAnalysisSignature(document.AnalysisSignatures, signature.ID) {
@@ -966,6 +999,10 @@ func validate(document Document, root string) error {
 		"$VAULT_GUID": true, "$VAULT_RESOURCE": true, "$VAULT_IDENTITY": true, "$VAULT_SHA256": true, "$VAULT_SIZE": true,
 		"$CERT_THUMBPRINT": true, "$CERT_STORE": true, "$CERT_SUBJECT": true,
 		"$LAB_HOST": true, "$SERVICE_BINARY": true, "$WMI_MARKER_PATH": true, "$TEMP": true, "$RUN_ID": true, "$PROOF_SECRET": true,
+		"$PROOF_SECRET_SHA256": true, "$PROOF_SECRET_PATH": true,
+		"$REMOTE_REGISTRY_HIVE": true, "$REMOTE_REGISTRY_PATH": true, "$REMOTE_REGISTRY_NAME": true, "$REMOTE_REGISTRY_SHA256": true, "$REMOTE_REGISTRY_SIZE": true,
+		"$REMOTE_STAGE_SHARE": true, "$REMOTE_STAGE_RELATIVE_ROOT": true, "$REMOTE_STAGE_LOCAL_ROOT": true,
+		"$REMOTE_STAGE_RELATIVE": true, "$REMOTE_STAGE_LOCAL_PATH": true, "$REMOTE_TASK_NAME": true, "$REMOTE_TASK_MARKER_PATH": true,
 		"$PAYLOAD_RET_PATH": true,
 	}
 	validatePlaceholders := func(proofID, value string) {
