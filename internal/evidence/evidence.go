@@ -13,17 +13,30 @@ import (
 const ContractVersion = 1
 
 const (
-	SchemaAnalysis       = "bofbench.analysis"
-	SchemaAnalysisDiff   = "bofbench.analysis-diff"
-	SchemaArsenalTest    = "bofbench.arsenal-test"
-	SchemaBuild          = "bofbench.build"
-	SchemaCompilerMatrix = "bofbench.compiler-matrix"
-	SchemaDoctor         = "bofbench.doctor"
-	SchemaLabSmoke       = "bofbench.lab-smoke"
-	SchemaPreflight      = "bofbench.preflight"
-	SchemaRun            = "bofbench.run"
-	SchemaSource         = "bofbench.arsenal-source"
-	SchemaVersionInfo    = "bofbench.version"
+	SchemaAnalysis          = "bofbench.analysis"
+	SchemaAnalysisDiff      = "bofbench.analysis-diff"
+	SchemaArsenalTest       = "bofbench.arsenal-test"
+	SchemaArsenalInventory  = "bofbench.arsenal-inventory"
+	SchemaArsenalLock       = "bofbench.arsenal-lock"
+	SchemaArsenalDiff       = "bofbench.arsenal-diff"
+	SchemaArsenalRegression = "bofbench.arsenal-regression"
+	SchemaBuild             = "bofbench.build"
+	SchemaCompilerMatrix    = "bofbench.compiler-matrix"
+	SchemaDemo              = "bofbench.demo"
+	SchemaDev               = "bofbench.dev"
+	SchemaDoctor            = "bofbench.doctor"
+	SchemaLabSmoke          = "bofbench.lab-smoke"
+	SchemaLabRemoteStatus   = "bofbench.lab-remote-status"
+	SchemaLabRemoteSync     = "bofbench.lab-remote-sync"
+	SchemaLabRemoteRun      = "bofbench.lab-remote-run"
+	SchemaLabRemoteCollect  = "bofbench.lab-remote-collect"
+	SchemaLabRemoteReset    = "bofbench.lab-remote-reset"
+	SchemaPreflight         = "bofbench.preflight"
+	SchemaRecipeValidation  = "bofbench.recipe-validation"
+	SchemaRun               = "bofbench.run"
+	SchemaSource            = "bofbench.arsenal-source"
+	SchemaSourceAnalysis    = "bofbench.source-analysis"
+	SchemaVersionInfo       = "bofbench.version"
 )
 
 var (
@@ -126,7 +139,7 @@ func FingerprintTree(root string) (TreeFingerprint, error) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if rel == "source.json" {
+		if rel == "source.json" || rel == "arsenal.lock.json" {
 			return nil
 		}
 		info, err := entry.Info()

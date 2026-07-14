@@ -1,24 +1,70 @@
-# bofbench
+<div class="bb-hero">
+  <div>
+    <div class="bb-kicker">Capability-first BOF development</div>
+    <h1>BOF<span>Bench</span></h1>
+    <p class="bb-hero-copy">Compose real capabilities, explain any COFF object, and run the result through Windows, Sliver, or Cobalt Strike from one operator workflow.</p>
+    <div class="bb-actions">
+      <a href="quickstart/">Build your first BOF</a>
+      <a href="analysis/">Analyze any .o</a>
+      <a href="windows-lab/">Connect a Windows lab</a>
+    </div>
+  </div>
+</div>
 
-`bofbench` is an offensive object-module workbench for teams that need a fast local loop:
+<div class="bb-proof">
+  <div><strong>One pack model</strong><span>public + private catalogs</span></div>
+  <div><strong>x64 + x86</strong><span>separate native loaders</span></div>
+  <div><strong>4 runtimes</strong><span>native · lab · Sliver · CS</span></div>
+  <div><strong class="bb-impact">Named args</strong><span>source to C2 package</span></div>
+</div>
 
-1. create or fetch BOFs,
-2. build Windows COFF objects first,
-3. analyze COFF, ELF, and Mach-O relocatable artifacts and preflight Windows-loader compatibility,
-4. run through the native runtime when host and artifact match,
-5. test payload behavior,
-6. stage for Cobalt Strike, Sliver, or raw operator handoff.
+# The operator loop
 
-The CLI is intentionally direct. There is no required manifest and no workflow gate in the hot path. An optional, strictly validated `bofbench.toml` can store compiler/build defaults and repeatable test contracts.
-
-```sh
-bofbench build ./bofs/whoami
-bofbench inspect ./dist/whoami.x64.o
-bofbench analyze ./dist/whoami.x64.o --format md
-bofbench preflight ./dist/whoami.x64.o
-bofbench run ./dist/whoami.x64.o --args z:hello i:3
-bofbench stage ./dist/whoami.x64.o --target cobaltstrike
-bofbench tui
+```text
+new → add packs → build → analyze → run → export
 ```
 
-The first BOF-compatible execution target is Windows x64 COFF. Linux ELF and macOS Mach-O analysis and linked native runners are available on matching hosts, so the same workbench can test platform-native object modules without reshaping the command language.
+```bash
+bofbench new fieldcheck --pack host-discovery,system-discovery
+bofbench add bofs/fieldcheck domain-discovery
+bofbench build bofs/fieldcheck
+bofbench analyze bofs/fieldcheck
+bofbench run bofs/fieldcheck --via lab \
+  --arg process_filter=lsass \
+  --arg result_limit=25
+bofbench export bofs/fieldcheck --for sliver
+```
+
+The project lock records the resolved pack versions, source hashes, arguments, and cleanup companions. The analyzer leads with what the BOF can do, what it needs, its effects, its typed arguments, and which runtimes support it. Loader internals and report paths stay available without taking over the workflow.
+
+```mermaid
+flowchart LR
+    C["Public or private catalog"] --> P["Compose packs"]
+    P --> O["COFF .o"]
+    X["Third-party .o"] --> A["Capability analysis v2"]
+    O --> A
+    A --> R["Native · Lab · Sliver · Cobalt Strike"]
+    R --> E["Runtime receipt + observed output"]
+    O --> Z["Raw · Sliver · Cobalt Strike export"]
+```
+
+## Analyze a public BOF without rebuilding it
+
+```bash
+bofbench analyze arsenal/trustedsec-sa/SA/whoami/whoami.x64.o
+bofbench arsenal search arsenal/trustedsec-sa --can token
+```
+
+Function-local API correlation distinguishes isolated primitives from stronger behavior chains. A token query is not reported as impersonation unless the object also contains the duplicate-and-apply sequence; process access is not called injection without allocation, write, and execution steps.
+
+## Use the same interface at different depths
+
+The embedded catalog provides read-only discovery packs. A local or Git-backed catalog can add deeper token, process-memory, persistence, collection, and explicit-target remote execution packs without rebuilding BOFBench:
+
+```bash
+bofbench catalog add ~/bofbench-packs-internal --name internal
+bofbench pack search token
+bofbench pack show internal/token-impersonation
+```
+
+Continue with the [Quickstart](quickstart.md), [Capability Packs](packs.md), or [Behavioral Analysis](analysis.md).

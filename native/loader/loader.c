@@ -9,6 +9,32 @@
 #include <string.h>
 #include "capabilities.generated.h"
 
+#ifdef BOFBENCH_X86
+#define MACHINE_LOADER 0x014c
+#define LOADER_MACHINE_NAME "I386"
+#define REL_LOADER_ABSOLUTE 0x0000
+#define REL_LOADER_ADDR32 0x0006
+#define REL_LOADER_ADDR32NB 0x0007
+#define REL_LOADER_SECTION 0x000a
+#define REL_LOADER_SECREL 0x000b
+#define REL_LOADER_REL32 0x0014
+#else
+#define MACHINE_LOADER MACHINE_AMD64
+#define LOADER_MACHINE_NAME "AMD64"
+#define REL_LOADER_ABSOLUTE REL_AMD64_ABSOLUTE
+#define REL_LOADER_ADDR64 REL_AMD64_ADDR64
+#define REL_LOADER_ADDR32 REL_AMD64_ADDR32
+#define REL_LOADER_ADDR32NB REL_AMD64_ADDR32NB
+#define REL_LOADER_SECTION REL_AMD64_SECTION
+#define REL_LOADER_SECREL REL_AMD64_SECREL
+#define REL_LOADER_REL32 REL_AMD64_REL32
+#define REL_LOADER_REL32_1 REL_AMD64_REL32_1
+#define REL_LOADER_REL32_2 REL_AMD64_REL32_2
+#define REL_LOADER_REL32_3 REL_AMD64_REL32_3
+#define REL_LOADER_REL32_4 REL_AMD64_REL32_4
+#define REL_LOADER_REL32_5 REL_AMD64_REL32_5
+#endif
+
 #define SYM_UNDEFINED 0
 #define MAX_FILE_SIZE ((size_t)256 * 1024 * 1024)
 #define MAX_IMAGE_SIZE ((size_t)512 * 1024 * 1024)
@@ -75,6 +101,13 @@ typedef struct {
     int length;
     int offset;
 } datap;
+
+typedef struct {
+    char *original;
+    char *buffer;
+    int length;
+    int size;
+} formatp;
 
 typedef struct {
     char *name;
@@ -214,6 +247,69 @@ void BeaconPrintf(int type, const char *fmt, ...) {
     add_output("%s", tmp);
 }
 
+void BeaconFormatAlloc(formatp *format, int maxsz) {
+    if (!format) return;
+    memset(format, 0, sizeof(*format));
+    if (maxsz <= 0) return;
+    format->original = (char *)calloc(1, (size_t)maxsz);
+    if (!format->original) return;
+    format->buffer = format->original;
+    format->size = maxsz;
+}
+
+void BeaconFormatReset(formatp *format) {
+    if (!format || !format->original || format->size <= 0) return;
+    memset(format->original, 0, (size_t)format->size);
+    format->buffer = format->original;
+    format->length = 0;
+}
+
+void BeaconFormatFree(formatp *format) {
+    if (!format) return;
+    free(format->original);
+    memset(format, 0, sizeof(*format));
+}
+
+void BeaconFormatAppend(formatp *format, char *text, int len) {
+    if (!format || !format->original || !text || len <= 0 || format->length < 0 || format->size < 0 || format->length > format->size) return;
+    if (len > format->size - format->length) len = format->size - format->length;
+    if (len <= 0) return;
+    memcpy(format->original + format->length, text, (size_t)len);
+    format->length += len;
+    format->buffer = format->original + format->length;
+}
+
+void BeaconFormatPrintf(formatp *format, const char *fmt, ...) {
+    va_list ap;
+    int available;
+    int written;
+    if (!format || !format->original || !fmt || format->length < 0 || format->size <= format->length) return;
+    available = format->size - format->length;
+    va_start(ap, fmt);
+    written = vsnprintf(format->original + format->length, (size_t)available, fmt, ap);
+    va_end(ap);
+    if (written < 0) return;
+    if (written >= available) written = available - 1;
+    format->length += written;
+    format->buffer = format->original + format->length;
+}
+
+char *BeaconFormatToString(formatp *format, int *size) {
+    if (size) *size = 0;
+    if (!format || !format->original || format->length < 0) return NULL;
+    if (size) *size = format->length;
+    return format->original;
+}
+
+void BeaconFormatInt(formatp *format, int value) {
+    unsigned char encoded[4];
+    encoded[0] = (unsigned char)(((uint32_t)value >> 24) & 0xff);
+    encoded[1] = (unsigned char)(((uint32_t)value >> 16) & 0xff);
+    encoded[2] = (unsigned char)(((uint32_t)value >> 8) & 0xff);
+    encoded[3] = (unsigned char)((uint32_t)value & 0xff);
+    BeaconFormatAppend(format, (char *)encoded, 4);
+}
+
 static int range_within(size_t total, uint64_t offset, uint64_t length) {
     uint64_t total64 = (uint64_t)total;
     return offset <= total64 && length <= total64 - offset;
@@ -339,9 +435,36 @@ static int copy_symbol_name(const coff_symbol *symbol, const char *string_table,
     return 1;
 }
 
+static const char *loader_relocation_name(uint16_t type) {
+#ifdef BOFBENCH_X86
+    switch (type) {
+    case REL_LOADER_ABSOLUTE: return "ABSOLUTE";
+    case REL_LOADER_ADDR32: return "DIR32";
+    case REL_LOADER_ADDR32NB: return "DIR32NB";
+    case REL_LOADER_SECTION: return "SECTION";
+    case REL_LOADER_SECREL: return "SECREL";
+    case REL_LOADER_REL32: return "REL32";
+    default: return "UNKNOWN";
+    }
+#else
+    return bofbench_relocation_type_name(type);
+#endif
+}
+
+static int loader_relocation_supported(uint16_t type) {
+#ifdef BOFBENCH_X86
+    return type == REL_LOADER_ABSOLUTE || type == REL_LOADER_ADDR32 || type == REL_LOADER_ADDR32NB || type == REL_LOADER_SECTION || type == REL_LOADER_SECREL || type == REL_LOADER_REL32;
+#else
+    return bofbench_relocation_is_supported(type);
+#endif
+}
+
 static size_t relocation_width(uint16_t type) {
-    if (type == REL_AMD64_ABSOLUTE) return 0;
-    if (type == REL_AMD64_ADDR64) return 8;
+    if (type == REL_LOADER_ABSOLUTE) return 0;
+#ifndef BOFBENCH_X86
+    if (type == REL_LOADER_ADDR64) return 8;
+#endif
+    if (type == REL_LOADER_SECTION) return 2;
     return 4;
 }
 
@@ -521,13 +644,13 @@ static int validate_coff(uint8_t *file_base, size_t file_size, coff_view *view) 
                 add_error("relocation_aux_symbol", "relocation %u in section %u refers to an auxiliary symbol", relocation_index, section_index + 1);
                 return 0;
             }
-            if (!bofbench_relocation_is_supported(relocation->type)) {
-                add_error("unsupported_relocation", "unsupported AMD64 relocation %s/0x%04x in section %u", bofbench_relocation_type_name(relocation->type), relocation->type, section_index + 1);
+            if (!loader_relocation_supported(relocation->type)) {
+                add_error("unsupported_relocation", "unsupported %s relocation %s/0x%04x in section %u", LOADER_MACHINE_NAME, loader_relocation_name(relocation->type), relocation->type, section_index + 1);
                 return 0;
             }
             width = relocation_width(relocation->type);
             if ((size_t)relocation->virtual_address > view->section_sizes[section_index] || width > view->section_sizes[section_index] - (size_t)relocation->virtual_address) {
-                add_error("relocation_offset_range", "%s relocation at 0x%x needs %u bytes in section %u of size 0x%llx", bofbench_relocation_type_name(relocation->type), relocation->virtual_address, (unsigned)width, section_index + 1, (unsigned long long)view->section_sizes[section_index]);
+                add_error("relocation_offset_range", "%s relocation at 0x%x needs %u bytes in section %u of size 0x%llx", loader_relocation_name(relocation->type), relocation->virtual_address, (unsigned)width, section_index + 1, (unsigned long long)view->section_sizes[section_index]);
                 return 0;
             }
         }
@@ -556,11 +679,18 @@ static uintptr_t alloc_near_jump_stub(uintptr_t target) {
     if (!g_stub_cursor || !g_stub_end || g_stub_cursor > g_stub_end || (size_t)(g_stub_end - g_stub_cursor) < 16) return 0;
     stub = g_stub_cursor;
     memset(stub, 0x90, 16);
+#ifdef BOFBENCH_X86
+    stub[0] = 0xB8;
+    memcpy(stub + 1, &target, sizeof(target));
+    stub[5] = 0xFF;
+    stub[6] = 0xE0;
+#else
     stub[0] = 0x48;
     stub[1] = 0xB8;
     memcpy(stub + 2, &target, sizeof(target));
     stub[10] = 0xFF;
     stub[11] = 0xE0;
+#endif
     g_stub_cursor += 16;
     return (uintptr_t)stub;
 }
@@ -628,13 +758,16 @@ static uintptr_t resolve_external(const char *name, resolved_symbol *resolved, i
     int index;
     uintptr_t target = 0;
     const char *normalized = bofbench_normalize_import(name);
+#ifdef BOFBENCH_X86
+    if (normalized[0] == '_') normalized++;
+#endif
     for (index = 0; index < *resolved_count; index++) {
         if (strcmp(resolved[index].name, name) == 0) return resolved[index].value;
     }
 #define TRY_BEACON_API(api) if (!target && strcmp(normalized, #api) == 0) target = (uintptr_t)api;
     BOFBENCH_BEACON_API_LIST(TRY_BEACON_API)
 #undef TRY_BEACON_API
-    if (!target) target = resolve_winapi_target(name);
+    if (!target) target = resolve_winapi_target(normalized);
     return cache_external_value(name, target, resolved, resolved_count);
 }
 
@@ -668,6 +801,7 @@ static int apply_relocations(const coff_view *view, uint8_t *image_base, uint8_t
         for (relocation_index = 0; relocation_index < section->number_of_relocations; relocation_index++) {
             char symbol_name[MAX_SYMBOL_NAME + 1];
             coff_relocation *relocation = &relocations[relocation_index];
+            coff_symbol *symbol = &view->symbols[relocation->symbol_table_index];
             size_t width = relocation_width(relocation->type);
             uint8_t *where;
             uintptr_t target = 0;
@@ -677,17 +811,23 @@ static int apply_relocations(const coff_view *view, uint8_t *image_base, uint8_t
             }
             if (!copy_symbol_name(&view->symbols[relocation->symbol_table_index], view->string_table, view->string_table_size, symbol_name, sizeof(symbol_name))) return 0;
             where = section_bases[section_index] + relocation->virtual_address;
-            if (relocation->type != REL_AMD64_ABSOLUTE) {
+            if (relocation->type == REL_LOADER_SECTION || relocation->type == REL_LOADER_SECREL) {
+                if (symbol->section_number <= 0 || symbol->section_number > (int16_t)view->header->number_of_sections) {
+                    add_error("relocation_symbol_section", "%s relocation requires a defined section symbol: %s", loader_relocation_name(relocation->type), symbol_name);
+                    return 0;
+                }
+            } else if (relocation->type != REL_LOADER_ABSOLUTE) {
                 target = symbol_address(view, relocation->symbol_table_index, section_bases, resolved, resolved_count);
                 if (!target) {
-                    add_error("unresolved_symbol", "unresolved symbol %s (index %u, relocation %s/0x%04x, section %.*s+0x%x)", symbol_name, relocation->symbol_table_index, bofbench_relocation_type_name(relocation->type), relocation->type, 8, section->name, relocation->virtual_address);
+                    add_error("unresolved_symbol", "unresolved symbol %s (index %u, relocation %s/0x%04x, section %.*s+0x%x)", symbol_name, relocation->symbol_table_index, loader_relocation_name(relocation->type), relocation->type, 8, section->name, relocation->virtual_address);
                     return 0;
                 }
             }
             switch (relocation->type) {
-            case REL_AMD64_ABSOLUTE:
+            case REL_LOADER_ABSOLUTE:
                 break;
-            case REL_AMD64_ADDR64: {
+#ifndef BOFBENCH_X86
+            case REL_LOADER_ADDR64: {
                 uint64_t addend;
                 uint64_t value;
                 memcpy(&addend, where, sizeof(addend));
@@ -699,7 +839,8 @@ static int apply_relocations(const coff_view *view, uint8_t *image_base, uint8_t
                 memcpy(where, &value, sizeof(value));
                 break;
             }
-            case REL_AMD64_ADDR32: {
+#endif
+            case REL_LOADER_ADDR32: {
                 uint32_t addend;
                 uint64_t value;
                 memcpy(&addend, where, sizeof(addend));
@@ -712,7 +853,7 @@ static int apply_relocations(const coff_view *view, uint8_t *image_base, uint8_t
                 memcpy(where, &addend, sizeof(addend));
                 break;
             }
-            case REL_AMD64_ADDR32NB: {
+            case REL_LOADER_ADDR32NB: {
                 uint32_t addend;
                 uint64_t value;
                 if (target < (uintptr_t)image_base) {
@@ -729,20 +870,49 @@ static int apply_relocations(const coff_view *view, uint8_t *image_base, uint8_t
                 memcpy(where, &addend, sizeof(addend));
                 break;
             }
-            case REL_AMD64_REL32:
-            case REL_AMD64_REL32_1:
-            case REL_AMD64_REL32_2:
-            case REL_AMD64_REL32_3:
-            case REL_AMD64_REL32_4:
-            case REL_AMD64_REL32_5: {
+            case REL_LOADER_SECTION: {
+                uint16_t addend;
+                uint32_t value;
+                memcpy(&addend, where, sizeof(addend));
+                value = (uint32_t)addend + (uint32_t)symbol->section_number;
+                if (value > UINT16_MAX) {
+                    add_error("relocation_overflow", "SECTION relocation overflows for symbol %s", symbol_name);
+                    return 0;
+                }
+                addend = (uint16_t)value;
+                memcpy(where, &addend, sizeof(addend));
+                break;
+            }
+            case REL_LOADER_SECREL: {
+                uint32_t addend;
+                uint64_t value;
+                memcpy(&addend, where, sizeof(addend));
+                value = (uint64_t)addend + symbol->value;
+                if (value > UINT32_MAX) {
+                    add_error("relocation_overflow", "SECREL relocation overflows for symbol %s", symbol_name);
+                    return 0;
+                }
+                addend = (uint32_t)value;
+                memcpy(where, &addend, sizeof(addend));
+                break;
+            }
+            case REL_LOADER_REL32:
+#ifndef BOFBENCH_X86
+            case REL_LOADER_REL32_1:
+            case REL_LOADER_REL32_2:
+            case REL_LOADER_REL32_3:
+            case REL_LOADER_REL32_4:
+            case REL_LOADER_REL32_5:
+#endif
+            {
                 int32_t addend;
                 int32_t encoded;
-                int adjust = 4 + (relocation->type - REL_AMD64_REL32);
+                int adjust = 4 + (relocation->type - REL_LOADER_REL32);
                 int64_t displacement;
                 memcpy(&addend, where, sizeof(addend));
                 displacement = (int64_t)target + addend - ((int64_t)(uintptr_t)where + adjust);
                 if (displacement < INT32_MIN || displacement > INT32_MAX) {
-                    add_error("relocation_overflow", "%s displacement overflows for symbol %s", bofbench_relocation_type_name(relocation->type), symbol_name);
+                    add_error("relocation_overflow", "%s displacement overflows for symbol %s", loader_relocation_name(relocation->type), symbol_name);
                     return 0;
                 }
                 encoded = (int32_t)displacement;
@@ -750,7 +920,7 @@ static int apply_relocations(const coff_view *view, uint8_t *image_base, uint8_t
                 break;
             }
             default:
-                add_error("unsupported_relocation", "unsupported AMD64 relocation %s/0x%04x for symbol %s", bofbench_relocation_type_name(relocation->type), relocation->type, symbol_name);
+                add_error("unsupported_relocation", "unsupported %s relocation %s/0x%04x for symbol %s", LOADER_MACHINE_NAME, loader_relocation_name(relocation->type), relocation->type, symbol_name);
                 return 0;
             }
         }
@@ -906,6 +1076,18 @@ static const char *argument_value(int argc, char **argv, const char *name) {
     return NULL;
 }
 
+static int entry_name_matches(const char *symbol, const char *requested) {
+    if (strcmp(symbol, requested) == 0) return 1;
+#ifdef BOFBENCH_X86
+    {
+        char decorated[MAX_SYMBOL_NAME + 8];
+        if (snprintf(decorated, sizeof(decorated), "_%s", requested) > 0 && strcmp(symbol, decorated) == 0) return 1;
+        if (snprintf(decorated, sizeof(decorated), "_%s@8", requested) > 0 && strcmp(symbol, decorated) == 0) return 1;
+    }
+#endif
+    return 0;
+}
+
 int main(int argc, char **argv) {
     const char *object = argument_value(argc, argv, "--object");
     const char *entry = argument_value(argc, argv, "--entry");
@@ -944,8 +1126,8 @@ int main(int argc, char **argv) {
         print_json(object, entry, "fail", "validation_error");
         return 1;
     }
-    if (((coff_file_header *)file_base)->machine != MACHINE_AMD64) {
-        add_error("unsupported_machine", "unsupported machine 0x%04x; expected AMD64", ((coff_file_header *)file_base)->machine);
+    if (((coff_file_header *)file_base)->machine != MACHINE_LOADER) {
+        add_error("unsupported_machine", "unsupported machine 0x%04x; expected %s", ((coff_file_header *)file_base)->machine, LOADER_MACHINE_NAME);
         print_json(object, entry, "fail", "bad_arch");
         return 1;
     }
@@ -1005,7 +1187,7 @@ int main(int argc, char **argv) {
             print_json(object, entry, "fail", "validation_error");
             return 1;
         }
-        if (strcmp(name, entry) == 0) {
+        if (entry_name_matches(name, entry)) {
             entry_matches++;
             if (symbol->section_number > 0 && symbol->section_number <= (int16_t)view.header->number_of_sections && symbol->value < view.section_sizes[symbol->section_number - 1]) {
                 if (!(view.sections[symbol->section_number - 1].characteristics & SECTION_MEM_EXECUTE)) {

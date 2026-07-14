@@ -219,18 +219,18 @@ func BuildWithOptions(input string, opts Options) (res Result, returnErr error) 
 	case cfg.BuildCommand != "":
 		res.Mode = "custom"
 		cmd = shellCommand(cfg.BuildCommand)
-		res.Compiler = commandProvenance(requestedCompiler, "custom", "project", cmd[0])
-		addDiagnostic(&res, "warning", "bofbench", "compiler_provenance_indirect", "custom build command controls compiler selection; provenance identifies the command dispatcher", "")
+		res.Compiler = commandDetails(requestedCompiler, "custom", "project", cmd[0])
+		addDiagnostic(&res, "warning", "bofbench", "compiler_details_indirect", "custom build command controls compiler selection; BOFBench can identify the command runner but not the compiler behind it", "")
 	case hasFile(input, "Makefile") || hasFile(input, "makefile"):
 		res.Mode = "make"
 		cmd = []string{"make"}
-		res.Compiler = commandProvenance(requestedCompiler, "make", "project", cmd[0])
-		addDiagnostic(&res, "warning", "bofbench", "compiler_provenance_indirect", "Makefile controls compiler selection; provenance identifies make", "")
+		res.Compiler = commandDetails(requestedCompiler, "make", "project", cmd[0])
+		addDiagnostic(&res, "warning", "bofbench", "compiler_details_indirect", "Makefile controls compiler selection; BOFBench can identify make but not the compiler behind it", "")
 	case hasFile(input, "CMakeLists.txt"):
 		res.Mode = "cmake"
 		cmd = []string{"cmake", "--build", "build"}
-		res.Compiler = commandProvenance(requestedCompiler, "cmake", "project", cmd[0])
-		addDiagnostic(&res, "warning", "bofbench", "compiler_provenance_indirect", "CMake project controls compiler selection; provenance identifies cmake", "")
+		res.Compiler = commandDetails(requestedCompiler, "cmake", "project", cmd[0])
+		addDiagnostic(&res, "warning", "bofbench", "compiler_details_indirect", "CMake controls compiler selection; BOFBench can identify CMake but not the compiler behind it", "")
 	default:
 		res.Mode = "compile"
 		source, findErr := findCSource(input)
@@ -249,7 +249,8 @@ func BuildWithOptions(input string, opts Options) (res Result, returnErr error) 
 			addDiagnostic(&res, "error", "bofbench", "compiler_unavailable", selectErr.Error(), "")
 			return res, selectErr
 		}
-		res.Compiler = commandProvenance(requestedCompiler, profile, selectedBy, executable)
+		res.Compiler = commandDetails(requestedCompiler, profile, selectedBy, executable)
+		res.CFlags = compilerFlags(profile, res.CFlags)
 		seed := reproducibilitySeed(res)
 		cmd = compileCommand(profile, arch, executable, sourceAbs, outAbs, filepath.Dir(sourceAbs), res.CFlags, cfg.Deterministic, seed)
 	}
@@ -517,6 +518,15 @@ func inferName(input string) string {
 	ext := filepath.Ext(base)
 	if ext != "" {
 		base = strings.TrimSuffix(base, ext)
+	}
+	if isObject(input) {
+		lower := strings.ToLower(base)
+		for _, suffix := range []string{".x64", ".x86"} {
+			if strings.HasSuffix(lower, suffix) {
+				base = base[:len(base)-len(suffix)]
+				break
+			}
+		}
 	}
 	if base == "." || base == string(filepath.Separator) || base == "" {
 		base = "payload"

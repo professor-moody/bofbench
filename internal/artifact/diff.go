@@ -26,6 +26,10 @@ type DiffSummary struct {
 	RelocationsDelta        int   `json:"relocations_delta"`
 	ImportsAdded            int   `json:"imports_added"`
 	ImportsRemoved          int   `json:"imports_removed"`
+	CapabilitiesAdded       int   `json:"capabilities_added"`
+	CapabilitiesRemoved     int   `json:"capabilities_removed"`
+	BehaviorChainsAdded     int   `json:"behavior_chains_added"`
+	BehaviorChainsRemoved   int   `json:"behavior_chains_removed"`
 	FindingsAdded           int   `json:"findings_added"`
 	FindingsRemoved         int   `json:"findings_removed"`
 	ActiveFindingsDelta     int   `json:"active_findings_delta"`
@@ -86,6 +90,8 @@ func CompareAnalysis(baseline, current Analysis) DiffReport {
 		report.Changes = append(report.Changes, DiffChange{Category: "entrypoint", Name: current.Entrypoint, Change: "location", Before: entrypointSummary(baseline), After: entrypointSummary(current)})
 	}
 	report.Changes = append(report.Changes, diffSet("import", importKeys(baseline.Imports), importKeys(current.Imports), &report.Summary.ImportsRemoved, &report.Summary.ImportsAdded)...)
+	report.Changes = append(report.Changes, diffSet("capability", capabilityKeys(baseline.Capabilities), capabilityKeys(current.Capabilities), &report.Summary.CapabilitiesRemoved, &report.Summary.CapabilitiesAdded)...)
+	report.Changes = append(report.Changes, diffSet("behavior", behaviorChainKeys(baseline.BehaviorChains), behaviorChainKeys(current.BehaviorChains), &report.Summary.BehaviorChainsRemoved, &report.Summary.BehaviorChainsAdded)...)
 	report.Changes = append(report.Changes, diffSet("finding", findingKeys(baseline.Findings), findingKeys(current.Findings), &report.Summary.FindingsRemoved, &report.Summary.FindingsAdded)...)
 	report.Changes = append(report.Changes, diffSet("unresolved", stringSet(baseline.Unresolved), stringSet(current.Unresolved), nil, nil)...)
 	report.Changes = append(report.Changes, diffSectionChanges(baseline.Sections, current.Sections)...)
@@ -133,6 +139,8 @@ func DiffMarkdown(report DiffReport) string {
 	fmt.Fprintf(&b, "- Size delta: `%+d`\n", report.Summary.SizeDelta)
 	fmt.Fprintf(&b, "- Relocations delta: `%+d`\n", report.Summary.RelocationsDelta)
 	fmt.Fprintf(&b, "- Imports: `%+d added`, `%+d removed`\n", report.Summary.ImportsAdded, report.Summary.ImportsRemoved)
+	fmt.Fprintf(&b, "- Capabilities: `%+d added`, `%+d removed`\n", report.Summary.CapabilitiesAdded, report.Summary.CapabilitiesRemoved)
+	fmt.Fprintf(&b, "- Behavior chains: `%+d added`, `%+d removed`\n", report.Summary.BehaviorChainsAdded, report.Summary.BehaviorChainsRemoved)
 	fmt.Fprintf(&b, "- Findings: `%+d added`, `%+d removed`\n\n", report.Summary.FindingsAdded, report.Summary.FindingsRemoved)
 	fmt.Fprintf(&b, "- Finding state: `%+d active`, `%+d suppressed`\n\n", report.Summary.ActiveFindingsDelta, report.Summary.SuppressedFindingsDelta)
 	if len(report.Changes) == 0 {
@@ -150,11 +158,14 @@ func DiffMarkdown(report DiffReport) string {
 func diffSet(category string, before, after map[string]string, removedCount, addedCount *int) []DiffChange {
 	var changes []DiffChange
 	for key, value := range before {
-		if _, ok := after[key]; !ok {
+		afterValue, ok := after[key]
+		if !ok {
 			changes = append(changes, DiffChange{Category: category, Name: key, Change: "removed", Before: value})
 			if removedCount != nil {
 				*removedCount = *removedCount + 1
 			}
+		} else if value != afterValue {
+			changes = append(changes, DiffChange{Category: category, Name: key, Change: "changed", Before: value, After: afterValue})
 		}
 	}
 	for key, value := range after {
@@ -214,6 +225,31 @@ func findingKeys(findings []Finding) map[string]string {
 	for _, finding := range findings {
 		key := strings.Join([]string{finding.Severity, finding.Category, finding.Evidence, finding.Detail, fmt.Sprintf("suppressed=%t", finding.Suppressed), finding.Suppression}, ":")
 		out[key] = finding.Detail
+	}
+	return out
+}
+
+func capabilityKeys(capabilities []Capability) map[string]string {
+	out := map[string]string{}
+	for _, capability := range capabilities {
+		key := capability.ID
+		if key == "" {
+			key = capability.Name
+		}
+		out[key] = fmt.Sprintf("confidence=%s effects=%s", capability.Confidence, strings.Join(capability.Effects, ","))
+	}
+	return out
+}
+
+func behaviorChainKeys(chains []BehaviorChain) map[string]string {
+	out := map[string]string{}
+	for _, chain := range chains {
+		key := chain.ID + "@" + chain.Function
+		steps := make([]string, 0, len(chain.Steps))
+		for _, step := range chain.Steps {
+			steps = append(steps, step.API)
+		}
+		out[key] = fmt.Sprintf("confidence=%s steps=%s effects=%s", chain.Confidence, strings.Join(steps, "->"), strings.Join(chain.Effects, ","))
 	}
 	return out
 }

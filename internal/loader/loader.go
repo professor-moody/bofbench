@@ -14,6 +14,7 @@ type Request struct {
 	Entry     string
 	ArgHex    string
 	TimeoutMS int
+	Arch      string
 }
 
 type Result struct {

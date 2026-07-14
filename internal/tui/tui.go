@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -18,8 +19,12 @@ import (
 
 type model struct {
 	tab            int
+	projectCursor  int
 	arsenalCursor  int
 	runCursor      int
+	labCursor      int
+	viaCursor      int
+	projects       []string
 	arsenalRoot    string
 	arsenal        []arsenal.Entry
 	runs           []runEntry
@@ -29,6 +34,8 @@ type model struct {
 	width          int
 	height         int
 	message        string
+	commandOutput  string
+	running        bool
 }
 
 type runEntry struct {
@@ -62,13 +69,16 @@ type findingEntry struct {
 }
 
 var (
-	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213"))
-	tabStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
-	hotStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42"))
-	mutedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("51"))
+	tabStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("110"))
+	hotStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("208"))
+	mutedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("51"))
 )
 
-var tabs = []string{"arsenal", "analyze", "runs", "stage", "help"}
+var tabs = []string{"build", "analyze", "arsenal", "run", "lab", "results", "help"}
+var runVias = []string{"native", "lab", "sliver", "cobaltstrike"}
+var labActions = [][]string{{"lab", "status"}, {"lab", "bootstrap"}, {"lab", "up"}, {"lab", "snapshot", "clean"}, {"lab", "restore", "clean"}}
 var statusFilters = []string{"all", "pass", "fail", "setup_error", "analysis", "analyze_pass", "mixed_pass"}
 var runtimeFilters = []string{"all", "auto", "windows-coff", "linux-elf", "darwin-macho", "wine-coff"}
 
@@ -83,7 +93,7 @@ func initialModel() model {
 	root := "arsenal/trustedsec-sa"
 	entries, _ := arsenal.List(root)
 	runs := listRuns()
-	return model{arsenalRoot: root, arsenal: entries, runs: runs, message: "bofbench operator TUI"}
+	return model{projects: listProjects(), arsenalRoot: root, arsenal: entries, runs: runs, message: "new → add packs → build → analyze → run → export"}
 }
 
 func (m model) Init() tea.Cmd { return nil }
@@ -112,37 +122,62 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setCursor(max - 1)
 			}
 		case "f":
-			if m.tab == 2 {
+			if m.tab == 5 {
 				m.statusFilter = (m.statusFilter + 1) % len(statusFilters)
 				m.runCursor = 0
 			}
 		case "t":
-			if m.tab == 2 {
+			if m.tab == 5 {
 				m.runtimeFilter = (m.runtimeFilter + 1) % len(runtimeFilters)
 				m.runCursor = 0
 			}
 		case "a":
-			if m.tab == 2 {
+			if m.tab == 5 {
 				m.artifactFilter = !m.artifactFilter
 				m.runCursor = 0
+			}
+		case "v":
+			if m.tab == 3 {
+				m.viaCursor = (m.viaCursor + 1) % len(runVias)
+			}
+		case "enter":
+			if !m.running {
+				if command := m.currentCommand(); len(command) > 0 {
+					m.running = true
+					m.commandOutput = ""
+					m.message = "$ bofbench " + strings.Join(command, " ")
+					return m, executeBOFBench(command)
+				}
 			}
 		case "r":
 			next := initialModel()
 			next.tab = m.tab
 			next.arsenalCursor = min(m.arsenalCursor, max(0, len(next.arsenal)-1))
 			next.runCursor = m.runCursor
+			next.projectCursor = min(m.projectCursor, max(0, len(next.projects)-1))
+			next.labCursor = m.labCursor
+			next.viaCursor = m.viaCursor
 			next.statusFilter = m.statusFilter
 			next.runtimeFilter = m.runtimeFilter
 			next.artifactFilter = m.artifactFilter
 			m = next
 		}
+	case commandResultMsg:
+		m.running = false
+		m.commandOutput = strings.TrimSpace(msg.Output)
+		if msg.Err != nil {
+			m.message = "command failed: " + msg.Err.Error()
+		} else {
+			m.message = "command complete"
+		}
+		m.runs = listRuns()
 	}
 	return m, nil
 }
 
 func (m model) View() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("bofbench"))
+	b.WriteString(titleStyle.Render("BOFBENCH"))
 	b.WriteString(" ")
 	b.WriteString(m.renderTabs())
 	b.WriteString("\n")
@@ -153,15 +188,25 @@ func (m model) View() string {
 	b.WriteString("\n")
 	switch m.tab {
 	case 0:
-		b.WriteString(m.viewArsenal())
+		b.WriteString(m.viewBuild())
 	case 1:
 		b.WriteString(m.viewAnalyzer())
 	case 2:
-		b.WriteString(m.viewRuns())
+		b.WriteString(m.viewArsenal())
 	case 3:
-		b.WriteString(m.viewStage())
+		b.WriteString(m.viewRun())
 	case 4:
+		b.WriteString(m.viewLab())
+	case 5:
+		b.WriteString(m.viewRuns())
+	case 6:
 		b.WriteString(m.viewHelp())
+	}
+	if m.commandOutput != "" {
+		b.WriteString("\n\n")
+		b.WriteString(statusStyle.Render("LAST COMMAND"))
+		b.WriteString("\n")
+		b.WriteString(shorten(m.commandOutput, 1200))
 	}
 	b.WriteString("\n\n")
 	b.WriteString(mutedStyle.Render(m.footer()))
@@ -181,8 +226,11 @@ func (m model) renderTabs() string {
 }
 
 func (m model) footer() string {
-	base := "tab/right switch view  j/k move  home/end jump  r refresh  q quit"
-	if m.tab == 2 {
+	base := "tab switch  j/k select  enter run  r refresh  q quit"
+	if m.tab == 3 {
+		base += "  v runtime"
+	}
+	if m.tab == 5 {
 		base += "  f status filter  t runtime filter  a selected artifact"
 	}
 	return base
@@ -190,9 +238,13 @@ func (m model) footer() string {
 
 func (m model) currentCount() int {
 	switch m.tab {
-	case 0:
-		return len(m.arsenal)
+	case 0, 1, 3:
+		return len(m.projects)
 	case 2:
+		return len(m.arsenal)
+	case 4:
+		return len(labActions)
+	case 5:
 		return len(m.filteredRuns())
 	default:
 		return 0
@@ -201,12 +253,19 @@ func (m model) currentCount() int {
 
 func (m *model) moveCursor(delta int) {
 	switch m.tab {
-	case 0:
+	case 0, 1, 3:
+		if len(m.projects) == 0 {
+			return
+		}
+		m.projectCursor = clamp(m.projectCursor+delta, 0, len(m.projects)-1)
+	case 2:
 		if len(m.arsenal) == 0 {
 			return
 		}
 		m.arsenalCursor = clamp(m.arsenalCursor+delta, 0, len(m.arsenal)-1)
-	case 2:
+	case 4:
+		m.labCursor = clamp(m.labCursor+delta, 0, len(labActions)-1)
+	case 5:
 		count := len(m.filteredRuns())
 		if count == 0 {
 			return
@@ -217,16 +276,150 @@ func (m *model) moveCursor(delta int) {
 
 func (m *model) setCursor(value int) {
 	switch m.tab {
-	case 0:
+	case 0, 1, 3:
+		if len(m.projects) > 0 {
+			m.projectCursor = clamp(value, 0, len(m.projects)-1)
+		}
+	case 2:
 		if len(m.arsenal) > 0 {
 			m.arsenalCursor = clamp(value, 0, len(m.arsenal)-1)
 		}
-	case 2:
+	case 4:
+		m.labCursor = clamp(value, 0, len(labActions)-1)
+	case 5:
 		count := len(m.filteredRuns())
 		if count > 0 {
 			m.runCursor = clamp(value, 0, count-1)
 		}
 	}
+}
+
+type commandResultMsg struct {
+	Output string
+	Err    error
+}
+
+func executeBOFBench(args []string) tea.Cmd {
+	return func() tea.Msg {
+		executable, err := os.Executable()
+		if err != nil {
+			return commandResultMsg{Err: err}
+		}
+		output, runErr := exec.Command(executable, args...).CombinedOutput()
+		return commandResultMsg{Output: string(output), Err: runErr}
+	}
+}
+
+func (m model) currentCommand() []string {
+	switch m.tab {
+	case 0:
+		if project, ok := m.selectedProject(); ok {
+			return []string{"build", project}
+		}
+	case 1:
+		if project, ok := m.selectedProject(); ok {
+			return []string{"analyze", project}
+		}
+	case 2:
+		if entry, ok := m.selectedArsenalEntry(); ok {
+			if object := selectedObject(entry); object != "" {
+				return []string{"analyze", object}
+			}
+		}
+	case 3:
+		if project, ok := m.selectedProject(); ok {
+			return []string{"run", project, "--via", runVias[m.viaCursor]}
+		}
+	case 4:
+		if m.labCursor >= 0 && m.labCursor < len(labActions) {
+			return append([]string(nil), labActions[m.labCursor]...)
+		}
+	}
+	return nil
+}
+
+func listProjects() []string {
+	entries, err := os.ReadDir("bofs")
+	if err != nil {
+		return nil
+	}
+	var projects []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		root := filepath.Join("bofs", entry.Name())
+		matches, _ := filepath.Glob(filepath.Join(root, "*.c"))
+		if len(matches) > 0 {
+			projects = append(projects, root)
+		}
+	}
+	sort.Strings(projects)
+	return projects
+}
+
+func (m model) selectedProject() (string, bool) {
+	if len(m.projects) == 0 {
+		return "", false
+	}
+	index := clamp(m.projectCursor, 0, len(m.projects)-1)
+	return m.projects[index], true
+}
+
+func (m model) renderProjects() string {
+	if len(m.projects) == 0 {
+		return "No BOF projects found. Start with:\n\n  bofbench new fieldcheck --pack host-discovery"
+	}
+	var b strings.Builder
+	limit := visibleRows(m.height, 8, 14)
+	start, end := windowRange(len(m.projects), m.projectCursor, limit)
+	for index := start; index < end; index++ {
+		prefix := "  "
+		if index == m.projectCursor {
+			prefix = "> "
+		}
+		fmt.Fprintf(&b, "%s%s\n", prefix, m.projects[index])
+	}
+	return b.String()
+}
+
+func (m model) viewBuild() string {
+	var b strings.Builder
+	b.WriteString("BUILD A BOF\n")
+	b.WriteString(mutedStyle.Render("Select a project. Enter compiles its resolved capability packs."))
+	b.WriteString("\n\n")
+	b.WriteString(m.renderProjects())
+	if project, ok := m.selectedProject(); ok {
+		fmt.Fprintf(&b, "\nAction\n  bofbench build %s\n\nAdd capability\n  bofbench add %s <pack>\n", project, project)
+	}
+	return b.String()
+}
+
+func (m model) viewRun() string {
+	var b strings.Builder
+	b.WriteString("RUN A BOF\n")
+	fmt.Fprintf(&b, "%s\n\n", mutedStyle.Render("Choose a project and runtime. Named arguments come from its pack lock."))
+	b.WriteString(m.renderProjects())
+	if project, ok := m.selectedProject(); ok {
+		fmt.Fprintf(&b, "\nRuntime   %s  (v to change)\nAction    bofbench run %s --via %s\n", hotStyle.Render(runVias[m.viaCursor]), project, runVias[m.viaCursor])
+		fmt.Fprintf(&b, "Cleanup   bofbench run %s --via %s --cleanup\n", project, runVias[m.viaCursor])
+	}
+	return b.String()
+}
+
+func (m model) viewLab() string {
+	var b strings.Builder
+	b.WriteString("WINDOWS LAB\n")
+	b.WriteString(mutedStyle.Render("Bootstrap an existing VM first; provider actions use the saved lab configuration."))
+	b.WriteString("\n\n")
+	for index, action := range labActions {
+		prefix := "  "
+		if index == m.labCursor {
+			prefix = "> "
+		}
+		fmt.Fprintf(&b, "%s bofbench %s\n", prefix, strings.Join(action, " "))
+	}
+	return b.String()
 }
 
 func (m model) viewArsenal() string {
@@ -267,18 +460,18 @@ func (m model) renderArsenalDetail(entry arsenal.Entry) string {
 	if entry.X86 != "" {
 		fmt.Fprintf(&b, "  x86:  %s\n", entry.X86)
 	}
-	b.WriteString("\nCommand previews\n")
+	b.WriteString("\nActions\n")
 	if object == "" {
 		fmt.Fprintf(&b, "  bofbench build %s --arch x64\n", entry.Path)
 		fmt.Fprintf(&b, "  bofbench test %s --select %s\n", m.arsenalRoot, entry.Name)
 		return b.String()
 	}
 	for _, line := range []string{
-		"bofbench inspect " + object,
+		"bofbench analyze " + object,
 		"bofbench analyze " + object + " --format md",
-		"bofbench run " + object + " --runtime auto",
+		"bofbench run " + object + " --via native",
 		"bofbench test " + m.arsenalRoot + " --select " + entry.Name + " --runtime windows-coff",
-		"bofbench stage " + object + " --target raw",
+		"bofbench export " + object + " --for raw",
 	} {
 		fmt.Fprintf(&b, "  %s\n", line)
 	}
@@ -287,28 +480,16 @@ func (m model) renderArsenalDetail(entry arsenal.Entry) string {
 
 func (m model) viewAnalyzer() string {
 	var b strings.Builder
-	b.WriteString("Analyzer\n\n")
-	if entry, ok := m.selectedArsenalEntry(); ok {
-		object := selectedObject(entry)
-		if object != "" {
-			fmt.Fprintf(&b, "Selected artifact: %s\n\n", object)
-			for _, line := range []string{
-				"bofbench inspect " + object,
-				"bofbench analyze " + object + " --format md",
-				"bofbench analyze " + object + " --baseline runs/<old>/analysis.json --format md",
-			} {
-				fmt.Fprintf(&b, "  %s\n", line)
-			}
-			b.WriteString("\n")
-		}
+	b.WriteString("ANALYZE CAPABILITIES\n")
+	b.WriteString(mutedStyle.Render("Enter builds the selected project and explains Can do, Needs, Effects, arguments, and runtimes."))
+	b.WriteString("\n\n")
+	b.WriteString(m.renderProjects())
+	if project, ok := m.selectedProject(); ok {
+		fmt.Fprintf(&b, "\nAction\n  bofbench analyze %s\n", project)
 	}
-	b.WriteString("Supported static formats\n\n")
-	b.WriteString("  COFF    Windows BOF objects\n")
-	b.WriteString("  ELF     Linux relocatable objects\n")
-	b.WriteString("  Mach-O  macOS objects\n")
 	findings := recentFindings(m.runs, 8)
 	if len(findings) > 0 {
-		b.WriteString("\nRecent findings\n\n")
+		b.WriteString("\nRecent analysis cues\n")
 		for _, finding := range findings {
 			line := fmt.Sprintf("%s/%s: %s", finding.Severity, finding.Category, finding.Detail)
 			if finding.Source != "" {
@@ -316,8 +497,6 @@ func (m model) viewAnalyzer() string {
 			}
 			fmt.Fprintf(&b, "  %s\n", shorten(line, 110))
 		}
-	} else {
-		b.WriteString("\nNo recent findings in runs/. Generate one with:\n\n  bofbench analyze <artifact>\n")
 	}
 	return b.String()
 }
@@ -407,7 +586,7 @@ func (m model) viewStage() string {
 		if object != "" {
 			fmt.Fprintf(&b, "Selected artifact: %s\n\n", object)
 			for _, target := range []string{"cobaltstrike", "sliver", "raw"} {
-				fmt.Fprintf(&b, "  bofbench stage %s --target %s\n", object, target)
+				fmt.Fprintf(&b, "  bofbench export %s --for %s\n", object, target)
 			}
 			b.WriteString("\n")
 		}
@@ -422,7 +601,7 @@ func (m model) viewStage() string {
 func (m model) viewHelp() string {
 	return `Help
 
-The TUI is a navigator over the same command services as the CLI.
+Every Enter action invokes the same BOFBench command used by the CLI.
 
 Controls:
 
@@ -431,20 +610,21 @@ Controls:
   j/down           move down
   k/up             move up
   home/end         jump within current list
-  f                cycle run status filter in Runs view
-  t                cycle run runtime filter in Runs view
+  enter            execute the selected action
+  v                cycle native/lab/Sliver/Cobalt Strike in Run
+  f                cycle status filter in Results
+  t                cycle runtime filter in Results
   r                refresh arsenal and run history
   q                quit
 
 Fast paths:
 
-  bofbench fetch <alias|url>
-  bofbench new echoer --template args
-  bofbench test bofs/echoer --profile alt
-  bofbench doctor
+  bofbench new fieldcheck --pack host-discovery,token-context
+  bofbench add bofs/fieldcheck process-discovery
+  bofbench build bofs/fieldcheck
   bofbench analyze <artifact>
-  bofbench test arsenal/trustedsec-sa --select whoami,ipconfig
-  bofbench stage <artifact> --target cobaltstrike
+  bofbench run bofs/fieldcheck --via lab
+  bofbench export bofs/fieldcheck --for sliver
 `
 }
 

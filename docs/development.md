@@ -1,99 +1,43 @@
-# Developer Loop
+# Build and Extend a BOF
 
-`bofbench new` creates small local modules for development and lab validation.
+Create a project from one or more packs:
 
-```sh
-bofbench new echoer --template args
-bofbench new hello --template hello
-bofbench new pidcheck --template winapi
-bofbench new badlink --template unresolved
-bofbench new slow --template timeout
+```bash
+bofbench new fieldcheck --pack host-discovery,system-discovery
+bofbench add bofs/fieldcheck domain-discovery
+bofbench build bofs/fieldcheck
 ```
 
-Templates:
+The generated project contains normal C source, `beacon.h`, `bofbench.toml`, and `bofbench.lock.json`. Source fragments remain visible and editable. Pack calls are inserted in dependency order and duplicate fragments are suppressed.
 
-| Template | Purpose |
-| --- | --- |
-| `args` | Beacon arg parser and output contract |
-| `hello` | no-arg smoke module |
-| `winapi` | benign WinAPI import fixture using `GetCurrentProcessId` |
-| `unresolved` | negative fixture expecting `relocation_error` |
-| `timeout` | negative fixture expecting `timeout` |
+## Add an external pack
 
-## Build Configuration
-
-Direct source builds are deterministic by default. Pin the toolchain and add toolchain-specific flags in `bofbench.toml` when a fixture needs them:
-
-```toml
-name = "echoer"
-entry = "go"
-compiler = "mingw"
-cflags = ["-Os", "-DVARIANT=1"]
-deterministic = true
-args = ["z:default", "i:1"]
-expect = ["echoer: default count=1"]
-timeout_ms = 5000
+```bash
+bofbench catalog add ~/bofbench-packs-internal --name internal
+bofbench add bofs/fieldcheck internal/token-impersonation
+bofbench build bofs/fieldcheck
 ```
 
-Root keys are `name`, `entry`, `build`, `compiler`, `cflags`, `deterministic`, `args`, `expect`, `forbid`, `timeout_ms`, `expect_exit`, `expect_status`, and `operator_notes`. Compiler values are `auto`, `mingw`, or `msvc`. Project names use portable letters, numbers, dot, underscore, and hyphen characters and cannot start with a dot. String values and array elements must be quoted. Inline comments are supported outside quoted values.
+Parameterized pack calls share one Beacon data parser. Argument order comes from the lockfile, and named values are converted to the correct BOF packing type at runtime.
 
-The parser rejects unknown keys/sections, duplicate keys and aliases, invalid compiler or Boolean values, non-positive timeouts, and malformed arrays. A bad configuration still creates build failure evidence with one diagnostic per offending line.
+## Build matrix
 
-Use the release-quality build gate during development:
-
-```sh
-bofbench build bofs/echoer --compiler mingw --verify-reproducible
+```bash
+bofbench build bofs/fieldcheck --compiler mingw --arch x64
+bofbench build bofs/fieldcheck --compiler msvc --arch x64
+bofbench matrix bofs/fieldcheck --compiler mingw --arch all --execute never
 ```
 
-Use the compiler matrix before treating a fixture as portable across supported object patterns:
+MinGW and MSVC builds record the exact compiler, flags, object hash, source/config fingerprints, and compiler log. x86 objects are dispatched through the separate x86 loader helper on Windows.
 
-```sh
-bofbench matrix bofs/echoer --compiler mingw --arch all --execute never
+## Analyze after every build
+
+```bash
+bofbench analyze bofs/fieldcheck
 ```
 
-This produces reproducible `-O0`, `-Os`, and `-O2` objects, requires all x64 objects to pass loader preflight, and requires every x86 object to stop at the explicit architecture boundary. On Windows, run the MSVC half with `--compiler msvc --execute auto`. A MinGW matrix directory created on macOS/Linux can be copied to Windows and exercised with `bofbench matrix replay <matrix.json>`.
+Project analysis adds pack-declared arguments and capabilities to the object-derived primitives and behavior chains. Declared metadata is marked `possible`; function-local API evidence can raise a known chain to `strong chain`.
 
-For a custom `build` command, Makefile, or CMake project, BOFBench records the dispatcher rather than claiming to know the nested compiler. Reproducibility verification repeats that command and compares the resulting object.
+## Backward-compatible projects
 
-## Test Profiles
-
-`bofbench.toml` can define named profiles for repeatable argument and output contracts:
-
-```toml
-name = "echoer"
-entry = "go"
-args = ["z:default", "i:1"]
-expect = ["echoer: default count=1"]
-timeout_ms = 5000
-
-[profile.alt]
-args = ["z:profile-message", "i:9"]
-expect = ["echoer: profile-message count=9"]
-forbid = ["panic"]
-```
-
-Run the default contract:
-
-```sh
-bofbench test bofs/echoer
-```
-
-Run a named profile:
-
-```sh
-bofbench test bofs/echoer --profile alt
-```
-
-## Expected Failures
-
-Negative fixtures use `expect_exit` so a known loader/runtime failure can be tested intentionally:
-
-```toml
-name = "badlink"
-entry = "go"
-args = []
-expect_exit = "relocation_error"
-timeout_ms = 5000
-```
-
-The run report still records the real runtime status and exit state. The test command succeeds only because the configured failure matched.
+Projects containing `bofbench.recipe.json` migrate on first pack use. The original sidecar remains in place, and the resolved equivalent is written to `bofbench.lock.json`. `feature`, `recipe`, and `dev` remain aliases for one major release.

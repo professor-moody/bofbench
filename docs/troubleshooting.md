@@ -2,13 +2,14 @@
 
 ## `run` says Windows is required
 
-Windows COFF execution is Windows x64 only. On macOS/Linux, use:
+Windows COFF execution requires Windows. On macOS/Linux, use:
 
 ```sh
-bofbench inspect dist/payload.x64.o
 bofbench analyze dist/payload.x64.o
-bofbench stage dist/payload.x64.o --target raw
+bofbench export dist/payload.x64.o --for raw
 ```
+
+`analyze` still reports compiled capabilities and loader support. Continue with `bofbench run <project> --via lab` or move the object to Windows. x64 uses `bofbench-loader.exe`; x86 uses `bofbench-loader-x86.exe` under WoW64.
 
 For other artifact types, `run --runtime auto` reports `requires_linux`, `requires_darwin`, or the matching setup state instead of pretending execution happened. On Linux and macOS, ELF and Mach-O execution also requires `cc` because the runner links the object into a small local harness before execution.
 
@@ -40,7 +41,7 @@ Use `--compiler mingw` or `--compiler msvc` to stop auto-selection and receive a
 
 ## Unsupported relocation
 
-The loader reports the unsupported AMD64 relocation type. Use `inspect` to see relocation records and rebuild with a simpler toolchain if needed.
+The loader reports the unsupported AMD64 or I386 relocation type. Use `analyze --format text` to see relocation records and rebuild with a compatible toolchain if needed.
 
 ## Loader exits with `0xc0000005`
 
@@ -57,3 +58,5 @@ The loader resolves Beacon shims and common WinAPI imports. Unsupported symbols 
 ## Output contract failed
 
 `bofbench test` marks a run as `output_contract_failed` when configured `expect` strings are missing or configured `forbid` strings appear in captured output.
+
+For the full command sequence, return to the [Quickstart](quickstart.md). Loader-specific failures are detailed in [Native Loader](native-loader.md).

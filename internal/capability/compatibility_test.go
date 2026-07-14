@@ -17,9 +17,20 @@ func TestAssessWindowsCOFFSupported(t *testing.T) {
 	}
 }
 
+func TestAssessWindowsCOFFX86HelperSupport(t *testing.T) {
+	result := AssessWindowsCOFF(COFFInput{
+		Arch: "x86", Entrypoint: "go", EntrypointOK: true,
+		Relocations: []RelocationUse{{Code: 0x0014, Name: "REL32", Section: ".text", Symbol: "_BeaconPrintf"}, {Code: 0x000b, Name: "SECREL", Section: ".debug", Symbol: ".text"}},
+		Unresolved:  []string{"_BeaconPrintf"},
+	})
+	if !result.Compatible || result.Status != "compatible" {
+		t.Fatalf("x86 compatibility = %+v", result)
+	}
+}
+
 func TestAssessWindowsCOFFStructuredBlockers(t *testing.T) {
 	result := AssessWindowsCOFF(COFFInput{
-		Arch:         "x86",
+		Arch:         "arm64",
 		Entrypoint:   "go",
 		EntrypointOK: false,
 		LayoutIssues: []LayoutIssue{{Code: "section_data_range", Detail: "section data extends beyond file", Section: ".text"}},
@@ -27,7 +38,7 @@ func TestAssessWindowsCOFFStructuredBlockers(t *testing.T) {
 			{Code: 0x000c, Name: "SECREL", Section: ".data", Symbol: "value"},
 			{Code: 0x7777, Name: "AMD64_0x7777", Section: ".text", Symbol: "other"},
 		},
-		Unresolved: []string{"BeaconFormatAlloc", "$Broken"},
+		Unresolved: []string{"BeaconUseToken", "$Broken"},
 	})
 	if result.Compatible || result.Status != "unsupported_arch" {
 		t.Fatalf("compatibility = %+v", result)
@@ -46,8 +57,8 @@ func TestAssessWindowsCOFFStructuredBlockers(t *testing.T) {
 		Arch:         "x64",
 		Entrypoint:   "go",
 		EntrypointOK: true,
-		Relocations:  []RelocationUse{{Code: 0x000c, Name: "SECREL", Section: ".data", Symbol: "value"}},
-		Unresolved:   []string{"BeaconFormatAlloc", "$Broken"},
+		Relocations:  []RelocationUse{{Code: 0x7777, Name: "AMD64_0x7777", Section: ".data", Symbol: "value"}},
+		Unresolved:   []string{"BeaconUseToken", "$Broken"},
 	})
 	for _, category := range []string{"unsupported_relocation", "unsupported_beacon_api", "malformed_dynamic_import"} {
 		if !hasIssue(amd64.Blockers, category) {

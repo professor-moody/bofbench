@@ -26,7 +26,7 @@ func TestRunArsenalCompatibilityMatrix(t *testing.T) {
 		name       string
 		unresolved []string
 	}{
-		{name: "blocked", unresolved: []string{"BeaconFormatAlloc"}},
+		{name: "blocked", unresolved: []string{"BeaconUseToken"}},
 		{name: "supported", unresolved: []string{"__imp__BeaconPrintf", "KERNEL32$VirtualAlloc"}},
 		{name: "warning", unresolved: []string{"MissingExternal"}},
 	}
@@ -131,7 +131,7 @@ func TestRunAllArchitectureAndArgumentDimensions(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := persisted.Report
-	if report.Architecture != "all" || report.Status != "blocked" || report.Summary.Total != 6 || report.Summary.Compatible != 3 || report.Summary.Blocked != 3 {
+	if report.Architecture != "all" || report.Status != "pass" || report.Summary.Total != 6 || report.Summary.Compatible != 6 || report.Summary.Blocked != 0 {
 		t.Fatalf("all-architecture report = %+v", report)
 	}
 	for key, want := range map[string]int{"x64": 3, "x86": 3} {
@@ -139,7 +139,7 @@ func TestRunAllArchitectureAndArgumentDimensions(t *testing.T) {
 			t.Fatalf("architecture dimensions = %+v", report.Summary.ByArchitecture)
 		}
 	}
-	if report.Summary.ByBlocker["unsupported_arch"] != 3 || len(report.Summary.ByBlocker) != 1 {
+	if len(report.Summary.ByBlocker) != 0 {
 		t.Fatalf("blocker dimensions = %+v", report.Summary.ByBlocker)
 	}
 	for key, want := range map[string]int{"configured": 2, "required_unconfigured": 2, "none_observed": 2} {
@@ -152,7 +152,7 @@ func TestRunAllArchitectureAndArgumentDimensions(t *testing.T) {
 			t.Fatalf("configured result missing config fingerprint: %+v", result)
 		}
 		if result.Arch == "x86" {
-			if result.Entrypoint != "go" || !result.EntrypointOK || result.Status != "unsupported_arch" || result.Compatibility == nil || len(result.Compatibility.Blockers) != 1 {
+			if result.Entrypoint != "go" || !result.EntrypointOK || result.Status != "compatible" || result.Compatibility == nil || len(result.Compatibility.Blockers) != 0 {
 				t.Fatalf("x86 result = %+v", result)
 			}
 		}
@@ -162,7 +162,7 @@ func TestRunAllArchitectureAndArgumentDimensions(t *testing.T) {
 	if !strings.Contains(markdown, "Architecture request: `all`") || !strings.Contains(text, "arch=[x64=3, x86=3]") {
 		t.Fatalf("matrix architecture rendering missing\n%s\n%s", markdown, text)
 	}
-	for _, want := range []string{"unsupported_arch=3", "required_unconfigured=2"} {
+	for _, want := range []string{"6 compatible", "required_unconfigured=2"} {
 		if !strings.Contains(markdown, want) || !strings.Contains(text, want) {
 			t.Fatalf("matrix rendering missing %q\n%s\n%s", want, markdown, text)
 		}

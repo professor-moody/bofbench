@@ -1,32 +1,78 @@
-site_name: bofbench
-site_description: Offensive BOF build, load, test, and stage workbench
-repo_url: https://github.com/example/bofbench
+site_name: BOFBench
+site_description: Compose, analyze, run, and export BOFs from capability packs
+exclude_docs: |
+  assets/downloads/
+  assets/media/
 theme:
   name: material
+  language: en
+  logo: assets/mark.svg
+  favicon: assets/mark.svg
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    scheme: slate
+    primary: black
+    accent: cyan
   features:
+    - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
+    - navigation.indexes
     - navigation.instant
+    - navigation.top
+    - toc.follow
+    - search.suggest
+    - search.highlight
     - content.code.copy
+    - content.code.annotate
+extra_css:
+  - stylesheets/extra.css
 nav:
   - Home: index.md
-  - Quickstart: quickstart.md
-  - Commands: commands.md
-  - Analysis Reports: analysis.md
-  - Evidence Contracts: evidence.md
-  - Native Loader: native-loader.md
-  - Windows Lab: windows-lab.md
-  - Runtime Model: runtime.md
-  - Argument Packing: arg-packing.md
-  - Developer Loop: development.md
-  - Public BOF Arsenal: arsenal.md
-  - Staging: staging.md
-  - TUI: tui.md
-  - Engineering Review: review.md
-  - Roadmap: roadmap.md
-  - Operational Program: operational-roadmap.md
-  - Release: release.md
-  - Troubleshooting: troubleshooting.md
+  - Start:
+      - Quickstart: quickstart.md
+      - Commands: commands.md
+  - Build:
+      - Capability Packs: packs.md
+      - External Catalogs: external-catalogs.md
+      - Build and Extend: development.md
+      - Generated Pack Reference: pack-reference.md
+  - Analyze:
+      - Behavioral Analysis: analysis.md
+      - Arsenal Intelligence: arsenal.md
+      - Loader Internals: native-loader.md
+  - Run:
+      - Runtime Adapters: runtime.md
+      - Windows Lab: windows-lab.md
+      - Lab Architecture: lab-setup.md
+      - Sliver: sliver.md
+      - Cobalt Strike: cobaltstrike.md
+      - Export: staging.md
+      - Operator Playbooks: playbooks.md
+  - Reference:
+      - Operator TUI: tui.md
+      - Argument Packing: arg-packing.md
+      - Reports: evidence.md
+      - Release: release.md
+      - Troubleshooting: troubleshooting.md
+plugins:
+  - search
 markdown_extensions:
   - admonition
-  - pymdownx.superfences
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.snippets

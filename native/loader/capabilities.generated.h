@@ -3,7 +3,7 @@
 #define BOFBENCH_CAPABILITIES_GENERATED_H
 
 #define BOFBENCH_CAPABILITY_SCHEMA_VERSION 1
-#define BOFBENCH_CAPABILITY_CATALOG_VERSION "windows-coff-x64/v3"
+#define BOFBENCH_CAPABILITY_CATALOG_VERSION "windows-coff-x64/v4"
 #define MACHINE_AMD64 0x8664
 #define SECTION_CNT_UNINITIALIZED_DATA 0x00000080
 #define REL_AMD64_ABSOLUTE 0x0000
@@ -26,7 +26,14 @@
     X(BeaconDataLength) \
     X(BeaconDataExtract) \
     X(BeaconPrintf) \
-    X(BeaconOutput)
+    X(BeaconOutput) \
+    X(BeaconFormatAlloc) \
+    X(BeaconFormatReset) \
+    X(BeaconFormatFree) \
+    X(BeaconFormatAppend) \
+    X(BeaconFormatPrintf) \
+    X(BeaconFormatToString) \
+    X(BeaconFormatInt)
 
 static const char *const bofbench_fallback_libraries[] = {
     "kernel32",
@@ -80,6 +87,8 @@ static int bofbench_relocation_is_supported(uint16_t type) {
     case REL_AMD64_REL32_3:
     case REL_AMD64_REL32_4:
     case REL_AMD64_REL32_5:
+    case REL_AMD64_SECTION:
+    case REL_AMD64_SECREL:
         return 1;
     default:
         return 0;

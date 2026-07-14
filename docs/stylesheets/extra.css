@@ -1,0 +1,261 @@
+:root {
+  --bb-ink: #070a0d;
+  --bb-surface: #0d1318;
+  --bb-grid: rgba(119, 224, 255, 0.09);
+  --bb-cyan: #73e5ff;
+  --bb-orange: #ff9a57;
+  --bb-muted: #9aa9b4;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: var(--bb-ink);
+  --md-default-fg-color: #ecf7fb;
+  --md-default-fg-color--light: #bfd0d9;
+  --md-code-bg-color: #0b1116;
+  --md-accent-fg-color: var(--bb-cyan);
+  --md-primary-fg-color: #070a0d;
+}
+
+.md-header,
+.md-tabs {
+  background: rgba(7, 10, 13, 0.94);
+  backdrop-filter: blur(16px);
+}
+
+.md-main__inner {
+  margin-top: 0;
+}
+
+.md-content__inner {
+  padding-top: 1.3rem;
+}
+
+.bb-hero {
+  position: relative;
+  overflow: hidden;
+  margin: -1.3rem calc(50% - 50vw) 2.2rem;
+  min-height: min(690px, calc(100svh - 5.5rem));
+  padding: clamp(5rem, 10vw, 9rem) max(1.2rem, calc((100vw - 61rem) / 2));
+  display: grid;
+  align-content: center;
+  background:
+    linear-gradient(90deg, rgba(7, 10, 13, 0.98) 0%, rgba(7, 10, 13, 0.88) 48%, rgba(7, 10, 13, 0.48) 100%),
+    repeating-linear-gradient(90deg, transparent 0 47px, var(--bb-grid) 48px),
+    repeating-linear-gradient(0deg, transparent 0 47px, var(--bb-grid) 48px),
+    radial-gradient(circle at 82% 42%, rgba(115, 229, 255, 0.23), transparent 30%),
+    #070a0d;
+}
+
+.bb-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 0 58%, rgba(115, 229, 255, 0.08) 59%, transparent 61%);
+  animation: bb-scan 7s ease-in-out infinite;
+}
+
+.bb-kicker,
+.bb-signal {
+  color: var(--bb-cyan);
+  font-size: .78rem;
+  font-weight: 750;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+
+.bb-hero h1 {
+  margin: .55rem 0 .2rem;
+  color: #fff;
+  font-size: clamp(4rem, 12vw, 9rem);
+  line-height: .88;
+  letter-spacing: -.075em;
+}
+
+.bb-hero h1 span {
+  color: var(--bb-cyan);
+}
+
+.bb-hero-copy {
+  max-width: 42rem;
+  margin: 1.25rem 0 1.8rem;
+  color: #c9d8df;
+  font-size: clamp(1.05rem, 2vw, 1.35rem);
+  line-height: 1.55;
+}
+
+.bb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .8rem;
+}
+
+.bb-actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.8rem;
+  padding: .68rem 1rem;
+  border: 1px solid rgba(115, 229, 255, .62);
+  color: #eafaff;
+  font-weight: 700;
+  text-decoration: none;
+  transition: transform .18s ease, background-color .18s ease, color .18s ease;
+}
+
+.bb-actions a:first-child {
+  background: var(--bb-cyan);
+  color: #061016;
+}
+
+.bb-actions a:hover {
+  transform: translateY(-2px);
+  background: #dffaff;
+  color: #061016;
+}
+
+.bb-proof {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  margin: 0 0 3rem;
+  border-top: 1px solid rgba(115, 229, 255, .25);
+  border-bottom: 1px solid rgba(115, 229, 255, .25);
+}
+
+.bb-proof > div {
+  padding: 1.1rem 1.25rem;
+  border-right: 1px solid rgba(115, 229, 255, .18);
+}
+
+.bb-proof > div:last-child { border-right: 0; }
+.bb-proof strong { display: block; color: #fff; font-size: 1.45rem; }
+.bb-proof span { color: var(--bb-muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; }
+.bb-impact { color: var(--bb-orange) !important; }
+
+.bb-section-lead {
+  max-width: 44rem;
+  margin-bottom: 2rem;
+  color: #b8c9d2;
+  font-size: 1.05rem;
+}
+
+.bb-paths {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  margin: 2rem 0 3rem;
+  border-top: 1px solid rgba(115, 229, 255, .2);
+}
+
+.bb-paths a {
+  padding: 1.3rem 1.1rem;
+  border-bottom: 1px solid rgba(115, 229, 255, .2);
+  color: #ecf7fb;
+  text-decoration: none;
+  transition: background-color .18s ease, padding-left .18s ease;
+}
+
+.bb-paths a:hover {
+  padding-left: 1.35rem;
+  background: rgba(115, 229, 255, .06);
+}
+
+.bb-paths b { display: block; color: var(--bb-cyan); margin-bottom: .25rem; }
+.bb-paths span { color: var(--bb-muted); font-size: .86rem; }
+
+.mermaid {
+  margin: 1.8rem 0;
+  padding: 1rem;
+  border: 1px solid rgba(115, 229, 255, .18);
+  background: #0a1014;
+  transition: border-color .2s ease, transform .2s ease;
+}
+
+.mermaid:hover {
+  border-color: rgba(115, 229, 255, .48);
+  transform: translateY(-2px);
+}
+
+.md-typeset .admonition.warning,
+.md-typeset details.warning {
+  border-color: var(--bb-orange);
+}
+
+.bb-video-lead {
+  position: relative;
+  margin: 1.2rem 0 1.5rem;
+  padding: clamp(1.4rem, 4vw, 2.6rem) clamp(1.2rem, 4vw, 2.4rem);
+  overflow: hidden;
+  border-left: 3px solid var(--bb-orange);
+  background:
+    linear-gradient(105deg, rgba(115, 229, 255, .09), transparent 60%),
+    #0a1014;
+}
+
+.bb-video-lead::after {
+  content: "";
+  position: absolute;
+  width: 18rem;
+  height: 18rem;
+  right: -8rem;
+  top: -9rem;
+  border: 1px solid rgba(115, 229, 255, .2);
+  border-radius: 50%;
+}
+
+.bb-video-kicker {
+  color: var(--bb-orange);
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .15em;
+}
+
+.bb-video-lead h2 {
+  margin: .45rem 0 .6rem;
+  color: #fff;
+  font-size: clamp(1.8rem, 4vw, 3.1rem);
+  letter-spacing: -.04em;
+}
+
+.bb-video-lead p {
+  max-width: 42rem;
+  margin: 0;
+  color: #b9cad2;
+  font-size: 1.02rem;
+}
+
+.bb-video-reel,
+.bb-video-clip {
+  display: block;
+  width: 100%;
+  margin: 1.4rem 0 2.6rem;
+  border: 1px solid rgba(115, 229, 255, .23);
+  border-radius: 10px;
+  background: #05080a;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .32);
+  transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
+}
+
+.bb-video-reel:hover,
+.bb-video-clip:hover {
+  border-color: rgba(115, 229, 255, .58);
+  transform: translateY(-2px);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .46);
+}
+
+@keyframes bb-scan {
+  0%, 100% { transform: translateX(-15%); opacity: .35; }
+  50% { transform: translateX(15%); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bb-hero::after { animation: none; }
+  .bb-actions a, .bb-paths a, .mermaid { transition: none; }
+  .bb-video-reel, .bb-video-clip { transition: none; }
+}
+
+@media (max-width: 760px) {
+  .bb-hero { min-height: 620px; }
+  .bb-proof { grid-template-columns: repeat(2, 1fr); }
+  .bb-proof > div:nth-child(2) { border-right: 0; }
+  .bb-paths { grid-template-columns: 1fr; }
+}

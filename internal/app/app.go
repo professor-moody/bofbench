@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,9 +26,13 @@ import (
 	"bofbench/internal/evidence"
 	"bofbench/internal/lab"
 	matrixsvc "bofbench/internal/matrix"
+	packsvc "bofbench/internal/pack"
 	preflightsvc "bofbench/internal/preflight"
+	"bofbench/internal/recipe"
 	"bofbench/internal/runlog"
 	runtimesvc "bofbench/internal/runtime"
+	"bofbench/internal/scaffold"
+	"bofbench/internal/sourceaudit"
 	"bofbench/internal/stage"
 	"bofbench/internal/tui"
 )
@@ -93,28 +99,49 @@ func Run(args []string, stdout, stderr io.Writer) error {
 func rootCommand(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "bofbench",
-		Short:         "Offensive BOF build/load/test/stage workbench",
+		Short:         "Build, analyze, run, and deliver BOFs",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	cmd.AddCommand(
-		newCommand(stdout),
-		fetchCommand(stdout),
-		listCommand(stdout),
-		buildCommand(stdout),
-		matrixCommand(stdout),
-		inspectCommand(stdout),
-		analyzeCommand(stdout),
-		preflightCommand(stdout),
-		runCommand(stdout),
-		testCommand(stdout),
-		stageCommand(stdout),
-		labCommand(stdout, stderr),
-		doctorCommand(stdout),
-		tuiCommand(stdout),
-		docsCommand(stdout, stderr),
-		versionCommand(stdout),
+	cmd.AddGroup(
+		&cobra.Group{ID: "create", Title: "Create and develop:"},
+		&cobra.Group{ID: "analyze", Title: "Analyze and check:"},
+		&cobra.Group{ID: "operate", Title: "Run and deliver:"},
+		&cobra.Group{ID: "arsenal", Title: "External BOFs:"},
+		&cobra.Group{ID: "interface", Title: "Interface and help:"},
+		&cobra.Group{ID: "system", Title: "System:"},
 	)
+	cmd.AddCommand(
+		commandGroup("create", newCommand(stdout)),
+		commandGroup("create", catalogCommand(stdout)),
+		commandGroup("create", packCommand(stdout)),
+		commandGroup("create", addCommand(stdout)),
+		commandGroup("create", featureCommand(stdout)),
+		commandGroup("create", recipeCommand(stdout)),
+		commandGroup("create", devCommand(stdout)),
+		commandGroup("create", buildCommand(stdout)),
+		commandGroup("create", matrixCommand(stdout)),
+		commandGroup("analyze", inspectCommand(stdout)),
+		commandGroup("analyze", analyzeCommand(stdout)),
+		commandGroup("analyze", preflightCommand(stdout)),
+		commandGroup("operate", runCommand(stdout)),
+		commandGroup("operate", testCommand(stdout)),
+		commandGroup("operate", exportCommand(stdout)),
+		commandGroup("operate", sliverCommand(stdout)),
+		commandGroup("operate", labCommand(stdout, stderr)),
+		commandGroup("arsenal", fetchCommand(stdout)),
+		commandGroup("arsenal", listCommand(stdout)),
+		commandGroup("arsenal", arsenalCommand(stdout)),
+		commandGroup("interface", tuiCommand(stdout)),
+		commandGroup("interface", docsCommand(stdout, stderr)),
+		commandGroup("system", doctorCommand(stdout)),
+		commandGroup("system", versionCommand(stdout)),
+	)
+	return cmd
+}
+
+func commandGroup(group string, cmd *cobra.Command) *cobra.Command {
+	cmd.GroupID = group
 	return cmd
 }
 
@@ -127,7 +154,9 @@ func versionCommand(stdout io.Writer) *cobra.Command {
 			header := evidence.New(evidence.SchemaVersionInfo, "", "")
 			switch format {
 			case "text":
-				fmt.Fprintf(stdout, "bofbench multi-platform version=%s commit=%s host=%s/%s\n", header.Tool.Version, header.Tool.Commit, header.Host.OS, header.Host.Arch)
+				fmt.Fprintf(stdout, "BOFBENCH %s\n", header.Tool.Version)
+				fmt.Fprintf(stdout, "build -> analyze -> run -> hand off\n")
+				fmt.Fprintf(stdout, "commit=%s  host=%s/%s\n", header.Tool.Commit, header.Host.OS, header.Host.Arch)
 				return nil
 			case "json":
 				return printJSON(stdout, header)
@@ -142,19 +171,50 @@ func versionCommand(stdout io.Writer) *cobra.Command {
 
 func newCommand(stdout io.Writer) *cobra.Command {
 	var templateName string
+	var featureNames []string
+	var packNames []string
+	var catalogPaths []string
+	var recipeName string
+	var force bool
 	cmd := &cobra.Command{
 		Use:   "new <name>",
 		Short: "Create a BOF payload workspace",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := safeName(args[0])
+			if recipeName != "" {
+				if _, ok := recipe.Builtin(recipeName); !ok {
+					return fmt.Errorf("unknown recipe %q; use 'bofbench recipe list'", recipeName)
+				}
+			}
+			if recipeName != "" || len(packNames) > 0 {
+				if !cmd.Flags().Changed("template") {
+					templateName = "hello"
+				}
+			}
 			tpl, err := templateFor(templateName, name)
 			if err != nil {
 				return err
 			}
 			root := filepath.Join("bofs", name)
+			if _, err := os.Stat(root); err == nil && !force {
+				return fmt.Errorf("BOF workspace %s already exists; use --force to replace generated files", root)
+			} else if err != nil && !os.IsNotExist(err) {
+				return err
+			}
 			if err := os.MkdirAll(root, 0o755); err != nil {
 				return err
+			}
+			if force {
+				if err := os.Remove(filepath.Join(root, "bofbench_features.h")); err != nil && !os.IsNotExist(err) {
+					return err
+				}
+				if err := os.Remove(filepath.Join(root, recipe.SidecarName)); err != nil && !os.IsNotExist(err) {
+					return err
+				}
+				if err := os.Remove(filepath.Join(root, packsvc.LockName)); err != nil && !os.IsNotExist(err) {
+					return err
+				}
 			}
 			files := map[string]string{
 				filepath.Join(root, name+".c"):       tpl.Source,
@@ -167,12 +227,140 @@ func newCommand(stdout io.Writer) *cobra.Command {
 					return err
 				}
 			}
+			if len(featureNames) > 0 {
+				result, err := scaffold.AddFeatures(root, featureNames)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(stdout, "added features: %s\n", strings.Join(result.Added, ", "))
+			}
+			if recipeName != "" {
+				result, err := recipe.Apply(root, recipeName, false)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(stdout, "applied recipe: %s (%s)\n", result.Recipe.Name, result.Recipe.Title)
+			}
+			if len(packNames) > 0 {
+				registry, err := packsvc.Load(packsvc.LoadOptions{Project: root, ExtraCatalogs: catalogPaths})
+				if err != nil {
+					return err
+				}
+				result, err := registry.Apply(root, packNames)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(stdout, "added packs: %s\n", strings.Join(result.Added, ", "))
+			}
 			fmt.Fprintf(stdout, "created BOF payload workspace %s\n", root)
+			fmt.Fprintf(stdout, "next: bofbench build %s\n", root)
+			fmt.Fprintf(stdout, "then: bofbench analyze %s\n", root)
+			fmt.Fprintf(stdout, "compat: bofbench dev %s\n", root)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&templateName, "template", "args", "template: args, hello, winapi, unresolved, timeout")
+	cmd.Flags().StringSliceVar(&featureNames, "feature", nil, "add a composable BOF feature; repeatable")
+	cmd.Flags().StringSliceVar(&packNames, "pack", nil, "add a capability pack; repeatable or comma-separated")
+	cmd.Flags().StringSliceVar(&catalogPaths, "catalog", nil, "additional pack catalog path; repeatable")
+	cmd.Flags().StringVar(&recipeName, "recipe", "", "compose a built-in operational recipe")
+	cmd.Flags().BoolVar(&force, "force", false, "replace generated files in an existing BOF workspace")
 	return cmd
+}
+
+func featureCommand(stdout io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "feature",
+		Short: "List or add BOF capability modules",
+	}
+	packCommand := &cobra.Command{
+		Use:   "pack",
+		Short: "List or add curated feature packs",
+	}
+	packCommand.AddCommand(
+		&cobra.Command{
+			Use:   "list",
+			Short: "List curated BOF feature packs",
+			Args:  cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, args []string) error {
+				for _, pack := range scaffold.FeaturePacks() {
+					fmt.Fprintf(stdout, "%-18s impact=%-14s features=%-2d %s\n", pack.Name, pack.Impact, len(pack.Features), pack.Description)
+					fmt.Fprintf(stdout, "  %s\n", strings.Join(pack.Features, ","))
+				}
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "add <project|source.c> <pack>",
+			Short: "Add every capability in a curated feature pack",
+			Args:  cobra.ExactArgs(2),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				result, err := scaffold.AddFeaturePack(args[0], args[1])
+				if err != nil {
+					return err
+				}
+				return printJSON(stdout, result)
+			},
+		},
+	)
+	cmd.AddCommand(
+		&cobra.Command{
+			Use:   "list",
+			Short: "List reusable capability modules for BOF projects",
+			Args:  cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, args []string) error {
+				printFeatureList(stdout, scaffold.Features())
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "add <project|source.c> <feature> [feature...]",
+			Short: "Add loader-compatible feature code to a BOF workspace",
+			Args:  cobra.MinimumNArgs(2),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				result, err := scaffold.AddFeatures(args[0], args[1:])
+				if err != nil {
+					return err
+				}
+				return printJSON(stdout, result)
+			},
+		},
+		packCommand,
+	)
+	return cmd
+}
+
+func printFeatureList(stdout io.Writer, features []scaffold.Feature) {
+	discovery := make([]scaffold.Feature, 0, len(features))
+	actions := make([]scaffold.Feature, 0, len(features))
+	cleanup := make([]scaffold.Feature, 0, 1)
+	for _, feature := range features {
+		switch {
+		case feature.Name == "lab-cleanup":
+			cleanup = append(cleanup, feature)
+		case strings.HasPrefix(feature.Name, "lab-"):
+			actions = append(actions, feature)
+		default:
+			discovery = append(discovery, feature)
+		}
+	}
+
+	fmt.Fprintln(stdout, "BOF CAPABILITY MODULES")
+	fmt.Fprintln(stdout, "Reusable source modules injected into a BOF project.")
+	fmt.Fprintln(stdout, "add: bofbench feature add bofs/<project> <capability...>")
+	printFeatureGroup(stdout, "READ-ONLY DISCOVERY", discovery)
+	printFeatureGroup(stdout, "STATE-CHANGING LAB ACTIONS", actions)
+	printFeatureGroup(stdout, "CLEANUP", cleanup)
+}
+
+func printFeatureGroup(stdout io.Writer, title string, features []scaffold.Feature) {
+	if len(features) == 0 {
+		return
+	}
+	fmt.Fprintf(stdout, "\n%s\n", title)
+	for _, feature := range features {
+		fmt.Fprintf(stdout, "  %-20s %s\n", feature.Name, feature.Description)
+	}
 }
 
 func fetchCommand(stdout io.Writer) *cobra.Command {
@@ -230,19 +418,27 @@ func buildCommand(stdout io.Writer) *cobra.Command {
 	var arch string
 	var compiler string
 	var verifyReproducible bool
+	var format string
 	cmd := &cobra.Command{
 		Use:   "build <dir|file>",
 		Short: "Build or copy a payload artifact",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "text" && format != "json" {
+				return fmt.Errorf("unknown build format %q", format)
+			}
 			res, err := buildsys.BuildWithOptions(args[0], buildsys.Options{
 				Arch:               arch,
 				Compiler:           compiler,
 				VerifyReproducible: verifyReproducible,
 			})
 			if res.RunID != "" {
-				if printErr := printJSON(stdout, res); printErr != nil {
-					return printErr
+				if format == "json" {
+					if printErr := printJSON(stdout, res); printErr != nil {
+						return printErr
+					}
+				} else {
+					printBuildSummary(stdout, res)
 				}
 			}
 			if err != nil {
@@ -254,7 +450,39 @@ func buildCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&arch, "arch", "x64", "architecture: x64 or x86")
 	cmd.Flags().StringVar(&compiler, "compiler", "", "compiler profile override: auto, mingw, or msvc")
 	cmd.Flags().BoolVar(&verifyReproducible, "verify-reproducible", false, "build twice and require identical object bytes")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
 	return cmd
+}
+
+func printBuildSummary(stdout io.Writer, result buildsys.Result) {
+	status := strings.ToUpper(result.Status)
+	if status == "" {
+		status = "ERROR"
+	}
+	fmt.Fprintf(stdout, "BOF BUILD %s\n", status)
+	fmt.Fprintf(stdout, "object    %s (%s)\n", result.Object, result.Arch)
+	if result.Compiler.Profile != "" {
+		fmt.Fprintf(stdout, "compiler  %s", result.Compiler.Profile)
+		if result.Compiler.Version != "" {
+			fmt.Fprintf(stdout, "  %s", result.Compiler.Version)
+		}
+		fmt.Fprintln(stdout)
+	}
+	if result.ObjectFingerprint != nil {
+		fmt.Fprintf(stdout, "file      %d bytes  sha256=%s\n", result.ObjectFingerprint.Size, shortHash(result.ObjectFingerprint.SHA256))
+	}
+	if result.Reproducibility != nil && result.Reproducibility.Checked {
+		fmt.Fprintf(stdout, "rebuild   match=%t\n", result.Reproducibility.Reproducible)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Severity == "error" || diagnostic.Severity == "warning" {
+			fmt.Fprintf(stdout, "%-8s %s: %s\n", diagnostic.Severity, diagnostic.Code, diagnostic.Message)
+		}
+	}
+	if result.Error != "" {
+		fmt.Fprintf(stdout, "error     %s\n", result.Error)
+	}
+	fmt.Fprintf(stdout, "reports   %s%c\n", filepath.Dir(result.EvidencePath), os.PathSeparator)
 }
 
 func matrixCommand(stdout io.Writer) *cobra.Command {
@@ -271,7 +499,7 @@ func matrixCommand(stdout io.Writer) *cobra.Command {
 		Short: "Exercise compiler, optimization, architecture, and runtime combinations",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if format != "text" && format != "json" && format != "md" && format != "markdown" {
+			if format != "summary" && format != "text" && format != "json" && format != "md" && format != "markdown" {
 				return fmt.Errorf("unknown matrix format %q", format)
 			}
 			persisted, matrixErr := matrixsvc.Run(matrixsvc.Options{
@@ -286,7 +514,7 @@ func matrixCommand(stdout io.Writer) *cobra.Command {
 			})
 			if persisted.Report.RunID != "" {
 				switch format {
-				case "text":
+				case "summary", "text":
 					fmt.Fprint(stdout, matrixsvc.Text(persisted.Report))
 					fmt.Fprintf(stdout, "reports: %s %s\n", persisted.JSONPath, persisted.MDPath)
 				case "md", "markdown":
@@ -327,13 +555,13 @@ func matrixReplayCommand(stdout io.Writer) *cobra.Command {
 		Short: "Replay preserved x64 matrix artifacts through the Windows runtime",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if format != "text" && format != "json" && format != "md" && format != "markdown" {
+			if format != "summary" && format != "text" && format != "json" && format != "md" && format != "markdown" {
 				return fmt.Errorf("unknown matrix replay format %q", format)
 			}
 			persisted, replayErr := matrixsvc.Replay(args[0])
 			if persisted.Report.RunID != "" {
 				switch format {
-				case "text":
+				case "summary", "text":
 					fmt.Fprint(stdout, matrixsvc.Text(persisted.Report))
 					fmt.Fprintf(stdout, "reports: %s %s\n", persisted.JSONPath, persisted.MDPath)
 				case "md", "markdown":
@@ -384,21 +612,121 @@ func analyzeCommand(stdout io.Writer) *cobra.Command {
 	var entry string
 	var format string
 	var baselinePath string
+	var comparePath string
 	var suppressions []string
+	var compiler string
 	cmd := &cobra.Command{
-		Use:   "analyze <artifact>",
-		Short: "Analyze an artifact and write JSON/Markdown reports",
+		Use:   "analyze <project|source.c|artifact>",
+		Short: "Analyze BOF source or a compiled artifact and write reports",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			persisted, err := artifact.AnalyzeAndPersistWithOptions(args[0], artifact.AnalysisOptions{Entrypoint: entry, Suppressions: suppressions})
+			if format != "summary" && format != "text" && format != "json" && format != "md" && format != "markdown" {
+				return fmt.Errorf("unknown analysis format %q", format)
+			}
+			if baselinePath != "" && comparePath != "" {
+				return fmt.Errorf("use either --baseline or --compare, not both")
+			}
+			analysisInput := args[0]
+			projectInput := ""
+			if info, statErr := os.Stat(args[0]); statErr == nil && info.IsDir() {
+				if baselinePath != "" || comparePath != "" {
+					return fmt.Errorf("--baseline and --compare require compiled objects; build the project and pass its object")
+				}
+				cfg, _, err := config.LoadFor(args[0])
+				if err != nil {
+					return err
+				}
+				effectiveEntry := entry
+				if effectiveEntry == "go" && cfg.Entrypoint != "" {
+					effectiveEntry = cfg.Entrypoint
+				}
+				sourceResult, sourceErr := sourceaudit.AnalyzeAndPersist(args[0], sourceaudit.Options{Entrypoint: effectiveEntry})
+				if sourceErr != nil || sourceResult.Report.Status == "fail" {
+					switch format {
+					case "json":
+						if err := printJSON(stdout, sourceResult); err != nil {
+							return err
+						}
+					case "md", "markdown":
+						fmt.Fprint(stdout, sourceaudit.Markdown(sourceResult.Report))
+					default:
+						fmt.Fprint(stdout, sourceaudit.Text(sourceResult.Report))
+						fmt.Fprintf(stdout, "reports: %s %s\n", sourceResult.JSONPath, sourceResult.MDPath)
+					}
+					if sourceErr != nil {
+						return sourceErr
+					}
+					return codedError{code: 1, err: fmt.Errorf("BOF source analysis failed with %d error finding(s)", sourceResult.Report.Summary.Errors)}
+				}
+				build, err := buildsys.BuildWithOptions(args[0], buildsys.Options{Arch: "x64", Compiler: compiler})
+				if err != nil {
+					return codedError{code: 1, err: err}
+				}
+				analysisInput = build.Object
+				projectInput = args[0]
+				entry = effectiveEntry
+			}
+			if sourceaudit.IsSourceInput(analysisInput) {
+				if baselinePath != "" || comparePath != "" {
+					return fmt.Errorf("--baseline and --compare require compiled objects; build the project and pass its object")
+				}
+				if len(suppressions) > 0 {
+					return fmt.Errorf("--suppress applies to compiled artifact findings")
+				}
+				cfg, _, err := config.LoadFor(args[0])
+				if err != nil {
+					return err
+				}
+				effectiveEntry := entry
+				if effectiveEntry == "go" && cfg.Entrypoint != "" {
+					effectiveEntry = cfg.Entrypoint
+				}
+				persisted, err := sourceaudit.AnalyzeAndPersist(args[0], sourceaudit.Options{Entrypoint: effectiveEntry})
+				if err != nil {
+					return err
+				}
+				switch format {
+				case "summary", "text":
+					fmt.Fprint(stdout, sourceaudit.Text(persisted.Report))
+					fmt.Fprintf(stdout, "reports: %s %s\n", persisted.JSONPath, persisted.MDPath)
+				case "md", "markdown":
+					fmt.Fprint(stdout, sourceaudit.Markdown(persisted.Report))
+					fmt.Fprintf(stdout, "\nreports: %s %s\n", persisted.JSONPath, persisted.MDPath)
+				case "json":
+					if err := printJSON(stdout, persisted); err != nil {
+						return err
+					}
+				}
+				if persisted.Report.Status == "fail" {
+					return codedError{code: 1, err: fmt.Errorf("BOF source analysis failed with %d error finding(s)", persisted.Report.Summary.Errors)}
+				}
+				return nil
+			}
+			persisted, err := artifact.AnalyzeAndPersistWithOptions(analysisInput, artifact.AnalysisOptions{Entrypoint: entry, Suppressions: suppressions})
 			if err != nil {
 				return err
+			}
+			if projectInput != "" {
+				if err := applyProjectPackMetadata(&persisted.Analysis, projectInput); err != nil {
+					return err
+				}
+				if err := writeJSON(persisted.JSONPath, persisted.Analysis); err != nil {
+					return err
+				}
+				if err := os.WriteFile(persisted.MDPath, []byte(artifact.Markdown(persisted.Analysis)), 0o644); err != nil {
+					return err
+				}
 			}
 			var diff *artifact.DiffReport
 			var diffJSONPath string
 			var diffMDPath string
-			if baselinePath != "" {
-				baseline, err := artifact.LoadAnalysis(baselinePath)
+			if baselinePath != "" || comparePath != "" {
+				var baseline artifact.Analysis
+				if baselinePath != "" {
+					baseline, err = artifact.LoadAnalysis(baselinePath)
+				} else {
+					baseline, err = artifact.AnalyzeWithOptions(comparePath, artifact.AnalysisOptions{Entrypoint: entry})
+				}
 				if err != nil {
 					return err
 				}
@@ -414,7 +742,13 @@ func analyzeCommand(stdout io.Writer) *cobra.Command {
 					return err
 				}
 			}
-			if format == "md" || format == "markdown" {
+			if format == "summary" {
+				printAnalysisSummary(stdout, persisted.Analysis)
+				fmt.Fprintf(stdout, "reports   %s%c\n", filepath.Dir(persisted.JSONPath), os.PathSeparator)
+			} else if format == "text" {
+				printAnalysis(stdout, persisted.Analysis)
+				fmt.Fprintf(stdout, "reports: %s %s\n", persisted.JSONPath, persisted.MDPath)
+			} else if format == "md" || format == "markdown" {
 				fmt.Fprint(stdout, artifact.Markdown(persisted.Analysis))
 				if diff != nil {
 					fmt.Fprint(stdout, "\n\n")
@@ -439,9 +773,11 @@ func analyzeCommand(stdout io.Writer) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&entry, "entry", "go", "entrypoint symbol")
-	cmd.Flags().StringVar(&format, "format", "json", "output format: json or md")
+	cmd.Flags().StringVar(&format, "format", "summary", "output format: summary, text, json, or md")
 	cmd.Flags().StringVar(&baselinePath, "baseline", "", "previous analysis.json to diff against")
+	cmd.Flags().StringVar(&comparePath, "compare", "", "other compiled object to compare capabilities against")
 	cmd.Flags().StringSliceVar(&suppressions, "suppress", nil, "mark finding category or category=evidence-glob as suppressed; repeatable")
+	cmd.Flags().StringVar(&compiler, "compiler", "auto", "compiler profile for project input: auto, mingw, or msvc")
 	return cmd
 }
 
@@ -457,7 +793,7 @@ func preflightCommand(stdout io.Writer) *cobra.Command {
 		Short: "Predict Windows COFF loader compatibility without execution",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if format != "text" && format != "json" && format != "md" && format != "markdown" {
+			if format != "summary" && format != "text" && format != "json" && format != "md" && format != "markdown" {
 				return fmt.Errorf("unknown preflight format %q", format)
 			}
 			persisted, err := preflightsvc.Run(preflightsvc.Options{
@@ -470,6 +806,9 @@ func preflightCommand(stdout io.Writer) *cobra.Command {
 				return err
 			}
 			switch format {
+			case "summary":
+				printPreflightSummary(stdout, persisted.Report)
+				fmt.Fprintf(stdout, "reports   %s%c\n", filepath.Dir(persisted.JSONPath), os.PathSeparator)
 			case "text":
 				fmt.Fprint(stdout, preflightsvc.Text(persisted.Report))
 				fmt.Fprintf(stdout, "reports: %s %s\n", persisted.JSONPath, persisted.MDPath)
@@ -494,10 +833,128 @@ func preflightCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&selectList, "select", "", "comma-separated arsenal selection")
 	cmd.Flags().StringVar(&entry, "entry", "go", "entrypoint symbol")
 	cmd.Flags().StringVar(&arch, "arch", "x64", "arsenal architecture: x64, x86, or all")
-	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, or md")
+	cmd.Flags().StringVar(&format, "format", "summary", "output format: summary, text, json, or md")
 	cmd.Flags().BoolVar(&strict, "strict", false, "fail on runtime-lookup warnings as well as blockers")
 	cmd.Flags().BoolVar(&reportOnly, "report-only", false, "always exit zero after writing the matrix")
 	return cmd
+}
+
+func printPreflightSummary(w io.Writer, report preflightsvc.Report) {
+	status := "PASS"
+	if report.Status != "pass" {
+		status = "REVIEW"
+	}
+	fmt.Fprintf(w, "BOF PREFLIGHT %s\n", status)
+	if len(report.Results) == 1 {
+		printPreflightObjectSummary(w, report.Results[0])
+		return
+	}
+
+	fmt.Fprintf(w, "objects   %d from %s\n", report.Summary.Total, report.Root)
+	fmt.Fprintf(w, "loader    compatible=%d  warnings=%d  blocked=%d  failed=%d\n", report.Summary.Compatible, report.Summary.RuntimeLookup, report.Summary.Blocked, report.Summary.AnalyzeFailed)
+	for _, result := range report.Results {
+		imports := preflightImportCount(result)
+		detail := preflightIssueCategories(result)
+		if detail == "" {
+			detail = result.Status
+		}
+		fmt.Fprintf(w, "  %-20s %-7s arch=%-3s toolchain=%-10s imports=%-3s relocs=%-4d %s\n",
+			result.Name,
+			preflightResultLabel(result),
+			emptyText(result.Arch, "?"),
+			emptyText(result.Toolchain, "unknown"),
+			imports,
+			result.Relocations,
+			detail,
+		)
+	}
+}
+
+func printPreflightObjectSummary(w io.Writer, result preflightsvc.Result) {
+	object := result.Object
+	if object == "" {
+		object = result.Path
+	}
+	blockers, warnings := 0, 0
+	loader := "not checked"
+	if result.Compatibility != nil {
+		blockers = len(result.Compatibility.Blockers)
+		warnings = len(result.Compatibility.Warnings)
+		switch {
+		case !result.Compatibility.Compatible:
+			loader = "blocked"
+		case warnings > 0:
+			loader = "compatible (runtime lookup)"
+		default:
+			loader = "compatible"
+		}
+	} else if result.Status == "analyze_failed" {
+		loader = "analysis failed"
+	}
+	fmt.Fprintf(w, "object    %s\n", object)
+	fmt.Fprintf(w, "target    arch=%s  toolchain=%s  entry=%s  executable=%t\n", emptyText(result.Arch, "unknown"), emptyText(result.Toolchain, "unknown"), emptyText(result.Entrypoint, "go"), result.EntrypointOK)
+	fmt.Fprintf(w, "loader    %s  blockers=%d  warnings=%d\n", emptyText(loader, "not checked"), blockers, warnings)
+	fmt.Fprintf(w, "shape     imports=%s  relocs=%d\n", preflightImportCount(result), result.Relocations)
+	if result.Error != "" {
+		fmt.Fprintf(w, "error     %s\n", result.Error)
+	}
+	if result.Compatibility != nil && len(result.Compatibility.Blockers) > 0 {
+		fmt.Fprintf(w, "blockers  %s\n", preflightIssueCategoriesFrom(result.Compatibility.Blockers))
+	}
+	if result.Compatibility != nil && len(result.Compatibility.Warnings) > 0 {
+		fmt.Fprintf(w, "warnings  %s\n", preflightIssueCategoriesFrom(result.Compatibility.Warnings))
+	}
+}
+
+func preflightImportCount(result preflightsvc.Result) string {
+	if result.Object == "" {
+		return "?"
+	}
+	analysis, err := artifact.Analyze(result.Object, emptyText(result.Entrypoint, "go"))
+	if err != nil {
+		return "?"
+	}
+	return fmt.Sprintf("%d", len(analysis.Imports))
+}
+
+func preflightResultLabel(result preflightsvc.Result) string {
+	if result.Status == "compatible" {
+		return "PASS"
+	}
+	if result.Status == "compatible_runtime_lookup" {
+		return "WARN"
+	}
+	return "BLOCKED"
+}
+
+func preflightIssueCategories(result preflightsvc.Result) string {
+	if result.Error != "" {
+		return result.Error
+	}
+	if result.Compatibility == nil {
+		return ""
+	}
+	if len(result.Compatibility.Blockers) > 0 {
+		return "blockers=" + preflightIssueCategoriesFrom(result.Compatibility.Blockers)
+	}
+	if len(result.Compatibility.Warnings) > 0 {
+		return "warnings=" + preflightIssueCategoriesFrom(result.Compatibility.Warnings)
+	}
+	return ""
+}
+
+func preflightIssueCategoriesFrom(issues []capability.Issue) string {
+	seen := map[string]bool{}
+	categories := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		if issue.Category == "" || seen[issue.Category] {
+			continue
+		}
+		seen[issue.Category] = true
+		categories = append(categories, issue.Category)
+	}
+	sort.Strings(categories)
+	return strings.Join(categories, ", ")
 }
 
 func runCommand(stdout io.Writer) *cobra.Command {
@@ -505,28 +962,121 @@ func runCommand(stdout io.Writer) *cobra.Command {
 	var timeout int
 	var runtimeName string
 	var argsMode bool
+	var via string
+	var namedArgs []string
+	var compiler string
+	var sliverClient string
+	var sliverSession string
+	var labHost string
+	var labRoot string
+	var labExecutable string
+	var transportTimeout time.Duration
+	var cleanup bool
 	cmd := &cobra.Command{
-		Use:   "run <artifact> [--args z:hello i:3]",
-		Short: "Run an artifact through a platform runtime",
+		Use:   "run <project|artifact> [--via native|lab|sliver|cobaltstrike] [--arg name=value]",
+		Short: "Build if needed and execute a BOF through the selected runtime",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cleanup {
+				if !sourceaudit.IsSourceInput(args[0]) {
+					return fmt.Errorf("--cleanup requires a BOF project with a pack lock")
+				}
+				cleanupProject, cleanupPacks, remove, err := prepareCleanupProject(args[0])
+				if err != nil {
+					return err
+				}
+				defer remove()
+				args[0] = cleanupProject
+				namedArgs = cleanupNamedArguments(cleanupProject, namedArgs)
+				fmt.Fprintf(stdout, "cleanup   %s\n", strings.Join(cleanupPacks, ", "))
+			}
 			argTokens := args[1:]
 			if !argsMode && len(argTokens) > 0 {
 				return fmt.Errorf("unexpected trailing args; put BOF args after --args")
 			}
-			packed, items, err := argpack.PackTokens(argTokens)
+			projectInput := sourceaudit.IsSourceInput(args[0])
+			if projectInput && len(namedArgs) == 0 && len(argTokens) == 0 {
+				cfg, _, err := config.LoadFor(args[0])
+				if err != nil {
+					return err
+				}
+				argTokens = append([]string(nil), cfg.Args...)
+			}
+			resolved, err := resolveRunArguments(args[0], namedArgs, argTokens)
 			if err != nil {
 				return err
+			}
+			packed, items, err := argpack.PackTokens(resolved.Tokens)
+			if err != nil {
+				return err
+			}
+			selectedAdapter, err := resolveRuntimeAdapter(via)
+			if err != nil {
+				return err
+			}
+			switch selectedAdapter {
+			case "lab":
+				if !projectInput {
+					return fmt.Errorf("lab execution requires a project directory so BOFBench can sync its source and lockfile")
+				}
+				ctx := cmd.Context()
+				if transportTimeout > 0 {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, transportTimeout)
+					defer cancel()
+				}
+				report, runErr := lab.RemoteRun(ctx, args[0], lab.RemoteRunOptions{
+					RemoteOptions: lab.RemoteOptions{Host: labHost, RemoteRoot: labRoot, Executable: labExecutable, SSH: "ssh", SCP: "scp"},
+					Compiler:      compiler, Runtime: "windows-coff", Args: resolved.Tokens,
+				})
+				fmt.Fprint(stdout, lab.RemoteRunText(report))
+				if runErr != nil {
+					return codedError{code: 1, err: runErr}
+				}
+				return nil
+			case "sliver":
+				options, err := prepareStageOptions(stageInputOptions{
+					Input: args[0], Target: "sliver", Entrypoint: entry, ArgumentTokens: resolved.Tokens, ArgumentNames: resolved.Names, ArgumentOptional: resolved.Optional, ArgumentsExplicit: true,
+					Compiler: compiler, Runtime: runtimeName, SkipRun: true,
+				})
+				if err != nil {
+					return err
+				}
+				result, err := stage.StageWithOptions(options)
+				if err != nil {
+					return err
+				}
+				return runSliverExtension(stdout, sliverOptions{Client: sliverClient, SessionFilter: sliverSession}, result.Output, "", resolved.CLIValues)
+			case "cobaltstrike":
+				return runCobaltStrike(stdout, cobaltStrikeRunOptions{Input: args[0], Entrypoint: entry, Compiler: compiler, Runtime: runtimeName, ArgumentTokens: resolved.Tokens, ArgumentNames: resolved.Names, ArgumentOptional: resolved.Optional, CLIValues: resolved.CLIValues})
+			case "native":
+			}
+			object := args[0]
+			if projectInput {
+				build, buildErr := buildsys.BuildWithOptions(args[0], buildsys.Options{Arch: "x64", Compiler: compiler})
+				if buildErr != nil {
+					return codedError{code: 1, err: buildErr}
+				}
+				object = build.Object
+				cfg, _, cfgErr := config.LoadFor(args[0])
+				if cfgErr == nil {
+					if entry == "go" && cfg.Entrypoint != "" {
+						entry = cfg.Entrypoint
+					}
+					if timeout == 5000 && cfg.TimeoutMS > 0 {
+						timeout = cfg.TimeoutMS
+					}
+				}
 			}
 			runDir, err := runlog.NewDir("run-" + safeName(objectBase(args[0])))
 			if err != nil {
 				return err
 			}
 			res, err := runtimesvc.Run(runtimesvc.Request{
-				Path:      args[0],
+				Path:      object,
 				Entry:     entry,
 				ArgHex:    argpack.Hex(packed),
-				Tokens:    argTokens,
+				Tokens:    resolved.Tokens,
 				TimeoutMS: timeout,
 				Runtime:   runtimeName,
 			})
@@ -547,6 +1097,17 @@ func runCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().IntVar(&timeout, "timeout", 5000, "timeout in milliseconds")
 	cmd.Flags().StringVar(&runtimeName, "runtime", "auto", "runtime: auto, windows-coff, linux-elf, darwin-macho, wine-coff")
 	cmd.Flags().BoolVar(&argsMode, "args", false, "treat remaining positional tokens as packed artifact args")
+	cmd.Flags().StringVar(&via, "via", "native", "execution target: native, lab, sliver, or cobaltstrike")
+	cmd.Flags().StringArrayVar(&namedArgs, "arg", nil, "named pack argument (name=value); repeatable")
+	cmd.Flags().StringVar(&compiler, "compiler", "auto", "compiler profile for project input: auto, mingw, or msvc")
+	cmd.Flags().StringVar(&sliverClient, "sliver-client", filepath.Join("work", "tools", "sliver", "sliver-client_macos-arm64"), "Sliver client binary")
+	cmd.Flags().StringVar(&sliverSession, "session", "DEVBOX", "Sliver session ID, name, or filter")
+	defaults := lab.DefaultRemoteOptions()
+	cmd.Flags().StringVar(&labHost, "host", defaults.Host, "Windows lab SSH host or alias")
+	cmd.Flags().StringVar(&labRoot, "remote-root", defaults.RemoteRoot, "BOFBench root on the Windows lab")
+	cmd.Flags().StringVar(&labExecutable, "remote-exe", defaults.Executable, "BOFBench executable on the Windows lab")
+	cmd.Flags().DurationVar(&transportTimeout, "transport-timeout", 3*time.Minute, "lab operation timeout")
+	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "run the cleanup companion packs instead of the project's action packs")
 	return cmd
 }
 
@@ -645,62 +1206,143 @@ func stageCommand(stdout io.Writer) *cobra.Command {
 	var target string
 	var entry string
 	var argsMode bool
+	var profile string
+	var compiler string
+	var runtimeName string
+	var verifyReproducible bool
+	var skipRun bool
+	var format string
 	cmd := &cobra.Command{
-		Use:   "stage <artifact> --target cobaltstrike|sliver|raw [--args ...]",
-		Short: "Stage an artifact for an operator/C2 target",
+		Use:   "stage <project-or-artifact> --target cobaltstrike|sliver|raw [--args ...]",
+		Short: "Build if needed and create a self-verified operator/C2 handoff",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			legacyStage := cmd.CalledAs() == "stage"
+			if format != "text" && format != "json" {
+				return fmt.Errorf("unknown export format %q", format)
+			}
 			if target == "" {
-				return fmt.Errorf("--target is required")
+				return fmt.Errorf("--for is required")
 			}
 			argTokens := args[1:]
 			if !argsMode && len(argTokens) > 0 {
-				return fmt.Errorf("unexpected trailing args; put staging args after --args")
+				return fmt.Errorf("unexpected trailing args; put packed arguments after --args")
 			}
-			_, items, err := argpack.PackTokens(argTokens)
+			options, err := prepareStageOptions(stageInputOptions{
+				Input: args[0], Target: target, Entrypoint: entry, ArgumentTokens: argTokens, ArgumentsExplicit: argsMode,
+				Profile: profile, Compiler: compiler, Runtime: runtimeName, VerifyReproducible: verifyReproducible, SkipRun: skipRun,
+			})
 			if err != nil {
 				return err
 			}
-			res, err := stage.Stage(args[0], target, entry, items)
+			if !legacyStage {
+				options.OutputRoot = "export"
+			}
+			res, err := stage.StageWithOptions(options)
 			if err != nil {
 				return err
 			}
-			return printJSON(stdout, res)
+			if format == "json" {
+				return printJSON(stdout, res)
+			}
+			printExportSummary(stdout, res, legacyStage)
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", "", "target: cobaltstrike, sliver, raw")
-	cmd.Flags().StringVar(&entry, "entry", "go", "entrypoint")
+	cmd.Flags().StringVar(&entry, "entry", "", "entrypoint; project config or go by default")
 	cmd.Flags().BoolVar(&argsMode, "args", false, "treat remaining positional tokens as packed artifact args")
+	cmd.Flags().StringVar(&profile, "profile", "", "project test/operator profile")
+	cmd.Flags().StringVar(&compiler, "compiler", "auto", "project compiler profile: auto, mingw, or msvc")
+	cmd.Flags().StringVar(&runtimeName, "runtime", "auto", "project validation runtime")
+	cmd.Flags().BoolVar(&verifyReproducible, "verify-reproducible", true, "double-build project input and require identical object bytes")
+	cmd.Flags().BoolVar(&skipRun, "skip-run", false, "for project input, stop after build/analysis instead of native validation")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
 	cmd.AddCommand(stageVerifyCommand(stdout))
+	return cmd
+}
+
+func exportCommand(stdout io.Writer) *cobra.Command {
+	cmd := stageCommand(stdout)
+	cmd.Use = "export <project-or-artifact> --for cobaltstrike|sliver|raw [--args ...]"
+	cmd.Aliases = []string{"stage"}
+	cmd.Short = "Build if needed and export a BOF for native or C2 use"
+	cmd.Flags().String("for", "", "export target: cobaltstrike, sliver, raw")
+	cmd.PreRunE = func(command *cobra.Command, args []string) error {
+		value, err := command.Flags().GetString("for")
+		if err != nil {
+			return err
+		}
+		if value != "" {
+			return command.Flags().Set("target", value)
+		}
+		return nil
+	}
 	return cmd
 }
 
 func stageVerifyCommand(stdout io.Writer) *cobra.Command {
 	var format string
 	cmd := &cobra.Command{
-		Use:   "verify <stage-directory-or-zip>",
-		Short: "Verify a staged package and its manifest integrity",
+		Use:   "verify <export-directory-or-zip>",
+		Short: "Verify an exported package and its manifest integrity",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if format != "text" && format != "json" {
-				return fmt.Errorf("unknown stage verification format %q", format)
+			if format != "summary" && format != "text" && format != "json" {
+				return fmt.Errorf("unknown export verification format %q", format)
 			}
 			report := stage.Verify(args[0])
 			if format == "json" {
 				if err := printJSON(stdout, report); err != nil {
 					return err
 				}
-			} else {
+			} else if format == "text" {
 				fmt.Fprint(stdout, report.Text())
+			} else {
+				printExportVerifySummary(stdout, report, cmd.Parent() != nil && cmd.Parent().CalledAs() == "stage")
 			}
 			if !report.Passed() {
-				return codedError{code: 1, err: fmt.Errorf("stage package verification failed")}
+				return codedError{code: 1, err: fmt.Errorf("export package verification failed")}
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	cmd.Flags().StringVar(&format, "format", "summary", "output format: summary, text, or json")
 	return cmd
+}
+
+func printExportSummary(stdout io.Writer, result stage.Result, legacyStage bool) {
+	status := "FAIL"
+	if result.Verified {
+		status = "PASS"
+	}
+	label := "EXPORT"
+	command := "export"
+	if legacyStage {
+		label = "STAGE (compatibility alias for EXPORT)"
+		command = "export"
+	}
+	fmt.Fprintf(stdout, "BOF %s %s\n", label, status)
+	fmt.Fprintf(stdout, "target    %s\n", result.Target)
+	fmt.Fprintf(stdout, "object    %s\n", result.Object)
+	fmt.Fprintf(stdout, "package   %s\n", result.Output)
+	for _, verification := range result.Verification {
+		fmt.Fprintf(stdout, "verify    %-9s %-18s warnings=%d\n", verification.Kind, verification.Status, verification.Warnings)
+	}
+	fmt.Fprintf(stdout, "next      bofbench %s verify %s\n", command, result.Output)
+}
+
+func printExportVerifySummary(stdout io.Writer, report stage.Verification, legacyStage bool) {
+	status := strings.ToUpper(report.Status)
+	label := "Export Package Verification"
+	if legacyStage {
+		label = "Stage Alias / Export Package Verification"
+	}
+	fmt.Fprintf(stdout, "%s: %s\n", label, status)
+	fmt.Fprintf(stdout, "package   %s  target=%s\n", report.Name, report.Target)
+	fmt.Fprintf(stdout, "input     %s (%s)\n", report.Input, report.Kind)
+	fmt.Fprintf(stdout, "files     %d  bytes=%d\n", report.Summary.Files, report.Summary.Bytes)
+	fmt.Fprintf(stdout, "checks    pass=%d  warnings=%d  fail=%d\n", report.Summary.Passed, report.Summary.Warnings, report.Summary.Failed)
 }
 
 func doctorCommand(stdout io.Writer) *cobra.Command {
@@ -742,7 +1384,21 @@ func labCommand(stdout, stderr io.Writer) *cobra.Command {
 		Use:   "lab",
 		Short: "Run and summarize local lab workflows",
 	}
-	cmd.AddCommand(labSmokeCommand(stdout, stderr), labSummaryCommand(stdout))
+	cmd.AddCommand(
+		labInitCommand(stdout),
+		labBootstrapCommand(stdout),
+		labProviderCommand(stdout, "up"),
+		labProviderCommand(stdout, "snapshot"),
+		labProviderCommand(stdout, "restore"),
+		labRemoteStatusCommand(stdout),
+		labRemoteSyncCommand(stdout),
+		labRemoteRunCommand(stdout),
+		labRemoteCollectCommand(stdout),
+		labRemoteResetCommand(stdout),
+		labStateCommand(stdout),
+		labSmokeCommand(stdout, stderr),
+		labSummaryCommand(stdout),
+	)
 	return cmd
 }
 
@@ -1203,6 +1859,8 @@ func canRunHost(kind artifact.Kind) bool {
 }
 
 func printAnalysis(w io.Writer, a artifact.Analysis) {
+	printAnalysisSummary(w, a)
+	fmt.Fprintln(w, "\nLoader and object details")
 	fmt.Fprintf(w, "object: %s\n", a.Path)
 	fmt.Fprintf(w, "kind: %s\n", a.Kind)
 	fmt.Fprintf(w, "arch: %s\n", a.Arch)
@@ -1237,7 +1895,7 @@ func printAnalysis(w io.Writer, a artifact.Analysis) {
 	}
 	if a.LoaderCompatibility != nil {
 		compatibility := a.LoaderCompatibility
-		fmt.Fprintf(w, "loader preflight:\n")
+		fmt.Fprintf(w, "loader support:\n")
 		fmt.Fprintf(w, "  catalog=%s status=%s compatible=%s blockers=%d warnings=%d\n", compatibility.CatalogVersion, compatibility.Status, yesNo(compatibility.Compatible), len(compatibility.Blockers), len(compatibility.Warnings))
 		for _, issue := range compatibility.Blockers {
 			fmt.Fprintf(w, "  blocker %-28s %s", issue.Category, issue.Detail)
@@ -1337,6 +1995,223 @@ func printAnalysis(w io.Writer, a artifact.Analysis) {
 			fmt.Fprintf(w, "  %s\n", warning)
 		}
 	}
+}
+
+func printAnalysisSummary(w io.Writer, a artifact.Analysis) {
+	loader := "not checked"
+	blockers := 0
+	if a.LoaderCompatibility != nil {
+		loader = a.LoaderCompatibility.Status
+		blockers = len(a.LoaderCompatibility.Blockers)
+	}
+	fmt.Fprintln(w, "Can do")
+	if len(a.BehaviorChains) == 0 && len(a.Capabilities) == 0 {
+		fmt.Fprintln(w, "  - No operator capability identified with useful confidence")
+	}
+	for _, chain := range a.BehaviorChains {
+		location := ""
+		if chain.Function != "" {
+			location = " in " + chain.Function
+		}
+		fmt.Fprintf(w, "  - %s — %s%s\n", chain.Name, chain.Confidence, location)
+		fmt.Fprintf(w, "    %s\n", chain.Summary)
+	}
+	for _, capability := range a.Capabilities {
+		fmt.Fprintf(w, "  - %s — %s\n", shortCapabilityName(capability), emptyText(capability.Confidence, "confirmed primitive"))
+	}
+
+	fmt.Fprintln(w, "Effects")
+	if len(a.Effects) == 0 {
+		fmt.Fprintln(w, "  - No material effect inferred")
+	} else {
+		for _, effect := range a.Effects {
+			fmt.Fprintf(w, "  - %s\n", effect)
+		}
+	}
+
+	fmt.Fprintln(w, "Needs")
+	needs := analysisNeeds(a)
+	if len(needs) == 0 {
+		fmt.Fprintln(w, "  - No special privilege, network, or host condition inferred")
+	} else {
+		for _, need := range needs {
+			fmt.Fprintf(w, "  - %s\n", need)
+		}
+	}
+	if len(a.Arguments) > 0 {
+		fmt.Fprintln(w, "Arguments")
+		for _, argument := range a.Arguments {
+			required := "optional"
+			if argument.Required {
+				required = "required"
+			}
+			fmt.Fprintf(w, "  - %s (%s, %s; from %s)\n", argument.Name, argument.Type, required, argument.Source)
+		}
+	}
+
+	fmt.Fprintln(w, "Works with")
+	if len(a.WorksWith) == 0 {
+		fmt.Fprintln(w, "  - No supported runtime identified")
+	} else {
+		fmt.Fprintf(w, "  - %s\n", strings.Join(a.WorksWith, ", "))
+	}
+	if len(a.Observed) > 0 {
+		fmt.Fprintln(w, "Observed")
+		for _, observed := range a.Observed {
+			fmt.Fprintf(w, "  - %s — %s\n", observed.Capability, observed.Status)
+		}
+	}
+	fmt.Fprintf(w, "Object      %s\n", a.Path)
+	fmt.Fprintf(w, "Format      %s %s; toolchain=%s; bytes=%d; imports=%d; relocs=%d\n", a.Format, a.Arch, emptyText(a.Toolchain.Family, "unknown"), a.Size, len(a.Imports), a.Relocations)
+	fmt.Fprintf(w, "Entry       %s; executable=%t\n", a.Entrypoint, a.EntrypointOK && a.EntrypointExecutable)
+	fmt.Fprintf(w, "Loader      %s; blockers=%d\n", loader, blockers)
+	if a.FindingSummary.Active > 0 || a.FindingSummary.Suppressed > 0 {
+		fmt.Fprintf(w, "Details     findings=%d; suppressed=%d (use --format text or --format json)\n", a.FindingSummary.Active, a.FindingSummary.Suppressed)
+	}
+}
+
+func analysisNeeds(a artifact.Analysis) []string {
+	var values []string
+	values = append(values, a.Requirements.Privilege...)
+	values = append(values, a.Requirements.Network...)
+	values = append(values, a.Requirements.Host...)
+	for _, capability := range a.Capabilities {
+		values = append(values, capability.Needs...)
+	}
+	for _, chain := range a.BehaviorChains {
+		values = append(values, chain.Needs...)
+	}
+	seen := map[string]bool{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
+}
+
+func printAnalysisCapabilities(w io.Writer, capabilities []artifact.Capability) {
+	if len(capabilities) == 0 {
+		fmt.Fprintln(w, "can do    no high-confidence capability inference")
+		return
+	}
+	names := make([]string, 0, len(capabilities))
+	evidence := map[string]bool{}
+	usesStrings := false
+	for _, item := range capabilities {
+		names = append(names, shortCapabilityName(item))
+		for _, value := range item.Evidence {
+			evidence[value] = true
+			if strings.HasPrefix(value, "string: ") {
+				usesStrings = true
+			}
+		}
+	}
+	printWrappedValues(w, "can do", names, 78)
+	fmt.Fprintf(w, "impact    %s\n", analysisCapabilityImpact(capabilities))
+	basis := "imported APIs"
+	if usesStrings {
+		basis = "imported APIs + visible strings"
+	}
+	fmt.Fprintf(w, "evidence  inferred from %d %s; not execution proof\n", len(evidence), basis)
+}
+
+func shortCapabilityName(item artifact.Capability) string {
+	if names := map[string]string{
+		"identity_account_sid":  "identity/account/SID lookup",
+		"token_context":         "token inspection",
+		"process_inventory":     "process inventory",
+		"process_access":        "process access/manipulation",
+		"service_inventory":     "service inventory",
+		"service_control":       "service control",
+		"network_tcp":           "network/TCP access",
+		"domain_context":        "domain/join context",
+		"registry_read":         "registry read",
+		"registry_write":        "registry write",
+		"file_read":             "file read",
+		"file_write":            "file write",
+		"memory_operations":     "memory allocation/protection",
+		"process_launch":        "process launch",
+		"dynamic_loading":       "dynamic API loading",
+		"persistence_mechanism": "persistence mechanism",
+	}; names[item.ID] != "" {
+		return names[item.ID]
+	}
+	return strings.ToLower(item.Name)
+}
+
+func printWrappedValues(w io.Writer, label string, values []string, width int) {
+	prefix := fmt.Sprintf("%-10s", label)
+	line := prefix
+	for index, value := range values {
+		piece := value
+		if index < len(values)-1 {
+			piece += "; "
+		}
+		if len(line)+len(piece) > width && line != prefix {
+			fmt.Fprintln(w, strings.TrimRight(line, " "))
+			line = strings.Repeat(" ", len(prefix))
+		}
+		line += piece
+	}
+	fmt.Fprintln(w, strings.TrimRight(line, " "))
+}
+
+func analysisCapabilityImpact(capabilities []artifact.Capability) string {
+	flags := map[string]bool{}
+	for _, item := range capabilities {
+		impact := strings.ToLower(item.Impact)
+		switch {
+		case strings.Contains(impact, "persistent"):
+			flags["persistence"] = true
+		case strings.Contains(impact, "state change"):
+			flags["changes state"] = true
+		}
+		if strings.Contains(impact, "code execution") {
+			flags["launches code"] = true
+		}
+		if strings.Contains(impact, "cross-process") {
+			flags["cross-process access"] = true
+		}
+		if strings.Contains(impact, "network") {
+			flags["network access"] = true
+		}
+		if strings.Contains(impact, "discovery") {
+			flags["read-only discovery"] = true
+		}
+		if strings.Contains(impact, "data access") {
+			flags["data access"] = true
+		}
+	}
+	ordered := []string{"persistence", "changes state", "launches code", "cross-process access", "network access", "data access", "read-only discovery"}
+	var values []string
+	for _, value := range ordered {
+		if flags[value] {
+			values = append(values, value)
+		}
+	}
+	if len(values) == 0 {
+		return "review inferred APIs"
+	}
+	return strings.Join(values, " + ")
+}
+
+func emptyText(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func shortHash(value string) string {
+	if len(value) <= 12 {
+		return value
+	}
+	return value[:12]
 }
 
 func runMarkdown(res runtimesvc.Result, items []argpack.Item) string {
@@ -1543,11 +2418,12 @@ operator_notes = ["negative fixture: expected to time out in the local lab runne
 }
 
 func templateReadme(name, templateName, extra string) string {
-	return fmt.Sprintf("# %s\n\nTemplate: `%s`\n\n```sh\nbofbench build bofs/%s\nbofbench inspect dist/%s.x64.o\nbofbench test bofs/%s\n%s\nbofbench stage dist/%s.x64.o --target raw\n```\n", name, templateName, name, name, name, extra, name)
+	return fmt.Sprintf("# %s\n\nTemplate: `%s`\n\n```sh\nbofbench build bofs/%s\nbofbench analyze dist/%s.x64.o\nbofbench run bofs/%s --via native\n%s\nbofbench export bofs/%s --for raw\n```\n", name, templateName, name, name, name, extra, name)
 }
 
 func templateArgsC(name string) string {
 	return fmt.Sprintf(`#include "beacon.h"
+/* bofbench:feature-includes */
 
 void go(char *args, int len) {
     datap parser;
@@ -1558,18 +2434,21 @@ void go(char *args, int len) {
     BeaconDataParse(&parser, args, len);
     message = BeaconDataExtract(&parser, &message_len);
     count = BeaconDataInt(&parser);
-    BeaconPrintf(CALLBACK_OUTPUT, "%s: %%.*s count=%%d", message_len, message, count);
+    BeaconPrintf(CALLBACK_OUTPUT, "%s: %%.*s count=%%d\n", message_len, message, count);
+    /* bofbench:feature-calls */
 }
 `, name)
 }
 
 func templateHelloC(name string) string {
 	return fmt.Sprintf(`#include "beacon.h"
+/* bofbench:feature-includes */
 
 void go(char *args, int len) {
     (void)args;
     (void)len;
-    BeaconPrintf(CALLBACK_OUTPUT, "hello from %s");
+    BeaconPrintf(CALLBACK_OUTPUT, "hello from %s\n");
+    /* bofbench:feature-calls */
 }
 `, name)
 }
@@ -1577,28 +2456,35 @@ void go(char *args, int len) {
 func templateWinAPIC(name string) string {
 	return fmt.Sprintf(`#include <windows.h>
 #include "beacon.h"
+/* bofbench:feature-includes */
+
+DECLSPEC_IMPORT DWORD WINAPI KERNEL32$GetCurrentProcessId(void);
 
 void go(char *args, int len) {
     (void)args;
     (void)len;
-    BeaconPrintf(CALLBACK_OUTPUT, "%s pid=%%lu", GetCurrentProcessId());
+    BeaconPrintf(CALLBACK_OUTPUT, "%s pid=%%lu\n", KERNEL32$GetCurrentProcessId());
+    /* bofbench:feature-calls */
 }
 `, name)
 }
 
 func templateUnresolvedC() string {
 	return `#include "beacon.h"
+/* bofbench:feature-includes */
 
 void go(char *args, int len) {
     (void)args;
     (void)len;
     MissingExternal();
+    /* bofbench:feature-calls */
 }
 `
 }
 
 func templateTimeoutC() string {
 	return `#include "beacon.h"
+/* bofbench:feature-includes */
 
 void go(char *args, int len) {
     volatile unsigned long long spin = (unsigned long long)len;
@@ -1606,6 +2492,7 @@ void go(char *args, int len) {
     for (;;) {
         spin++;
     }
+    /* bofbench:feature-calls */
 }
 `
 }
@@ -1619,17 +2506,33 @@ void MissingExternal(void);
 func templateBeaconHeader() string {
 	return `#pragma once
 #define CALLBACK_OUTPUT 0
+#ifndef DECLSPEC_IMPORT
+#define DECLSPEC_IMPORT __declspec(dllimport)
+#endif
 typedef struct {
     char *buffer;
     int length;
     int offset;
 } datap;
-void BeaconDataParse(datap *parser, char *buffer, int size);
-int BeaconDataInt(datap *parser);
-short BeaconDataShort(datap *parser);
-int BeaconDataLength(datap *parser);
-char *BeaconDataExtract(datap *parser, int *size);
-void BeaconPrintf(int type, const char *fmt, ...);
-void BeaconOutput(int type, char *data, int len);
+typedef struct {
+    char *original;
+    char *buffer;
+    int length;
+    int size;
+} formatp;
+DECLSPEC_IMPORT void BeaconDataParse(datap *parser, char *buffer, int size);
+DECLSPEC_IMPORT int BeaconDataInt(datap *parser);
+DECLSPEC_IMPORT short BeaconDataShort(datap *parser);
+DECLSPEC_IMPORT int BeaconDataLength(datap *parser);
+DECLSPEC_IMPORT char *BeaconDataExtract(datap *parser, int *size);
+DECLSPEC_IMPORT void BeaconPrintf(int type, const char *fmt, ...);
+DECLSPEC_IMPORT void BeaconOutput(int type, char *data, int len);
+DECLSPEC_IMPORT void BeaconFormatAlloc(formatp *format, int maxsz);
+DECLSPEC_IMPORT void BeaconFormatReset(formatp *format);
+DECLSPEC_IMPORT void BeaconFormatFree(formatp *format);
+DECLSPEC_IMPORT void BeaconFormatAppend(formatp *format, char *text, int len);
+DECLSPEC_IMPORT void BeaconFormatPrintf(formatp *format, const char *fmt, ...);
+DECLSPEC_IMPORT char *BeaconFormatToString(formatp *format, int *size);
+DECLSPEC_IMPORT void BeaconFormatInt(formatp *format, int value);
 `
 }

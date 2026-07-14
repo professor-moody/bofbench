@@ -1,97 +1,57 @@
 # Windows Lab
 
-For day-to-day work, use a GUI-capable Windows x64 VM with SSH enabled.
+BOFBench supports an existing Windows VM first, then provider-backed standalone or domain topologies.
 
-Recommended access model:
+## Existing VM
 
-| Path | Use |
-| --- | --- |
-| SSH | automated build, test, run, and staging commands |
-| RDP or VM console | debugger, ProcMon, Process Explorer, and crash triage |
+Create an SSH alias or WinRM route to the VM, then save the non-secret lab configuration:
 
-Useful smoke commands:
-
-```powershell
-cd C:\bofbench
-go test ./...
-go build -o work\bin\bofbench.exe .\cmd\bofbench
-.\work\bin\bofbench.exe doctor
-.\work\bin\bofbench.exe build .\testdata\bofs\hello --compiler msvc --verify-reproducible
-.\work\bin\bofbench.exe matrix .\testdata\bofs\hello --compiler msvc --arch all --execute auto
-.\work\bin\bofbench.exe matrix replay .\work\imported-matrix\matrix.json
-.\work\bin\bofbench.exe run .\dist\hello.x64.o --args z:hello i:3
-.\work\bin\bofbench.exe run .\dist\arg_echo.x64.o --args z:test-message i:42
-.\work\bin\bofbench.exe run .\dist\winapi_call.x64.o
-.\work\bin\bofbench.exe test .\testdata\bofs\data_reloc --runtime windows-coff
-.\work\bin\bofbench.exe test .\testdata\bofs\bss_reloc --runtime windows-coff
-.\work\bin\bofbench.exe test .\testdata\bofs\callback_ptr --runtime windows-coff
-.\work\bin\bofbench.exe test .\testdata\bofs\parser_all --runtime windows-coff
-.\work\bin\bofbench.exe test .\testdata\bofs\crash --runtime windows-coff
-.\work\bin\bofbench.exe stage .\dist\hello.x64.o --target raw
-.\work\bin\bofbench.exe stage verify .\stage\hello-raw.zip --format json
-.\work\bin\bofbench.exe fetch trustedsec-sa
-.\work\bin\bofbench.exe preflight .\arsenal\trustedsec-sa --select whoami,ipconfig,env,arp,netstat,routeprint,tasklist,uptime,locale
-.\work\bin\bofbench.exe preflight .\arsenal\trustedsec-sa --select whoami,ipconfig,env --arch all --report-only
-.\work\bin\bofbench.exe test .\arsenal\trustedsec-sa --select whoami,ipconfig,env,arp,netstat,routeprint,tasklist,uptime,locale --timeout 7000
+```bash
+bofbench lab init --provider existing --host bofbench-winvm
+bofbench lab bootstrap
+bofbench lab status
 ```
 
-The repeatable version is:
+Bootstrap builds or deploys:
 
-```powershell
-.\work\bin\bofbench.exe lab smoke --repo-root C:\bofbench --select whoami,ipconfig,env --skip-fetch
-.\work\bin\bofbench.exe lab summary
+- the BOFBench Windows executable;
+- `bofbench-loader.exe` for x64;
+- `bofbench-loader-x86.exe` for WoW64 x86 execution;
+- the remote project workspace;
+- compiler, native execution, Sliver, debugging, and snapshot probes.
+
+`lab status` reports usable capabilities rather than a checklist.
+
+## Run a project
+
+```bash
+bofbench lab run bofs/fieldcheck
+bofbench run bofs/fieldcheck --via lab \
+  --arg process_filter=lsass --arg result_limit=25
 ```
 
-The CLI wrapper calls the lab script and then `lab summary` renders the latest JSON evidence in a compact table. To print the exact PowerShell command without running it:
+The local project and lock are synced, the Windows host builds/runs the object, and linked reports are collected locally.
 
-```powershell
-.\work\bin\bofbench.exe lab smoke --print --repo-root C:\bofbench --select whoami,ipconfig,env --skip-fetch
+## Vagrant provider
+
+Use an operator-supplied licensed Windows box and Vagrantfile:
+
+```bash
+bofbench lab init --provider vagrant --topology standalone
+bofbench lab up
+bofbench lab snapshot clean
+bofbench lab restore clean
 ```
 
-When launched through `bofbench lab smoke`, the script builds and uses `work\bin\bofbench-lab.exe` so it does not overwrite the currently running `bofbench.exe`.
+The `domain` topology is intended for an operator-supplied Windows Server domain controller plus workstation. BOFBench does not include Windows images, licenses, C2 passwords, or VM credentials.
 
-The underlying script can still be run directly:
+## State-changing pack cycle
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows-lab-smoke.ps1 -RepoRoot C:\bofbench -Select 'whoami,ipconfig,env'
+```bash
+bofbench run bofs/persist --via lab --arg value_name=BOFBenchLab
+# independently inspect the named artifact
+bofbench run bofs/persist --via lab --cleanup --arg value_name=BOFBenchLab
+# independently confirm the exact artifact is gone
 ```
 
-The script writes `runs\<timestamp>-lab-smoke\lab-smoke.json` with each step, status, duration, and error text. It rebuilds the native loader from the current source, verifies the generated capability contract, runs the 30-case/180-mutation loader hardening corpus, requires an explicit MSVC `/Brepro` build with deterministic workspace path mapping, runs the MSVC debug/size/speed runtime matrix while classifying MSVC/x86 as an expected unsupported combination, proves that the hello fixture has execute/read code and stubs with no writable/executable section, preserves the same memory evidence through the crash fixture, executes the catalog-declared plain-import fixture, relocates a pinned real `nslookup` object without calling its entrypoint, covers the other positive and expected negative fixtures (`unresolved`, `timeout`), runs the selected x64 gate plus a report-only x64/x86 architecture matrix, and then runs the arsenal smoke.
-
-All 25 steps must pass. The summary also carries the shared evidence header and fingerprints the lab environment: Windows version/architecture, PowerShell, Go, compiler path, machine identity, and SHA-256 for the BOFBench and loader binaries.
-
-Fixture coverage:
-
-| Fixture | Purpose |
-| --- | --- |
-| `hello` | entrypoint call and `BeaconPrintf` |
-| `arg_echo` | `BeaconDataParse`, `BeaconDataExtract`, and `BeaconDataInt` |
-| `winapi_call` | common WinAPI import resolution |
-| `data_reloc` | global data and pointer relocations |
-| `bss_reloc` | zero-filled uninitialized `.bss` section handling |
-| `callback_ptr` | relocated function pointer invocation |
-| `parser_all` | `BeaconDataShort`, `BeaconDataLength`, `BeaconOutput`, and binary arg extraction |
-| `import_resolver` | explicit Kernel32 mapping for `LoadLibraryA`, `GetProcAddress`, and `FreeLibrary` |
-| `unresolved` | expected unresolved-symbol failure |
-| `crash` | expected access violation with captured process exit and `0xc0000005` exception code |
-| `timeout` | expected timeout handling |
-
-Expected successful output states:
-
-```json
-{
-  "runtime": "windows-coff",
-  "status": "pass",
-  "exit_state": "success"
-}
-```
-
-The current VM arsenal smoke uses a small TrustedSec Situational Awareness selection by default and can be expanded with `-Select` when you want broader coverage.
-
-Compiler setup:
-
-- MinGW-w64 is preferred for BOF parity with common public BOF build flows.
-- MSVC `cl.exe` is accepted on Windows x64 for local source fixtures and simple payloads; direct deterministic builds add `/Brepro`, `/experimental:deterministic`, and `/pathmap` for the common source/output root.
-- The native loader can be copied from `native/loader/bofbench-loader.exe`, built with MinGW-w64, or built with MSVC.
-
-For a cross-host MinGW runtime proof, create a matrix on the host with `--compiler mingw --arch all --execute never`, copy the complete matrix run directory to Windows, and use `matrix replay`. Replay verifies the preserved hashes, runs only the three x64 optimization variants, and leaves all three x86 cells at `expected_unsupported_arch` with `runtime_attempted: false`.
+Stateful packs declare their cleanup companions, but cleanup is never a prerequisite for building or running.

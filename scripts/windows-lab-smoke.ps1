@@ -90,7 +90,7 @@ $steps.Add((Invoke-Step "MSVC reproducible build evidence" {
         throw "expected msvc compiler profile, got $($buildEvidence.compiler.profile)"
     }
     if (!$buildEvidence.compiler.path -or !$buildEvidence.compiler.version -or !$buildEvidence.compiler.sha256) {
-        throw "MSVC compiler provenance is incomplete"
+        throw "MSVC compiler details are incomplete"
     }
     if (!$buildEvidence.reproducibility.checked -or !$buildEvidence.reproducibility.reproducible) {
         throw "MSVC object did not pass reproducibility verification"
@@ -125,6 +125,7 @@ $steps.Add((Invoke-Step "fixture build" {
     & $BofbenchExe build .\testdata\bofs\bss_reloc
     & $BofbenchExe build .\testdata\bofs\callback_ptr
     & $BofbenchExe build .\testdata\bofs\parser_all
+    & $BofbenchExe build .\testdata\bofs\format_all
     & $BofbenchExe build .\testdata\bofs\import_resolver
     & $BofbenchExe build .\testdata\bofs\unresolved
     & $BofbenchExe build .\testdata\bofs\crash
@@ -177,6 +178,10 @@ $steps.Add((Invoke-Step "fixture test callback_ptr" {
 
 $steps.Add((Invoke-Step "fixture test parser_all" {
     & $BofbenchExe test .\testdata\bofs\parser_all --runtime windows-coff
+}))
+
+$steps.Add((Invoke-Step "fixture test format_all" {
+    & $BofbenchExe test .\testdata\bofs\format_all --runtime windows-coff
 }))
 
 $steps.Add((Invoke-Step "fixture test import_resolver" {

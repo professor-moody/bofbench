@@ -1,67 +1,35 @@
-# Staging
+# Export BOFs
 
-`stage` packages an object for operator use.
+`export` produces a self-verifying raw, Sliver, or Cobalt Strike package from a project or existing object.
 
-Every stage target includes:
-
-- object file under `objects/`,
-- `manifest.json`,
-- `reports/analysis.json`,
-- `reports/analysis.md`,
-- latest matching `run` or `test` result as `reports/latest-result.json` and `reports/latest-result.md` when available,
-- README,
-- zip package.
-
-The `bofbench.stage` version 1 manifest records target, object path, staged object path, entrypoint, arguments, generated time, analysis report paths, any included latest run/test report, and a size/SHA-256 record for every packaged file except the manifest itself.
-
-## Verify a Package
-
-Verify either the directory or the ZIP after generation, copying, or operator handoff:
-
-```sh
-bofbench stage verify stage/whoami-cobaltstrike
-bofbench stage verify stage/whoami-cobaltstrike.zip
-bofbench stage verify stage/whoami-cobaltstrike.zip --format json
+```bash
+bofbench export bofs/fieldcheck --for raw
+bofbench export bofs/fieldcheck --for sliver
+bofbench export bofs/fieldcheck --for cobaltstrike
 ```
 
-Verification checks:
+Every package includes:
 
-- safe, duplicate-free regular-file inventory,
-- manifest schema and metadata,
-- every recorded file's size and SHA-256,
-- exact inventory with no unrecorded files,
-- staged object integrity and correspondence with `analysis.json`,
-- analysis/latest-report references and JSON validity,
-- Cobalt Strike, Sliver, or raw target-specific metadata,
-- README, entrypoint, arguments, and object-path consistency.
+- the exact object and SHA-256;
+- entrypoint and packed BOF arguments;
+- real pack argument names when available;
+- capability analysis and loader support;
+- target install/run instructions;
+- source/project/version context;
+- a file inventory with sizes and hashes;
+- cleanup information when a companion exists.
 
-Statuses are `pass`, `pass_with_warnings`, and `fail`. An analysis-error package can be structurally valid with a warning when its error evidence matches the manifest. Verification proves package integrity and internal consistency, not publisher authenticity; signed release provenance is a later operational-program slice.
+Verify the directory or ZIP independently:
 
-## Cobalt Strike
-
-```sh
-bofbench stage dist/whoami.x64.o --target cobaltstrike --args z:target
+```bash
+bofbench export verify export/fieldcheck-sliver
+bofbench export verify export/fieldcheck-sliver.zip --format json
 ```
 
-Outputs:
+For a third-party object without named metadata, provide compatibility argument tokens:
 
-- generated `.cna`,
-- shared stage files listed above.
-
-The generated Aggressor script uses `bof_pack` and `beacon_inline_execute`.
-
-## Sliver
-
-```sh
-bofbench stage dist/whoami.x64.o --target sliver
+```bash
+bofbench export external.x64.o --for sliver --args z:target i:25
 ```
 
-Outputs Sliver-style extension metadata and object layout.
-
-## Raw
-
-```sh
-bofbench stage dist/whoami.x64.o --target raw
-```
-
-Outputs the object plus operator notes and shared stage files.
+`stage` and `stage verify` remain aliases for one major release.

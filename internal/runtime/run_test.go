@@ -82,7 +82,7 @@ func TestWrongRuntimeResultHasNormalizedEvents(t *testing.T) {
 
 func TestWindowsCOFFRuntimeEnforcesLoaderPreflight(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "blocked.o")
-	if err := coff.CreateMockObject(path, "x64", "go", []string{"BeaconFormatAlloc"}); err != nil {
+	if err := coff.CreateMockObject(path, "x64", "go", []string{"BeaconUseToken"}); err != nil {
 		t.Fatal(err)
 	}
 	res, err := Run(Request{Path: path, Runtime: "windows-coff", Entry: "go"})

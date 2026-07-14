@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="BOFBench mark">
+  <rect width="64" height="64" rx="10" fill="#070a0d"/>
+  <path d="M14 15h24c8 0 13 4 13 11 0 5-3 8-7 9 6 1 9 5 9 11 0 8-6 13-15 13H14V15Zm12 10v7h10c3 0 5-1 5-4s-2-3-5-3H26Zm0 16v8h11c4 0 6-1 6-4s-2-4-6-4H26Z" fill="#73e5ff"/>
+  <path d="M10 10h11v4H14v7h-4V10Zm44 0v11h-4v-7h-7v-4h11ZM10 54V43h4v7h7v4H10Zm44 0H43v-4h7v-7h4v11Z" fill="#ff9a57"/>
+</svg>

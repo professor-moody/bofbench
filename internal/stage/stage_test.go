@@ -10,6 +10,8 @@ import (
 
 	"bofbench/internal/argpack"
 	"bofbench/internal/coff"
+	"bofbench/internal/evidence"
+	"bofbench/internal/recipe"
 )
 
 func TestStageTargets(t *testing.T) {
@@ -35,16 +37,63 @@ func TestStageTargets(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(res.Output, "manifest.json")); err != nil {
 			t.Fatal(err)
 		}
+		if !res.Verified || len(res.Verification) != 2 {
+			t.Fatalf("stage was not self-verified: %+v", res)
+		}
 	}
 	script, err := os.ReadFile(filepath.Join("stage", "hello-cobaltstrike", "hello.cna"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(script), "beacon_inline_execute") || !strings.Contains(string(script), "bof_pack") {
+	if !strings.Contains(string(script), "beacon_inline_execute") || !strings.Contains(string(script), "bof_pack") || !strings.Contains(string(script), "beacon_command_register") {
 		t.Fatalf("unexpected cna:\n%s", script)
+	}
+	var extension SliverExtension
+	extensionData, err := os.ReadFile(filepath.Join("stage", "hello-sliver", "extension.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(extensionData, &extension); err != nil {
+		t.Fatal(err)
+	}
+	if extension.DependsOn != "coff-loader" || extension.CommandName != "hello" || len(extension.Files) != 1 || extension.Files[0].Path != "hello.x64.o" || len(extension.Arguments) != 2 {
+		t.Fatalf("unexpected Sliver extension: %+v", extension)
 	}
 	if _, err := os.Stat(filepath.Join("stage", "hello-raw", "reports", "analysis.json")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStagePreservesPackArgumentNames(t *testing.T) {
+	tmp := t.TempDir()
+	wd, _ := os.Getwd()
+	defer os.Chdir(wd)
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	obj := filepath.Join(tmp, "token.x64.o")
+	if err := coff.CreateMockObject(obj, "x64", "go", []string{"BeaconPrintf"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := StageWithOptions(Options{
+		Object: obj, Target: "sliver", Entrypoint: "go",
+		Arguments:        []argpack.Item{{Kind: "i", Value: "1234"}, {Kind: "Z", Value: "whoami"}},
+		ArgumentNames:    []string{"source_pid", "command"},
+		ArgumentOptional: []bool{false, false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var extension SliverExtension
+	data, err := os.ReadFile(filepath.Join(result.Output, "extension.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &extension); err != nil {
+		t.Fatal(err)
+	}
+	if len(extension.Arguments) != 2 || extension.Arguments[0].Name != "source_pid" || extension.Arguments[1].Name != "command" {
+		t.Fatalf("argument names were not preserved: %+v", extension.Arguments)
 	}
 }
 
@@ -97,6 +146,70 @@ func TestStageIncludesAnalysisAndLatestReport(t *testing.T) {
 	if manifest.Schema != ManifestSchema || manifest.SchemaVersion != ManifestSchemaVersion || manifest.RunID == "" || manifest.Tool.Name != "bofbench" || manifest.Host.OS == "" || len(manifest.Files) == 0 {
 		t.Fatalf("manifest contract missing: %+v", manifest)
 	}
+	if manifest.ArgumentContract == "" || manifest.ObjectFingerprint.SHA256 == "" || manifest.PackedArguments.SHA256 == "" || manifest.TargetContract.Invoke == "" {
+		t.Fatalf("handoff contract missing: %+v", manifest)
+	}
+}
+
+func TestStageWithValidatedRecipeAndDevelopmentEvidence(t *testing.T) {
+	tmp := t.TempDir()
+	wd, _ := os.Getwd()
+	defer os.Chdir(wd)
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	obj := filepath.Join(tmp, "survey.x64.o")
+	if err := coff.CreateMockObject(obj, "x64", "go", []string{"BeaconPrintf"}); err != nil {
+		t.Fatal(err)
+	}
+	document, ok := recipe.Builtin("full-survey")
+	if !ok {
+		t.Fatal("full-survey recipe missing")
+	}
+	validation := recipe.Validate("bofbench.recipe.json", document, document.Features)
+	if validation.Status != "pass" {
+		t.Fatalf("validation = %+v", validation)
+	}
+	if err := os.WriteFile("dev.json", []byte(`{"schema":"bofbench.dev","schema_version":1,"status":"pass"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := StageWithOptions(Options{
+		Object: obj, Target: "raw", Entrypoint: "go", SourceInput: "bofs/survey", Project: "bofs/survey",
+		Recipe: &document, RecipeValidation: &validation,
+		Evidence: []EvidenceInput{{Kind: "developer_json", Path: "dev.json", Destination: "reports/dev.json"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Verified || result.Verification[0].Status != "pass" || result.Verification[1].Status != "pass" {
+		t.Fatalf("verification = %+v", result.Verification)
+	}
+	var manifest Manifest
+	data, err := os.ReadFile(filepath.Join(result.Output, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Operations.Status != "complete" || manifest.Operations.Recipe != "full-survey" || len(manifest.Evidence) != 1 || manifest.Evidence[0].Path != "reports/dev.json" {
+		t.Fatalf("manifest = %+v", manifest)
+	}
+}
+
+func TestCobaltStrikeBinaryArgumentReadsOperatorFile(t *testing.T) {
+	manifest := Manifest{
+		Name: "binary-demo", StagedObject: "objects/binary-demo.x64.o", Entrypoint: "go",
+		Arguments:      []argpack.Item{{Kind: "b", Value: "SGVsbG8="}},
+		Operations:     OperationalContract{Privilege: "user", Network: "none", Impact: "read_only"},
+		TargetContract: TargetContract{CommandName: "binary_demo", Invoke: "binary_demo payload.bin"},
+	}
+	script := cobaltStrike(manifest)
+	for _, want := range []string{"openf($2)", "$arg1_data = readb", `bof_pack($1, "b", $arg1_data)`} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script missing %q:\n%s", want, script)
+		}
+	}
 }
 
 func TestVerifyGeneratedTargetsAsDirectoryAndZip(t *testing.T) {
@@ -119,7 +232,7 @@ func TestVerifyGeneratedTargetsAsDirectoryAndZip(t *testing.T) {
 			}
 			for _, input := range []string{result.Output, result.Output + ".zip"} {
 				verification := Verify(input)
-				if !verification.Passed() || verification.Status != "pass" {
+				if !verification.Passed() || verification.Status != "pass_with_warnings" || verification.Summary.Warnings != 1 {
 					t.Fatalf("verification failed for %s:\n%s", input, verification.Text())
 				}
 				if verification.Schema != VerificationSchema || verification.SchemaVersion != VerificationSchemaVersion {
@@ -203,6 +316,71 @@ func TestVerifyRejectsLegacyManifestSchema(t *testing.T) {
 	}
 }
 
+func TestVerifyAcceptsLegacyV1PackageWithWarning(t *testing.T) {
+	tmp := t.TempDir()
+	wd, _ := os.Getwd()
+	defer os.Chdir(wd)
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	obj := filepath.Join(tmp, "legacy.x64.o")
+	if err := coff.CreateMockObject(obj, "x64", "go", nil); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Stage(obj, "raw", "go", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(result.Output, "manifest.json")
+	var manifest Manifest
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.SchemaVersion = 1
+	manifest.SourceInput = ""
+	manifest.Project = ""
+	manifest.Profile = ""
+	manifest.ObjectFingerprint = evidence.FileFingerprint{}
+	manifest.PackedArguments = PackedArguments{}
+	manifest.ArgumentContract = ""
+	manifest.Operations = OperationalContract{}
+	manifest.Recipe = ""
+	manifest.RecipeValidation = ""
+	manifest.TargetContract = TargetContract{}
+	manifest.Evidence = nil
+	argumentPath := filepath.Join(result.Output, "reports", "arguments.json")
+	if err := os.Remove(argumentPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(result.Output, "operator-notes.md"), []byte(legacyRawNotes(manifest.Object, manifest.Entrypoint, manifest.Arguments)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(result.Output, "README.md"), []byte(legacyStageReadme(manifest.Target, manifest.Object, manifest.Entrypoint, manifest.Arguments, manifest.GeneratedAt)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, record := range manifest.Files {
+		if record.Path != "reports/arguments.json" {
+			paths = append(paths, record.Path)
+		}
+	}
+	manifest.Files, err = manifestFileRecords(result.Output, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(manifestPath, manifest); err != nil {
+		t.Fatal(err)
+	}
+	verification := Verify(result.Output)
+	if !verification.Passed() || verification.Status != "pass_with_warnings" || !hasVerificationWarning(verification, "manifest.schema", "manifest.json") {
+		t.Fatalf("legacy package did not pass with warning:\n%s", verification.Text())
+	}
+}
+
 func TestVerifyRejectsUnsafeZipInventory(t *testing.T) {
 	tmp := t.TempDir()
 	zipPath := filepath.Join(tmp, "unsafe.zip")
@@ -235,6 +413,15 @@ func TestVerifyRejectsUnsafeZipInventory(t *testing.T) {
 func hasVerificationFailure(verification Verification, name, path string) bool {
 	for _, check := range verification.Checks {
 		if check.Status == "fail" && check.Name == name && check.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+func hasVerificationWarning(verification Verification, name, path string) bool {
+	for _, check := range verification.Checks {
+		if check.Status == "warn" && check.Name == name && check.Path == path {
 			return true
 		}
 	}

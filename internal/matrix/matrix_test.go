@@ -48,14 +48,14 @@ func TestNormalizeOptionsRejectsUnknownDimensions(t *testing.T) {
 func TestSummarySeparatesExpectedSkipsAndFailures(t *testing.T) {
 	summary := summarize([]Cell{
 		{Compiler: "mingw", Optimization: "debug", Architecture: "x64", Status: cellPass, Classification: "runtime_pass"},
-		{Compiler: "mingw", Optimization: "debug", Architecture: "x86", Status: cellExpected, Classification: "expected_unsupported_arch"},
+		{Compiler: "mingw", Optimization: "debug", Architecture: "x86", Status: cellExpected, Classification: "unsupported_compiler_arch"},
 		{Compiler: "msvc", Optimization: "debug", Architecture: "x64", Status: cellSkip, Classification: "compiler_unavailable"},
 		{Compiler: "msvc", Optimization: "speed", Architecture: "x64", Status: cellFail, Classification: "runtime_failed"},
 	})
 	if summary.Total != 4 || summary.Passed != 1 || summary.Expected != 1 || summary.Skipped != 1 || summary.Failed != 1 {
 		t.Fatalf("summary = %+v", summary)
 	}
-	if summary.ByCompiler["msvc"].Failed != 1 || summary.ByClassification["expected_unsupported_arch"] != 1 {
+	if summary.ByCompiler["msvc"].Failed != 1 || summary.ByClassification["unsupported_compiler_arch"] != 1 {
 		t.Fatalf("summary dimensions = %+v", summary)
 	}
 }
@@ -152,8 +152,8 @@ func TestRunMinGWMatrixWhenAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chdir(workingDirectory) })
 	tmp := t.TempDir()
+	t.Cleanup(func() { _ = os.Chdir(workingDirectory) })
 	if err := os.Chdir(tmp); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestRunMinGWMatrixWhenAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.Report.Status != "pass" || persisted.Report.Summary.Total != 4 || persisted.Report.Summary.Passed != 2 || persisted.Report.Summary.Expected != 2 || persisted.Report.Summary.Failed != 0 {
+	if persisted.Report.Status != "pass" || persisted.Report.Summary.Total != 4 || persisted.Report.Summary.Passed != 4 || persisted.Report.Summary.Expected != 0 || persisted.Report.Summary.Failed != 0 {
 		t.Fatalf("matrix report = %+v", persisted.Report)
 	}
 	if len(persisted.Report.Contract.Expect) != 1 || persisted.Report.Contract.Expect[0] != "matrix pass" || persisted.Report.Contract.TimeoutMS != 5000 {
@@ -223,8 +223,8 @@ func TestRunMSVCX86IsExpectedUnsupportedCombination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chdir(workingDirectory) })
 	tmp := t.TempDir()
+	t.Cleanup(func() { _ = os.Chdir(workingDirectory) })
 	if err := os.Chdir(tmp); err != nil {
 		t.Fatal(err)
 	}

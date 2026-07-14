@@ -18,6 +18,7 @@ import (
 	"bofbench/internal/argpack"
 	"bofbench/internal/artifact"
 	"bofbench/internal/evidence"
+	"bofbench/internal/recipe"
 )
 
 const (
@@ -124,6 +125,7 @@ func Verify(input string) Verification {
 	expected, objectHash, objectSize := verifyManifestFiles(&report, view, manifest)
 	verifyAnalysisReports(&report, view, manifest, expected, objectHash, objectSize)
 	verifyLatestReports(&report, view, manifest, expected)
+	verifyHandoffContracts(&report, view, manifest, expected, objectHash, objectSize)
 	verifyTargetFiles(&report, view, manifest, expected)
 	report.finalize()
 	return report
@@ -135,7 +137,7 @@ func (v Verification) Passed() bool {
 
 func (v Verification) Text() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Stage Package Verification: %s\n\n", strings.ToUpper(v.Status))
+	fmt.Fprintf(&b, "Export Package Verification: %s\n\n", strings.ToUpper(v.Status))
 	fmt.Fprintf(&b, "Input: %s\n", v.Input)
 	if v.Kind != "" {
 		fmt.Fprintf(&b, "Kind: %s\n", v.Kind)
@@ -412,18 +414,20 @@ func decodeStrictJSON(data []byte, dst any) error {
 func verifyManifestMetadata(report *Verification, manifest Manifest) {
 	if manifest.Schema == ManifestSchema && manifest.SchemaVersion == ManifestSchemaVersion {
 		report.add("manifest.schema", "pass", "manifest.json", fmt.Sprintf("%s version %d", manifest.Schema, manifest.SchemaVersion))
+	} else if manifest.Schema == ManifestSchema && manifest.SchemaVersion == 1 {
+		report.add("manifest.schema", "warn", "manifest.json", "older bofbench.stage version 1 package; regenerate to include operator requirements")
 	} else {
 		report.add("manifest.schema", "fail", "manifest.json", fmt.Sprintf("expected %s version %d, got %q version %d", ManifestSchema, ManifestSchemaVersion, manifest.Schema, manifest.SchemaVersion))
 	}
 	if manifest.RunID != "" {
 		report.add("manifest.run_id", "pass", "manifest.json", manifest.RunID)
 	} else {
-		report.add("manifest.run_id", "warn", "manifest.json", "legacy manifest has no run lineage")
+		report.add("manifest.run_id", "warn", "manifest.json", "older manifest does not link back to its generating run")
 	}
 	if manifest.Tool.Name == "bofbench" && manifest.Tool.Version != "" && manifest.Host.OS != "" && manifest.Host.Arch != "" {
-		report.add("manifest.provenance", "pass", "manifest.json", fmt.Sprintf("tool=%s@%s host=%s/%s", manifest.Tool.Name, manifest.Tool.Version, manifest.Host.OS, manifest.Host.Arch))
+		report.add("manifest.tool_host", "pass", "manifest.json", fmt.Sprintf("tool=%s@%s host=%s/%s", manifest.Tool.Name, manifest.Tool.Version, manifest.Host.OS, manifest.Host.Arch))
 	} else {
-		report.add("manifest.provenance", "warn", "manifest.json", "legacy manifest has no complete tool/host provenance")
+		report.add("manifest.tool_host", "warn", "manifest.json", "older manifest does not record the complete tool build and host")
 	}
 	if validPackageName(manifest.Name) {
 		report.add("manifest.name", "pass", "manifest.json", manifest.Name)
@@ -554,19 +558,19 @@ func verifyManifestFiles(report *Verification, view *packageView, manifest Manif
 func verifyAnalysisReports(report *Verification, view *packageView, manifest Manifest, expected map[string]FileRecord, objectHash string, objectSize int64) {
 	if manifest.AnalysisError != "" {
 		if manifest.Analysis != "" || manifest.AnalysisMD != "" {
-			report.add("analysis.contract", "fail", "manifest.json", "analysis paths and analysis_error cannot both be set")
+			report.add("analysis.report", "fail", "manifest.json", "analysis paths and analysis_error cannot both be set")
 		}
 		const errorPath = "reports/analysis-error.txt"
 		if _, ok := expected[errorPath]; !ok {
-			report.add("analysis.contract", "fail", errorPath, "analysis error file is not recorded")
+			report.add("analysis.report", "fail", errorPath, "analysis error file is not recorded")
 			return
 		}
 		data, err := view.read(errorPath, maxMetadataBytes)
 		if err != nil || strings.TrimSpace(string(data)) != strings.TrimSpace(manifest.AnalysisError) {
-			report.add("analysis.contract", "fail", errorPath, "analysis error evidence does not match manifest")
+			report.add("analysis.report", "fail", errorPath, "analysis error report does not match manifest")
 			return
 		}
-		report.add("analysis.contract", "warn", errorPath, "package is structurally valid but artifact analysis failed: "+manifest.AnalysisError)
+		report.add("analysis.report", "warn", errorPath, "package is structurally valid but object analysis failed: "+manifest.AnalysisError)
 		return
 	}
 	jsonReferenceOK := verifyReference(report, manifest.Analysis, "reports/", expected, "analysis.json")
@@ -591,9 +595,9 @@ func verifyAnalysisReports(report *Verification, view *packageView, manifest Man
 	}
 	if manifest.RunID != "" {
 		if analysis.ParentRunID != manifest.RunID || analysis.RunID != manifest.RunID+"/analysis" {
-			report.add("analysis.lineage", "fail", manifest.Analysis, "analysis run lineage does not point to the stage manifest")
+			report.add("analysis.report_link", "fail", manifest.Analysis, "analysis report does not point back to the stage run")
 		} else {
-			report.add("analysis.lineage", "pass", manifest.Analysis, "analysis is linked to the stage manifest run")
+			report.add("analysis.report_link", "pass", manifest.Analysis, "analysis report links back to the stage run")
 		}
 	}
 	markdown, err := view.read(manifest.AnalysisMD, maxMetadataBytes)
@@ -626,6 +630,106 @@ func verifyLatestReports(report *Verification, view *packageView, manifest Manif
 	}
 }
 
+func verifyHandoffContracts(report *Verification, view *packageView, manifest Manifest, expected map[string]FileRecord, objectHash string, objectSize int64) {
+	if manifest.SchemaVersion == 1 {
+		return
+	}
+	if manifest.ObjectFingerprint.Path != manifest.Object || manifest.ObjectFingerprint.Size != objectSize || !strings.EqualFold(manifest.ObjectFingerprint.SHA256, objectHash) {
+		report.add("handoff.object_fingerprint", "fail", "manifest.json", "object fingerprint does not match the verified staged object")
+	} else {
+		report.add("handoff.object_fingerprint", "pass", "manifest.json", "object path, size, and SHA-256 match")
+	}
+	packed, err := packedArgumentContract(manifest.Arguments)
+	if err != nil || !reflect.DeepEqual(packed, manifest.PackedArguments) {
+		report.add("handoff.packed_arguments", "fail", "manifest.json", "packed argument bytes or fingerprint do not match manifest arguments")
+	} else {
+		report.add("handoff.packed_arguments", "pass", "manifest.json", fmt.Sprintf("%d bytes sha256=%s", packed.ByteLength, packed.SHA256))
+	}
+	if verifyReference(report, manifest.ArgumentContract, "reports/", expected, "handoff.arguments") {
+		data, readErr := view.read(manifest.ArgumentContract, maxMetadataBytes)
+		var contract ArgumentEvidence
+		if readErr != nil || decodeStrictJSON(data, &contract) != nil || contract.Schema != ArgumentSchema || contract.SchemaVersion != evidence.ContractVersion || contract.Entrypoint != manifest.Entrypoint || !reflect.DeepEqual(contract.Items, manifest.Arguments) || !reflect.DeepEqual(contract.Names, manifest.ArgumentNames) || !reflect.DeepEqual(contract.Optional, manifest.ArgumentOptional) || !reflect.DeepEqual(contract.Packed, manifest.PackedArguments) {
+			report.add("handoff.arguments_json", "fail", manifest.ArgumentContract, "argument report does not match manifest")
+		} else {
+			report.add("handoff.arguments_json", "pass", manifest.ArgumentContract, "argument report matches manifest")
+		}
+	}
+	verifyOperationalContract(report, view, manifest, expected)
+	verifyEvidenceReferences(report, view, manifest, expected)
+	expectedTarget := targetContract(manifest.Target, manifest.Name, manifest.StagedObject, manifest.Entrypoint, manifest.Arguments, manifest.ArgumentNames, manifest.ArgumentOptional, manifest.Operations)
+	if !reflect.DeepEqual(manifest.TargetContract, expectedTarget) {
+		report.add("handoff.operator_command", "fail", "manifest.json", "target install, run command, or arguments do not match the package")
+	} else {
+		report.add("handoff.operator_command", "pass", "manifest.json", manifest.TargetContract.Invoke)
+	}
+}
+
+func verifyOperationalContract(report *Verification, view *packageView, manifest Manifest, expected map[string]FileRecord) {
+	operations := manifest.Operations
+	if len(operations.Platforms) == 0 || len(operations.Prerequisites) == 0 || len(operations.StateChanges) == 0 || len(operations.Artifacts) == 0 || len(operations.Cleanup) == 0 || operations.Privilege == "" || operations.Network == "" || operations.Domain == "" || operations.Impact == "" {
+		report.add("handoff.operations", "fail", "manifest.json", "operator requirements are missing required fields")
+		return
+	}
+	switch operations.Status {
+	case "complete":
+		report.add("handoff.operations", "pass", "manifest.json", "validated recipe and operator requirements are complete")
+	case "incomplete":
+		report.add("handoff.operations", "warn", "manifest.json", "no validated recipe was supplied; unspecified fields require operator review")
+	case "invalid":
+		report.add("handoff.operations", "fail", "manifest.json", "recipe was supplied without passing validation")
+	default:
+		report.add("handoff.operations", "fail", "manifest.json", "unknown operator-requirement status")
+	}
+	if operations.Recipe == "" {
+		if manifest.Recipe != "" || manifest.RecipeValidation != "" {
+			report.add("handoff.recipe", "fail", "manifest.json", "recipe references exist without an operational recipe")
+		}
+		return
+	}
+	if !verifyReference(report, manifest.Recipe, "operations/", expected, "handoff.recipe") || !verifyReference(report, manifest.RecipeValidation, "operations/", expected, "handoff.recipe_validation") {
+		return
+	}
+	recipeData, recipeErr := view.read(manifest.Recipe, maxMetadataBytes)
+	validationData, validationErr := view.read(manifest.RecipeValidation, maxMetadataBytes)
+	var document recipe.Document
+	var validation recipe.Validation
+	if recipeErr != nil || validationErr != nil || decodeStrictJSON(recipeData, &document) != nil || decodeStrictJSON(validationData, &validation) != nil || document.Schema != recipe.Schema || document.SchemaVersion != recipe.SchemaVersion || document.Name != operations.Recipe || validation.Recipe != document.Name || validation.Status != "pass" {
+		report.add("handoff.recipe_check", "fail", manifest.Recipe, "recipe or validation report does not match the operator requirements")
+		return
+	}
+	expectedOperations := operationalContract(Options{Recipe: &document, RecipeValidation: &validation, OperatorNotes: operations.OperatorNotes})
+	// Project config notes may already be merged with recipe notes, so compare all
+	// security-relevant fields and allow the merged note set to be a superset.
+	if expectedOperations.Privilege != operations.Privilege || !reflect.DeepEqual(expectedOperations.Platforms, operations.Platforms) || expectedOperations.Network != operations.Network || expectedOperations.Domain != operations.Domain || expectedOperations.Impact != operations.Impact || !reflect.DeepEqual(expectedOperations.Prerequisites, operations.Prerequisites) || !reflect.DeepEqual(expectedOperations.StateChanges, operations.StateChanges) || !reflect.DeepEqual(expectedOperations.Artifacts, operations.Artifacts) || !reflect.DeepEqual(expectedOperations.Cleanup, operations.Cleanup) {
+		report.add("handoff.recipe_check", "fail", manifest.Recipe, "recipe safety fields differ from the operator requirements")
+		return
+	}
+	report.add("handoff.recipe_check", "pass", manifest.Recipe, "recipe and passing validation match the operator requirements")
+}
+
+func verifyEvidenceReferences(report *Verification, view *packageView, manifest Manifest, expected map[string]FileRecord) {
+	seen := map[string]bool{}
+	for _, reference := range manifest.Evidence {
+		key := reference.Kind + "\x00" + reference.Path
+		if strings.TrimSpace(reference.Kind) == "" || seen[key] {
+			report.add("handoff.evidence", "fail", reference.Path, "evidence kind is empty or duplicated")
+			continue
+		}
+		seen[key] = true
+		if !verifyReference(report, reference.Path, "reports/", expected, "handoff.evidence") {
+			continue
+		}
+		if strings.HasSuffix(strings.ToLower(reference.Path), ".json") {
+			data, err := view.read(reference.Path, maxMetadataBytes)
+			if err != nil || !json.Valid(data) {
+				report.add("handoff.evidence.json", "fail", reference.Path, "referenced evidence is not valid JSON")
+			} else {
+				report.add("handoff.evidence.json", "pass", reference.Path, reference.Kind)
+			}
+		}
+	}
+}
+
 func verifyReference(report *Verification, reference, prefix string, expected map[string]FileRecord, name string) bool {
 	clean, err := cleanPackagePath(reference)
 	if err != nil || !strings.HasPrefix(clean, prefix) {
@@ -645,9 +749,9 @@ func verifyTargetFiles(report *Verification, view *packageView, manifest Manifes
 		data, _ := view.read("README.md", maxMetadataBytes)
 		text := string(data)
 		if !strings.Contains(text, manifest.Target) || !strings.Contains(text, manifest.Object) || !strings.Contains(text, manifest.Entrypoint) {
-			report.add("target.readme.contract", "fail", "README.md", "README target, object, or entrypoint does not match manifest")
+			report.add("target.readme_check", "fail", "README.md", "README target, object, or entrypoint does not match manifest")
 		} else {
-			report.add("target.readme.contract", "pass", "README.md", "README matches manifest target, object, and entrypoint")
+			report.add("target.readme_check", "pass", "README.md", "README matches manifest target, object, and entrypoint")
 		}
 	}
 	switch manifest.Target {
@@ -657,18 +761,47 @@ func verifyTargetFiles(report *Verification, view *packageView, manifest Manifes
 			return
 		}
 		data, _ := view.read(cna, maxMetadataBytes)
-		expectedScript := cobaltStrike(manifest.Name, path.Base(manifest.StagedObject), manifest.Entrypoint, manifest.Arguments)
+		expectedScript := cobaltStrike(manifest)
+		if manifest.SchemaVersion == 1 {
+			expectedScript = legacyCobaltStrike(manifest.Name, path.Base(manifest.StagedObject), manifest.Entrypoint, manifest.Arguments)
+		}
 		if string(data) != expectedScript {
-			report.add("target.cobaltstrike.contract", "fail", cna, "Aggressor script does not match manifest-derived canonical content")
+			report.add("target.cobaltstrike_check", "fail", cna, "Aggressor script does not match the package settings")
 		} else {
-			report.add("target.cobaltstrike.contract", "pass", cna, "Aggressor script matches manifest-derived canonical content")
+			report.add("target.cobaltstrike_check", "pass", cna, "Aggressor script matches the package settings")
 		}
 	case "sliver":
-		const metadataPath = "sliver-extension.json"
+		metadataPath := "extension.json"
+		if manifest.SchemaVersion == 1 {
+			metadataPath = "sliver-extension.json"
+		}
 		if !verifyNonemptyFile(report, view, expected, metadataPath, "target.sliver") {
 			return
 		}
 		data, _ := view.read(metadataPath, maxMetadataBytes)
+		if manifest.SchemaVersion != 1 {
+			var metadata SliverExtension
+			if err := decodeStrictJSON(data, &metadata); err != nil {
+				report.add("target.sliver_check", "fail", metadataPath, err.Error())
+				return
+			}
+			expectedMetadata := sliverExtension(manifest, path.Base(manifest.StagedObject))
+			if !reflect.DeepEqual(metadata, expectedMetadata) {
+				report.add("target.sliver_check", "fail", metadataPath, "Sliver extension settings do not match the BOFBench package")
+				return
+			}
+			objectPath := path.Base(manifest.StagedObject)
+			if !verifyReference(report, objectPath, "", expected, "target.sliver.object") {
+				return
+			}
+			rootHash, err := view.hash(objectPath)
+			if err != nil || !strings.EqualFold(rootHash, manifest.ObjectFingerprint.SHA256) {
+				report.add("target.sliver.object", "fail", objectPath, "Sliver root object does not match the staged object")
+				return
+			}
+			report.add("target.sliver_check", "pass", metadataPath, "Sliver extension fields, dependency, file, and arguments match manifest")
+			return
+		}
 		var metadata struct {
 			Name        string         `json:"name"`
 			Entrypoint  string         `json:"entrypoint"`
@@ -677,29 +810,32 @@ func verifyTargetFiles(report *Verification, view *packageView, manifest Manifes
 			GeneratedAt string         `json:"generated_at"`
 		}
 		if err := decodeStrictJSON(data, &metadata); err != nil {
-			report.add("target.sliver.contract", "fail", metadataPath, err.Error())
+			report.add("target.sliver_check", "fail", metadataPath, err.Error())
 			return
 		}
 		if metadata.Name != manifest.Name || metadata.Entrypoint != manifest.Entrypoint || metadata.Object != manifest.StagedObject || !reflect.DeepEqual(metadata.Arguments, manifest.Arguments) {
-			report.add("target.sliver.contract", "fail", metadataPath, "Sliver metadata does not match manifest")
+			report.add("target.sliver_check", "fail", metadataPath, "Sliver settings do not match manifest")
 			return
 		}
 		if _, err := time.Parse(time.RFC3339, metadata.GeneratedAt); err != nil {
-			report.add("target.sliver.contract", "fail", metadataPath, "generated_at is not RFC3339")
+			report.add("target.sliver_check", "fail", metadataPath, "generated_at is not RFC3339")
 			return
 		}
-		report.add("target.sliver.contract", "pass", metadataPath, "Sliver metadata matches manifest")
+		report.add("target.sliver_check", "pass", metadataPath, "Sliver settings match manifest")
 	case "raw":
 		const notesPath = "operator-notes.md"
 		if !verifyNonemptyFile(report, view, expected, notesPath, "target.raw") {
 			return
 		}
 		data, _ := view.read(notesPath, maxMetadataBytes)
-		expectedNotes := rawNotes(manifest.Object, manifest.Entrypoint, manifest.Arguments)
+		expectedNotes := rawNotes(manifest)
+		if manifest.SchemaVersion == 1 {
+			expectedNotes = legacyRawNotes(manifest.Object, manifest.Entrypoint, manifest.Arguments)
+		}
 		if string(data) != expectedNotes {
-			report.add("target.raw.contract", "fail", notesPath, "operator notes do not match manifest-derived canonical content")
+			report.add("target.raw_check", "fail", notesPath, "operator notes do not match the package settings")
 		} else {
-			report.add("target.raw.contract", "pass", notesPath, "operator notes match manifest-derived canonical content")
+			report.add("target.raw_check", "pass", notesPath, "operator notes match the package settings")
 		}
 	}
 }

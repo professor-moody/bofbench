@@ -93,7 +93,7 @@ func Run(req Request) (Result, error) {
 			preflightStatus = "warn"
 		}
 		addTimedEvent(&base, start, "preflight", preflightStatus, compatibilityMessage(*analysis.LoaderCompatibility))
-		res, err := loader.Run(loader.Request{Object: req.Path, Entry: req.Entry, ArgHex: req.ArgHex, TimeoutMS: req.TimeoutMS})
+		res, err := loader.Run(loader.Request{Object: req.Path, Entry: req.Entry, ArgHex: req.ArgHex, TimeoutMS: req.TimeoutMS, Arch: analysis.Arch})
 		out := base
 		out.Object = res.Object
 		out.Entry = res.Entry

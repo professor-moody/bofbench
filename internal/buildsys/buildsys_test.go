@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -63,6 +64,26 @@ func TestBuildCopiedObjectWritesVersionedEvidence(t *testing.T) {
 	}
 }
 
+func TestBuildCopiedObjectDoesNotDuplicateArchitectureSuffix(t *testing.T) {
+	wd, _ := os.Getwd()
+	tmp := t.TempDir()
+	defer os.Chdir(wd)
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	object := filepath.Join(tmp, "whoami.x64.o")
+	if err := os.WriteFile(object, []byte("object"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := BuildWithOptions(object, Options{Arch: "x64", VerifyReproducible: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Name != "whoami" || result.Object != filepath.Join("dist", "whoami.x64.o") {
+		t.Fatalf("copied object output = %+v", result)
+	}
+}
+
 func TestBuildPersistsStrictConfigurationFailures(t *testing.T) {
 	wd, _ := os.Getwd()
 	tmp := t.TempDir()
@@ -104,7 +125,7 @@ func TestBuildPersistsStrictConfigurationFailures(t *testing.T) {
 	}
 }
 
-func TestBuildExplicitCompilerRecordsProvenanceAndReproducibility(t *testing.T) {
+func TestBuildExplicitCompilerRecordsDetailsAndReproducibility(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses a POSIX fake compiler")
 	}
@@ -152,7 +173,7 @@ printf 'stable-object' > "$out"
 		t.Fatal(err)
 	}
 	if result.Compiler.Profile != "mingw" || result.Compiler.SelectedBy != "cli" || result.Compiler.Version != "fake-mingw 1.0" || result.Compiler.Path == "" || result.Compiler.SHA256 == "" {
-		t.Fatalf("compiler provenance = %+v", result.Compiler)
+		t.Fatalf("compiler details = %+v", result.Compiler)
 	}
 	if result.Reproducibility == nil || !result.Reproducibility.Reproducible || result.Reproducibility.Method != "double_compile" {
 		t.Fatalf("reproducibility = %+v", result.Reproducibility)
@@ -166,6 +187,25 @@ printf 'stable-object' > "$out"
 	}
 	if result.Environment["SOURCE_DATE_EPOCH"] != "0" || result.ObjectFingerprint == nil || result.Status != "built" {
 		t.Fatalf("build result = %+v", result)
+	}
+}
+
+func TestCompilerFlagsTranslateBOFMinGWProfileForMSVC(t *testing.T) {
+	got := compilerFlags("msvc", []string{
+		"-Os",
+		"-fno-asynchronous-unwind-tables",
+		"-fno-ident",
+		"-DVALUE=1",
+		"-Iinclude",
+	})
+	want := []string{"/O1", "/DVALUE=1", "/Iinclude"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("compilerFlags(msvc) = %#v, want %#v", got, want)
+	}
+
+	mingw := []string{"-Os", "-fno-ident"}
+	if got := compilerFlags("mingw", mingw); !slices.Equal(got, mingw) {
+		t.Fatalf("compilerFlags(mingw) = %#v, want %#v", got, mingw)
 	}
 }
 
@@ -296,7 +336,7 @@ func TestMSVCDeterministicCommandMapsWorkspacePaths(t *testing.T) {
 	output := filepath.Join(root, "dist", "demo.x64.o")
 	command := compileCommand("msvc", "x64", "cl", source, output, filepath.Dir(source), nil, true, "seed")
 	joined := strings.Join(command, " ")
-	for _, flag := range []string{"/Brepro", "/experimental:deterministic", "/pathmap:" + root + "=."} {
+	for _, flag := range []string{"/GS-", "/guard:cf-", "/Zl", "/Brepro", "/experimental:deterministic", "/pathmap:" + root + "=."} {
 		if !strings.Contains(joined, flag) {
 			t.Fatalf("MSVC command missing %q: %s", flag, joined)
 		}

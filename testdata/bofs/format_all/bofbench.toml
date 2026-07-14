@@ -1,0 +1,4 @@
+name = "format_all"
+entry = "go"
+expect = ["format_all: value=7 ready", "format_all: int_bytes=1,2,3,4"]
+timeout_ms = 5000

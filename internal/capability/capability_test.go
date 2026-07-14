@@ -10,15 +10,15 @@ import (
 
 func TestWindowsCOFFCatalogAndNormalization(t *testing.T) {
 	catalog := WindowsCOFF()
-	if catalog.CatalogVersion != "windows-coff-x64/v3" || catalog.Machine.Code != 0x8664 || catalog.SectionFlags.UninitializedData != 0x80 {
+	if catalog.CatalogVersion != "windows-coff-x64/v4" || catalog.Machine.Code != 0x8664 || catalog.SectionFlags.UninitializedData != 0x80 {
 		t.Fatalf("catalog identity = %+v", catalog)
 	}
-	for _, name := range []string{"BeaconDataParse", "BeaconDataInt", "BeaconDataShort", "BeaconDataLength", "BeaconDataExtract", "BeaconPrintf", "BeaconOutput"} {
+	for _, name := range []string{"BeaconDataParse", "BeaconDataInt", "BeaconDataShort", "BeaconDataLength", "BeaconDataExtract", "BeaconPrintf", "BeaconOutput", "BeaconFormatAlloc", "BeaconFormatReset", "BeaconFormatFree", "BeaconFormatAppend", "BeaconFormatPrintf", "BeaconFormatToString", "BeaconFormatInt"} {
 		if !catalog.SupportsBeaconAPI(name) || !catalog.SupportsBeaconAPI("__imp__"+name) {
 			t.Fatalf("catalog does not support %s", name)
 		}
 	}
-	if catalog.SupportsBeaconAPI("BeaconFormatAlloc") {
+	if catalog.SupportsBeaconAPI("BeaconUseToken") {
 		t.Fatal("undeclared Beacon API reported supported")
 	}
 	if normalized, pointer := catalog.NormalizeImport("__imp__BeaconPrintf"); normalized != "BeaconPrintf" || !pointer {
@@ -32,7 +32,7 @@ func TestWindowsCOFFCatalogAndNormalization(t *testing.T) {
 	if _, ok := catalog.LibraryForSymbol("MissingExternal"); ok {
 		t.Fatal("undeclared plain symbol reported as declared")
 	}
-	if relocation, declared := catalog.RelocationByCode(0x000c); !declared || relocation.Name != "SECREL" || relocation.Supported {
+	if relocation, declared := catalog.RelocationByCode(0x000c); !declared || relocation.Name != "SECREL" || !relocation.Supported {
 		t.Fatalf("SECREL capability = %+v declared=%t", relocation, declared)
 	}
 	if relocation, declared := catalog.RelocationByCode(0x0004); !declared || !relocation.Supported || relocation.Name != "REL32" {
@@ -58,7 +58,7 @@ int main(void) {
     if (strcmp(bofbench_normalize_import("__imp__BeaconPrintf"), "BeaconPrintf") != 0) return 1;
     if (!bofbench_is_import_pointer_symbol("__imp__BeaconPrintf")) return 2;
     if (!bofbench_relocation_is_supported(REL_AMD64_REL32)) return 3;
-    if (bofbench_relocation_is_supported(REL_AMD64_SECREL)) return 4;
+	if (!bofbench_relocation_is_supported(REL_AMD64_SECREL)) return 4;
     if (strcmp(bofbench_symbol_import_library("__imp_LoadLibraryA"), "kernel32") != 0) return 5;
     if (bofbench_symbol_import_library("MissingExternal") != NULL) return 6;
     return 0;

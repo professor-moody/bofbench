@@ -24,26 +24,26 @@ go test ./...
 echo "[release] building docs"
 mkdocs build --strict
 
-if [[ ! -f native/loader/bofbench-loader.exe ]]; then
+if [[ ! -f native/loader/bofbench-loader.exe || ! -f native/loader/bofbench-loader-x86.exe ]]; then
   if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
     echo "[release] building native loader"
     make -C native/loader clean all
   else
-    echo "[release] warning: native/loader/bofbench-loader.exe missing and MinGW-w64 not on PATH"
+    echo "[release] warning: one or both Windows loaders are missing and MinGW-w64 is not on PATH"
   fi
 fi
 
-echo "[release] verifying stage package contract"
-SMOKE_ROOT="$TMP/stage-smoke"
+echo "[release] verifying export package contract"
+SMOKE_ROOT="$TMP/export-smoke"
 SMOKE_BIN="$TMP/bofbench-release-smoke"
 mkdir -p "$SMOKE_ROOT"
 go build -trimpath -ldflags "$LDFLAGS" -o "$SMOKE_BIN" ./cmd/bofbench
-printf 'bofbench release stage smoke\n' > "$SMOKE_ROOT/smoke.x64.o"
+printf 'bofbench release export smoke\n' > "$SMOKE_ROOT/smoke.x64.o"
 (
   cd "$SMOKE_ROOT"
-  "$SMOKE_BIN" stage smoke.x64.o --target raw >/dev/null
-  "$SMOKE_BIN" stage verify stage/smoke-raw >/dev/null
-  "$SMOKE_BIN" stage verify stage/smoke-raw.zip --format json >/dev/null
+  "$SMOKE_BIN" export smoke.x64.o --for raw >/dev/null
+  "$SMOKE_BIN" export verify export/smoke-raw >/dev/null
+  "$SMOKE_BIN" export verify export/smoke-raw.zip --format json >/dev/null
 )
 
 build_cli() {
@@ -57,10 +57,16 @@ build_cli() {
   GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags "$LDFLAGS" -o "$dir/bofbench$ext" ./cmd/bofbench
   cp README.md "$dir/"
   cp -R docs "$dir/docs"
-  cp -R scripts "$dir/scripts"
+  rm -rf "$dir/docs/assets/downloads" "$dir/docs/assets/media"
+  find "$dir/docs" -name .DS_Store -delete
+  mkdir -p "$dir/scripts"
+  cp scripts/release.sh scripts/windows-lab-smoke.ps1 "$dir/scripts/"
   cp -R testdata "$dir/testdata"
   if [[ "$goos" == "windows" && -f native/loader/bofbench-loader.exe ]]; then
     cp native/loader/bofbench-loader.exe "$dir/"
+  fi
+  if [[ "$goos" == "windows" && -f native/loader/bofbench-loader-x86.exe ]]; then
+    cp native/loader/bofbench-loader-x86.exe "$dir/"
   fi
   tar -czf "$OUT/$name.tar.gz" -C "$dir" .
 }

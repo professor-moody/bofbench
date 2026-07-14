@@ -94,7 +94,7 @@ func compilerFor(arch string) string {
 
 func compileCommand(profile, arch, executable, sourceAbs, outAbs, includeDir string, cflags []string, deterministic bool, seed string) []string {
 	if profile == "msvc" {
-		command := []string{executable, "/nologo", "/c", sourceAbs, "/Fo:" + outAbs, "/I", includeDir, "/DBOF"}
+		command := []string{executable, "/nologo", "/c", sourceAbs, "/Fo:" + outAbs, "/I", includeDir, "/DBOF", "/GS-", "/guard:cf-", "/Zl"}
 		if deterministic {
 			command = append(command, "/Brepro", "/experimental:deterministic")
 			if pathMapRoot := commonDirectory(filepath.Dir(sourceAbs), filepath.Dir(outAbs)); pathMapRoot != "" {
@@ -108,6 +108,42 @@ func compileCommand(profile, arch, executable, sourceAbs, outAbs, includeDir str
 		command = append(command, "-frandom-seed="+seed, "-ffile-prefix-map="+includeDir+"=.")
 	}
 	return append(command, cflags...)
+}
+
+// compilerFlags converts the small set of portable BOF project flags that
+// BOFBench emits into the selected compiler's spelling.  This keeps a project
+// tuned for the Sliver/MinGW handoff runnable on a Windows lab that only has
+// the Visual Studio Build Tools installed.
+func compilerFlags(profile string, flags []string) []string {
+	if profile != "msvc" {
+		return append([]string(nil), flags...)
+	}
+
+	result := make([]string, 0, len(flags))
+	for _, flag := range flags {
+		switch flag {
+		case "-O0":
+			result = append(result, "/Od")
+		case "-O1", "-Os":
+			result = append(result, "/O1")
+		case "-O2", "-O3":
+			result = append(result, "/O2")
+		case "-fno-asynchronous-unwind-tables", "-fno-ident":
+			// /Zl is already part of the BOF MSVC baseline.  MSVC does not
+			// expose direct equivalents for these GCC object-metadata flags.
+			continue
+		default:
+			switch {
+			case strings.HasPrefix(flag, "-D"):
+				result = append(result, "/D"+strings.TrimPrefix(flag, "-D"))
+			case strings.HasPrefix(flag, "-I"):
+				result = append(result, "/I"+strings.TrimPrefix(flag, "-I"))
+			default:
+				result = append(result, flag)
+			}
+		}
+	}
+	return result
 }
 
 func commonDirectory(left, right string) string {
@@ -126,7 +162,7 @@ func commonDirectory(left, right string) string {
 	}
 }
 
-func commandProvenance(requested, profile, selectedBy, command string) CompilerInfo {
+func commandDetails(requested, profile, selectedBy, command string) CompilerInfo {
 	info := CompilerInfo{Requested: requested, Profile: profile, SelectedBy: selectedBy, Command: command}
 	path, err := exec.LookPath(command)
 	if err != nil {

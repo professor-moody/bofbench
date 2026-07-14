@@ -226,9 +226,6 @@ func runCell(parentRunID, runDir string, options Options, contract RuntimeContra
 		Classification:  "build_failed",
 		Stage:           "build",
 	}
-	if planned.Architecture == "x86" {
-		cell.ExpectedOutcome = "unsupported_arch"
-	}
 	build, buildErr := buildsys.BuildWithOptions(options.Path, buildsys.Options{
 		Arch:               planned.Architecture,
 		Compiler:           planned.Compiler,
@@ -283,20 +280,9 @@ func runCell(parentRunID, runDir string, options Options, contract RuntimeContra
 		cell.Error = analyzeErr.Error()
 		return cell
 	}
-	if planned.Architecture == "x86" {
-		if analysis.Arch != "x86" || analysis.LoaderCompatibility == nil || analysis.LoaderCompatibility.Status != "unsupported_arch" {
-			cell.Classification = "x86_classification_mismatch"
-			cell.Error = fmt.Sprintf("expected unsupported_arch for x86 object; arch=%s compatibility=%+v", analysis.Arch, analysis.LoaderCompatibility)
-			return cell
-		}
-		cell.Status = cellExpected
-		cell.Classification = "expected_unsupported_arch"
-		cell.Stage = "preflight"
-		return cell
-	}
-	if analysis.Arch != "x64" || analysis.LoaderCompatibility == nil || !analysis.LoaderCompatibility.Compatible {
+	if analysis.Arch != planned.Architecture || analysis.LoaderCompatibility == nil || !analysis.LoaderCompatibility.Compatible {
 		cell.Classification = "loader_incompatible"
-		cell.Error = fmt.Sprintf("x64 build is not loader compatible: arch=%s compatibility=%+v", analysis.Arch, analysis.LoaderCompatibility)
+		cell.Error = fmt.Sprintf("%s build is not loader compatible: arch=%s compatibility=%+v", planned.Architecture, analysis.Arch, analysis.LoaderCompatibility)
 		return cell
 	}
 	shouldExecute := options.Execution == "always" || options.Execution == "auto" && runtime.GOOS == "windows" && runtime.GOARCH == "amd64"

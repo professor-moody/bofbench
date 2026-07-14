@@ -61,11 +61,11 @@ func AssessWindowsCOFF(input COFFInput) Compatibility {
 		Status:         "compatible",
 		Compatible:     true,
 	}
-	archSupported := input.Arch == catalog.Machine.Arch
+	archSupported := input.Arch == catalog.Machine.Arch || input.Arch == "x86"
 	if !archSupported {
 		result.Blockers = append(result.Blockers, Issue{
 			Category: "unsupported_arch",
-			Detail:   fmt.Sprintf("loader supports %s objects; artifact architecture is %s", catalog.Machine.Arch, emptyAs(input.Arch, "unknown")),
+			Detail:   fmt.Sprintf("loader supports x64 and x86 objects; artifact architecture is %s", emptyAs(input.Arch, "unknown")),
 		})
 	}
 	for _, layout := range input.LayoutIssues {
@@ -94,6 +94,9 @@ func AssessWindowsCOFF(input COFFInput) Compatibility {
 	if archSupported {
 		for _, use := range input.Relocations {
 			relocation, declared := catalog.RelocationByCode(use.Code)
+			if input.Arch == "x86" {
+				relocation, declared = x86Relocation(use.Code)
+			}
 			if declared && relocation.Supported {
 				continue
 			}
@@ -154,6 +157,22 @@ func AssessWindowsCOFF(input COFFInput) Compatibility {
 		result.Status = "compatible_runtime_lookup"
 	}
 	return result
+}
+
+func x86Relocation(code uint16) (Relocation, bool) {
+	for _, relocation := range []Relocation{
+		{Name: "ABSOLUTE", Code: 0x0000, Supported: true, Detail: "no relocation"},
+		{Name: "DIR32", Code: 0x0006, Supported: true, Detail: "32-bit virtual address"},
+		{Name: "DIR32NB", Code: 0x0007, Supported: true, Detail: "32-bit image-relative address"},
+		{Name: "SECTION", Code: 0x000a, Supported: true, Detail: "16-bit section index"},
+		{Name: "SECREL", Code: 0x000b, Supported: true, Detail: "32-bit section-relative offset"},
+		{Name: "REL32", Code: 0x0014, Supported: true, Detail: "32-bit relative displacement"},
+	} {
+		if relocation.Code == code {
+			return relocation, true
+		}
+	}
+	return Relocation{Name: fmt.Sprintf("I386_0x%04x", code)}, false
 }
 
 func (c Catalog) supportsBeaconName(name string) bool {

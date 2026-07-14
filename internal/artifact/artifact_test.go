@@ -25,7 +25,7 @@ func TestAnalyzeCOFF(t *testing.T) {
 	if a.Kind != KindCOFF || a.Arch != "x64" || !a.EntrypointOK || !a.EntrypointExecutable {
 		t.Fatalf("unexpected analysis: %+v", a)
 	}
-	if a.Schema != evidence.SchemaAnalysis || a.SchemaVersion != evidence.ContractVersion || a.Tool.Name != "bofbench" || a.Host.OS == "" {
+	if a.Schema != evidence.SchemaAnalysis || a.SchemaVersion != 2 || a.Tool.Name != "bofbench" || a.Host.OS == "" {
 		t.Fatalf("analysis evidence header = %+v", a.Header)
 	}
 	if len(a.Unresolved) == 0 {
@@ -68,7 +68,7 @@ func TestAnalyzeCOFF(t *testing.T) {
 func TestAnalyzeCOFFLoaderPreflight(t *testing.T) {
 	t.Run("unsupported Beacon API", func(t *testing.T) {
 		obj := filepath.Join(t.TempDir(), "beacon.o")
-		if err := coff.CreateMockObject(obj, "x64", "go", []string{"BeaconFormatAlloc"}); err != nil {
+		if err := coff.CreateMockObject(obj, "x64", "go", []string{"BeaconUseToken"}); err != nil {
 			t.Fatal(err)
 		}
 		a, err := Analyze(obj, "go")
@@ -82,8 +82,8 @@ func TestAnalyzeCOFFLoaderPreflight(t *testing.T) {
 	})
 
 	t.Run("unsupported relocation", func(t *testing.T) {
-		obj := filepath.Join(t.TempDir(), "secrel.o")
-		if err := coff.CreateMockObjectWithRelocations(obj, "x64", "go", []string{"BeaconPrintf"}, []coff.MockRelocation{{Symbol: "BeaconPrintf", Type: 0x000c}}); err != nil {
+		obj := filepath.Join(t.TempDir(), "unknown-relocation.o")
+		if err := coff.CreateMockObjectWithRelocations(obj, "x64", "go", []string{"BeaconPrintf"}, []coff.MockRelocation{{Symbol: "BeaconPrintf", Type: 0x7777}}); err != nil {
 			t.Fatal(err)
 		}
 		a, err := Analyze(obj, "go")
@@ -91,12 +91,12 @@ func TestAnalyzeCOFFLoaderPreflight(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertLoaderIssue(t, a, "unsupported_relocation")
-		if len(a.RelocationDetails) != 1 || a.RelocationDetails[0].Code == nil || *a.RelocationDetails[0].Code != 0x000c || a.RelocationDetails[0].Type != "SECREL" {
+		if len(a.RelocationDetails) != 1 || a.RelocationDetails[0].Code == nil || *a.RelocationDetails[0].Code != 0x7777 || a.RelocationDetails[0].Type != "AMD64_0x7777" {
 			t.Fatalf("relocation evidence = %+v", a.RelocationDetails)
 		}
 	})
 
-	t.Run("unsupported architecture", func(t *testing.T) {
+	t.Run("x86 helper architecture", func(t *testing.T) {
 		obj := filepath.Join(t.TempDir(), "x86.o")
 		if err := coff.CreateMockObject(obj, "x86", "go", nil); err != nil {
 			t.Fatal(err)
@@ -105,7 +105,9 @@ func TestAnalyzeCOFFLoaderPreflight(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		assertLoaderIssue(t, a, "unsupported_arch")
+		if a.LoaderCompatibility == nil || !a.LoaderCompatibility.Compatible {
+			t.Fatalf("x86 helper compatibility = %+v", a.LoaderCompatibility)
+		}
 	})
 
 	t.Run("x86 decorated entrypoint", func(t *testing.T) {
@@ -120,7 +122,9 @@ func TestAnalyzeCOFFLoaderPreflight(t *testing.T) {
 		if !a.EntrypointOK || a.EntrypointSymbol != "_go@8" {
 			t.Fatalf("decorated entrypoint = %+v", a)
 		}
-		assertLoaderIssue(t, a, "unsupported_arch")
+		if a.LoaderCompatibility == nil || !a.LoaderCompatibility.Compatible {
+			t.Fatalf("decorated x86 compatibility = %+v", a.LoaderCompatibility)
+		}
 		for _, blocker := range a.LoaderCompatibility.Blockers {
 			if blocker.Category == "missing_entrypoint" {
 				t.Fatalf("decorated entrypoint incorrectly missing: %+v", a.LoaderCompatibility)
@@ -178,6 +182,36 @@ func TestAnalyzeCOFFLoaderPreflight(t *testing.T) {
 			t.Fatalf("pointer import analysis = imports=%+v compatibility=%+v", a.Imports, a.LoaderCompatibility)
 		}
 	})
+}
+
+func TestAnalyzeDebugCOFFAcceptsSectionRelativeRelocations(t *testing.T) {
+	compiler, err := exec.LookPath("x86_64-w64-mingw32-gcc")
+	if err != nil {
+		t.Skip("MinGW-w64 compiler not available")
+	}
+	tmp := t.TempDir()
+	source := filepath.Join(tmp, "debug.c")
+	object := filepath.Join(tmp, "debug.o")
+	body := "__declspec(dllimport) void BeaconPrintf(int,const char*,...);\nvoid go(char *a,int l){(void)a;(void)l;BeaconPrintf(0,\"debug\");}\n"
+	if err := os.WriteFile(source, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(compiler, "-g", "-O0", "-c", source, "-o", object).CombinedOutput(); err != nil {
+		t.Fatalf("compile debug COFF: %v\n%s", err, output)
+	}
+	analysis, err := Analyze(object, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, relocation := range analysis.RelocationDetails {
+		if relocation.Type == "SECREL" || relocation.Type == "SECTION" {
+			found = true
+		}
+	}
+	if !found || analysis.LoaderCompatibility == nil || !analysis.LoaderCompatibility.Compatible {
+		t.Fatalf("debug relocation support = found=%t compatibility=%+v", found, analysis.LoaderCompatibility)
+	}
 }
 
 func TestEntrypointNormalization(t *testing.T) {
@@ -323,6 +357,7 @@ func TestCompareAnalysis(t *testing.T) {
 		SHA256:               "old",
 		Relocations:          1,
 		Imports:              []Import{{Symbol: "BeaconPrintf", Category: "beacon_api"}},
+		Capabilities:         []Capability{{ID: "identity_account_sid", Name: "Identity lookup", Confidence: "confirmed primitive", Effects: []string{"reads data"}}},
 		Findings:             []Finding{{Severity: "info", Category: "string", Detail: "old", Evidence: "old"}},
 		Sections:             []Section{{Name: ".text", Size: 10, Relocations: 1, Flags: "R-X"}},
 	}
@@ -332,6 +367,8 @@ func TestCompareAnalysis(t *testing.T) {
 	current.Size = 120
 	current.Relocations = 2
 	current.Imports = append(current.Imports, Import{Symbol: "KERNEL32$VirtualAlloc", Category: "winapi", Library: "KERNEL32", API: "VirtualAlloc"})
+	current.Capabilities = append(current.Capabilities, Capability{ID: "memory_operations", Name: "Memory operations", Confidence: "confirmed primitive", Effects: []string{"starts execution"}})
+	current.BehaviorChains = []BehaviorChain{{ID: "process_injection_remote_thread", Name: "Remote-thread process injection", Function: "go", Confidence: "strong chain", Effects: []string{"starts execution"}, Steps: []BehaviorStep{{API: "openprocess"}, {API: "virtualallocex"}, {API: "writeprocessmemory"}, {API: "createremotethread"}}}}
 	current.Findings = append(current.Findings, Finding{Severity: "review", Category: "memory_api", Detail: "memory allocation/protection API imported", Evidence: "KERNEL32$VirtualAlloc"})
 	current.Sections = []Section{{Name: ".text", Size: 12, Relocations: 2, Flags: "R-X"}}
 	diff := CompareAnalysis(baseline, current)
@@ -341,10 +378,10 @@ func TestCompareAnalysis(t *testing.T) {
 	if !diff.Summary.HashChanged || diff.Summary.SizeDelta != 20 || diff.Summary.RelocationsDelta != 1 {
 		t.Fatalf("unexpected diff summary: %+v", diff.Summary)
 	}
-	if diff.Summary.ImportsAdded != 1 || diff.Summary.FindingsAdded != 1 {
-		t.Fatalf("expected added import/finding: %+v", diff.Summary)
+	if diff.Summary.ImportsAdded != 1 || diff.Summary.FindingsAdded != 1 || diff.Summary.CapabilitiesAdded != 1 || diff.Summary.BehaviorChainsAdded != 1 {
+		t.Fatalf("expected added import, capability, behavior chain, and finding: %+v", diff.Summary)
 	}
-	if !strings.Contains(DiffMarkdown(diff), "Analysis Diff") {
+	if !strings.Contains(DiffMarkdown(diff), "Analysis Diff") || !hasDiffChange(diff.Changes, "behavior", "added") {
 		t.Fatal("diff markdown missing title")
 	}
 	current.EntrypointExecutable = false

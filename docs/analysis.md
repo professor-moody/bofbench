@@ -1,108 +1,98 @@
-# Analysis Reports
+# Behavioral Capability Analysis
 
-`inspect` is the fast human view. `analyze` writes the same evidence as JSON and Markdown under `runs/`.
+`analyze` accepts a BOF project or any compiled `.o`/`.obj`:
 
-```sh
-bofbench inspect dist/hello.x64.o
-bofbench analyze dist/hello.x64.o --format md
-bofbench preflight dist/hello.x64.o
+```bash
+bofbench analyze bofs/fieldcheck
+bofbench analyze arsenal/trustedsec-sa/SA/whoami/whoami.x64.o
+bofbench analyze first.x64.o --compare second.x64.o
 ```
 
-The analyzer currently reports:
+Project input is source-checked, built, and enriched with its locked pack arguments and expectations. Third-party objects are analyzed directly from COFF structure, relocations, function symbols, imported APIs, and useful strings.
 
-- artifact kind, architecture, size, hash, and entrypoint presence,
-- resolved entrypoint symbol, section, and offset, including x86 C/stdcall decoration normalization,
-- reported or inferred COFF toolchain family and evidence,
-- runtime compatibility for the current host and the selected runtime,
-- Windows COFF loader compatibility from the authoritative capability catalog,
-- sections, flags, alignment, file-backed versus zero-fill storage, and relocation counts,
-- relocation details when the object format exposes them,
-- unresolved symbols and imported API conventions,
-- visible strings after filtering common object-format noise,
-- review findings for missing entrypoints, writable/executable sections, memory/process/network/registry/dynamic-linking imports, and notable strings.
+## Read the default result
 
-## COFF Structural Diagnostics
-
-COFF parsing is bounded before any table or payload range is read. `coff_diagnostics` explains invalid section/symbol/string/relocation ranges, bad auxiliary-symbol references, invalid symbol sections or values, malformed long names, duplicate sections or relocations, reserved alignment encodings, stripped symbol tables, resource-limit breaches, and entrypoint location/type problems. The Go parser shares the native loader's 256 MiB file, 512 MiB mapped-image, 4,096-section, 1,048,576-symbol/relocation, and 1,024-byte name ceilings.
-
-Diagnostics remain part of the analysis even when they block execution. Error-severity layout diagnostics become structured `malformed_object` preflight blockers, so `run` and `test` refuse the artifact before launching the native loader. Warning diagnostics remain review evidence.
-
-Section evidence distinguishes raw `size`, header `virtual_size`, and effective `mapped_size`; analysis and entrypoint/relocation checks use the effective size. Uninitialized-data sections such as `.bss` are recorded as `zero-fill`. Capability catalog v2 teaches the generated native loader to leave these mapped ranges zeroed instead of copying bytes from file offset zero.
-
-## Import Classification
-
-BOF-style imports such as `KERNEL32$VirtualAlloc` are split into library and API fields. Beacon shims such as `BeaconPrintf` are categorized separately so operator reports do not confuse expected Beacon imports with missing WinAPI support.
-
-Generic unresolved symbols remain visible as external symbols. That is intentional: unsupported runtime dependencies should be obvious before a BOF reaches staging.
-
-## Runtime Compatibility
-
-Analysis reports include a structured `runtime_compatibility` object and a Markdown table:
-
-```json
-{
-  "runtime": "windows-coff",
-  "status": "requires_windows_amd64",
-  "can_run": false,
-  "required_os": "windows",
-  "required_arch": "amd64",
-  "host_os": "darwin",
-  "host_arch": "arm64",
-  "run_command": "bofbench run dist/hello.x64.o --runtime windows-coff"
-}
+```text
+Can do
+  - Token duplication and impersonation — strong chain in token_operation
+  - Process creation with another token — strong chain in token_operation
+Effects
+  - accesses a security token
+  - changes security context
+  - starts execution
+Needs
+  - source process access and token duplication rights
+Arguments
+  - source_pid (int, required)
+  - command (wstring, required)
+Works with
+  - cobaltstrike, lab, native, sliver
+Object      dist/token-check.x64.o
+Loader      compatible; blockers=0
 ```
 
-This makes `inspect` and `analyze` more actionable before execution: a COFF object on macOS will say it needs the Windows x64 lab, while ELF and Mach-O objects point to their matching host runners.
+The operator summary comes first. Section layouts, raw imports, relocations, findings, and report paths remain under `--format text`, `--format md`, or `--format json`.
 
-## Relocation Detail
+## Confidence levels
 
-COFF relocation records include section, offset, numeric relocation code, relocation type, and symbol name when available. ELF and Mach-O records use the same schema with best-effort symbol resolution.
-
-Markdown reports cap relocation rows for readability. JSON reports retain the structured `relocation_details` array.
-
-## Loader Compatibility
-
-Windows COFF analysis includes `loader_compatibility` with a catalog version, overall status, and structured `blockers` and `warnings`. Hard blockers include unsupported architecture, missing or non-executable entrypoints, unsupported or unknown relocation codes, unsupported Beacon APIs, and malformed `LIBRARY$API` imports. The capability catalog maps corpus-proven unqualified imports to a specific DLL; other plain externals that the loader can only search for across its fallback DLL set remain `fallback_lookup` warnings.
-
-The analyzer, runtime gate, and native loader all consume `internal/capability/windows_coff.json`; the native loader consumes its generated C header. Import-pointer prefixes are evaluated longest-first, so `__imp__BeaconPrintf` is normalized to `BeaconPrintf` consistently in Go and C. Catalog v3 directly maps the pinned corpus's `FreeLibrary`, `GetProcAddress`, and `LoadLibraryA` symbols to Kernel32 instead of treating them as heuristic fallback lookups.
-
-Use `preflight` for an execution-free gate or an arsenal-wide matrix. A hard blocker exits nonzero; `--strict` also fails runtime-lookup warnings.
-
-## Findings
-
-Findings are review cues, not verdicts. A finding means "look here before running or staging."
-
-| Severity | Meaning |
+| Confidence | Meaning |
 | --- | --- |
-| `high` | likely to block execution or deserves immediate review |
-| `review` | API or section behavior that should be understood before use |
-| `info` | contextual evidence such as notable strings |
+| `confirmed primitive` | The object has a concrete API primitive such as process open, registry write, or token query. |
+| `strong chain` | Required steps occur in the same function and form a recognized behavior sequence. |
+| `possible` | A resolved pack declares the capability, or object evidence is suggestive but not a complete chain. |
 
-Findings can be acknowledged without deleting their raw evidence:
+An isolated `OpenProcess` import does not become injection. BOFBench reports remote-thread injection only when process open, remote allocation, memory write, and remote thread start correlate inside one function. APC injection requires the corresponding queue step. Token impersonation requires token open, duplicate, and apply.
 
-```sh
-bofbench inspect payload.x64.o --suppress memory_api
-bofbench analyze payload.x64.o --suppress 'external_symbol=Missing*' --format md
+## Current behavior chains
+
+- remote-thread process injection;
+- APC process injection;
+- token duplication and impersonation;
+- process creation with another token;
+- service creation and start;
+- registry Run-key persistence;
+- credential-process memory access;
+- process minidump collection.
+
+Each chain lists its ordered steps, API evidence, function, effects, and operating requirements in the Markdown and JSON reports.
+
+## Argument inference
+
+Arguments are resolved from, in order:
+
+- the project pack lock;
+- adjacent Sliver `extension.json`;
+- Aggressor `.cna` argument packing;
+- BOF configuration and known Beacon data reads.
+
+The analyzer distinguishes an absent argument contract from an object that appears to take no arguments.
+
+## Source and version
+
+When known, reports include repository, Git ref, commit, and object SHA-256. The terminal calls this **Source and version**. It is descriptive context, not an approval step.
+
+## Observed behavior
+
+Static capability and runtime observation are separate fields. A strong chain says the object contains the sequence; an observed result says a matching object hash produced output or state in a recorded run. Keep both when comparing predicted and actual behavior.
+
+## Compare objects
+
+```bash
+bofbench analyze old.x64.o --compare new.x64.o --format md
 ```
 
-A rule is either an exact category or `category=evidence-glob`; `*` can select every category. Suppressed findings remain in JSON and Markdown with `suppressed: true`, the matching rule, original severity, detail, and evidence. Finding summaries separate active, suppressed, and total counts. Invalid rules fail analysis rather than silently matching nothing.
+The diff includes added and removed capabilities, behavior chains, imports, findings, sections, entrypoint changes, size, relocations, and hashes. A hash change alone is not described as a behavioral change.
 
-## String Output
+## Analyze TrustedSec `whoami`
 
-The string table is capped and filtered. It keeps operator-relevant values such as source filenames, toolchain markers, URLs, commands, paths, IP literals, and secret-like labels while dropping common section names and COFF table artifacts.
-
-Use JSON output when another system needs to diff or ingest the result:
-
-```sh
-bofbench analyze dist/hello.x64.o --format json
+```bash
+bofbench analyze arsenal/trustedsec-sa/SA/whoami/whoami.x64.o
 ```
 
-## Baseline Diffs
+The object’s identity, SID, group, privilege, and token-query APIs support current identity and token discovery. They do not form token duplication, impersonation, process injection, persistence, or service-execution chains. That distinction is the point of capability analysis v2.
 
-Compare a current object against a previous `analysis.json`:
+## Loader support
 
-```sh
-bofbench analyze dist/hello.x64.o --baseline runs/20260709-120000-analysis-hello-x64/analysis.json --format md
-```
+Hard blockers are limited to conditions that prevent a safe load: malformed objects, unsupported relocations or Beacon shims, missing entrypoints, incompatible architecture/helper availability, and unresolved imports that the loader cannot service. `preflight` remains a compatibility alias for `analyze --loader-details` during the migration window.
 
-The command writes `diff.json` and `diff.md` next to the new analysis report. The diff tracks hash changes, size delta, relocation delta, resolved entrypoint location, section size/flags/alignment/storage changes, added/removed imports and findings, active/suppressed finding deltas, and unresolved-symbol changes.
+Continue with [Arsenal Intelligence](arsenal.md) for batch search or [Run a BOF](runtime.md) for execution receipts.

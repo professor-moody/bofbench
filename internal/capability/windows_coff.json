@@ -1,7 +1,7 @@
 {
   "schema": "bofbench.loader-capabilities",
   "schema_version": 1,
-  "catalog_version": "windows-coff-x64/v3",
+  "catalog_version": "windows-coff-x64/v4",
   "runtime": "windows-coff",
   "format": "COFF",
   "machine": {
@@ -24,8 +24,8 @@
     {"name": "REL32_3", "code": 7, "supported": true, "detail": "REL32 with three-byte adjustment"},
     {"name": "REL32_4", "code": 8, "supported": true, "detail": "REL32 with four-byte adjustment"},
     {"name": "REL32_5", "code": 9, "supported": true, "detail": "REL32 with five-byte adjustment"},
-    {"name": "SECTION", "code": 11, "supported": false, "detail": "section-index relocations are not implemented"},
-    {"name": "SECREL", "code": 12, "supported": false, "detail": "section-relative relocations are not implemented"}
+    {"name": "SECTION", "code": 11, "supported": true, "detail": "16-bit section index"},
+    {"name": "SECREL", "code": 12, "supported": true, "detail": "32-bit section-relative offset"}
   ],
   "beacon_apis": [
     "BeaconDataParse",
@@ -34,7 +34,14 @@
     "BeaconDataLength",
     "BeaconDataExtract",
     "BeaconPrintf",
-    "BeaconOutput"
+    "BeaconOutput",
+    "BeaconFormatAlloc",
+    "BeaconFormatReset",
+    "BeaconFormatFree",
+    "BeaconFormatAppend",
+    "BeaconFormatPrintf",
+    "BeaconFormatToString",
+    "BeaconFormatInt"
   ],
   "import_pointer_prefixes": ["__imp__", "__imp_", "_imp__"],
   "dynamic_import_separator": "$",

@@ -1,6 +1,7 @@
 /work/
 /dist/
 /runs/
+/internal/sourceaudit/runs/
 /stage/
 /site/
 /bofs/
@@ -8,4 +9,5 @@
 /outputs/
 /corpus/
 /native/loader/bofbench-loader.exe
+/native/loader/bofbench-loader-x86.exe
 .DS_Store

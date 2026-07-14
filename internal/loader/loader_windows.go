@@ -17,7 +17,7 @@ func Run(req Request) (Result, error) {
 	if req.TimeoutMS <= 0 {
 		req.TimeoutMS = 5000
 	}
-	path, err := loaderPath()
+	path, err := loaderPath(req.Arch)
 	if err != nil {
 		res := NewResult(req, "setup_error", "loader_missing", start)
 		res.ErrorCode = "loader_missing"
@@ -144,27 +144,33 @@ func Run(req Request) (Result, error) {
 	return res, resultErr
 }
 
-func loaderPath() (string, error) {
-	if p := os.Getenv("BOFBENCH_LOADER"); p != "" {
+func loaderPath(arch string) (string, error) {
+	name := "bofbench-loader.exe"
+	environment := "BOFBENCH_LOADER"
+	if arch == "x86" {
+		name = "bofbench-loader-x86.exe"
+		environment = "BOFBENCH_LOADER_X86"
+	}
+	if p := os.Getenv(environment); p != "" {
 		info, err := os.Stat(p)
 		if err != nil {
-			return "", fmt.Errorf("BOFBENCH_LOADER %s: %w", p, err)
+			return "", fmt.Errorf("%s %s: %w", environment, p, err)
 		}
 		if !info.Mode().IsRegular() {
-			return "", fmt.Errorf("BOFBENCH_LOADER %s is not a regular file", p)
+			return "", fmt.Errorf("%s %s is not a regular file", environment, p)
 		}
 		return p, nil
 	}
 	exe, err := os.Executable()
 	if err == nil {
-		candidate := filepath.Join(filepath.Dir(exe), "bofbench-loader.exe")
+		candidate := filepath.Join(filepath.Dir(exe), name)
 		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() {
 			return candidate, nil
 		}
 	}
-	candidate := filepath.Join("native", "loader", "bofbench-loader.exe")
+	candidate := filepath.Join("native", "loader", name)
 	if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() {
 		return candidate, nil
 	}
-	return "", fmt.Errorf("bofbench-loader.exe not found; build native/loader/loader.c and set BOFBENCH_LOADER")
+	return "", fmt.Errorf("%s not found; build native/loader/loader.c and set %s", name, environment)
 }

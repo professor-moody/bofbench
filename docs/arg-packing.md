@@ -31,3 +31,5 @@ expect = ["test-message"]
 forbid = ["panic"]
 timeout_ms = 5000
 ```
+
+Use [Staging](staging.md) to carry the exact typed tokens and packed-byte fingerprint into an operator package, or [Runtime Model](runtime.md) to see how each runner receives arguments.

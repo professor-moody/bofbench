@@ -54,12 +54,30 @@ func TestArsenalDetailIncludesCommandPreviews(t *testing.T) {
 	}
 	view := m.renderArsenalDetail(entry)
 	for _, want := range []string{
-		"bofbench inspect arsenal/trustedsec-sa/SA/whoami/whoami.x64.o",
+		"bofbench analyze arsenal/trustedsec-sa/SA/whoami/whoami.x64.o",
 		"bofbench test arsenal/trustedsec-sa --select whoami --runtime windows-coff",
-		"bofbench stage arsenal/trustedsec-sa/SA/whoami/whoami.x64.o --target raw",
+		"bofbench export arsenal/trustedsec-sa/SA/whoami/whoami.x64.o --for raw",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing %q in:\n%s", want, view)
+		}
+	}
+}
+
+func TestActionTabsProduceDirectBOFBenchCommands(t *testing.T) {
+	m := model{projects: []string{"bofs/fieldcheck"}, viaCursor: 2}
+	checks := []struct {
+		tab  int
+		want string
+	}{
+		{tab: 0, want: "build bofs/fieldcheck"},
+		{tab: 1, want: "analyze bofs/fieldcheck"},
+		{tab: 3, want: "run bofs/fieldcheck --via sliver"},
+	}
+	for _, check := range checks {
+		m.tab = check.tab
+		if got := strings.Join(m.currentCommand(), " "); got != check.want {
+			t.Fatalf("tab %d command = %q, want %q", check.tab, got, check.want)
 		}
 	}
 }

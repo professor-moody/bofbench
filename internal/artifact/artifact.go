@@ -52,6 +52,14 @@ type Analysis struct {
 	Unresolved           []string                  `json:"unresolved,omitempty"`
 	Imports              []Import                  `json:"imports,omitempty"`
 	Strings              []String                  `json:"strings,omitempty"`
+	Capabilities         []Capability              `json:"capabilities,omitempty"`
+	BehaviorChains       []BehaviorChain           `json:"behavior_chains,omitempty"`
+	Effects              []string                  `json:"effects,omitempty"`
+	Requirements         Requirements              `json:"requirements,omitempty"`
+	Arguments            []ArgumentHint            `json:"arguments,omitempty"`
+	WorksWith            []string                  `json:"works_with,omitempty"`
+	Observed             []ObservedCapability      `json:"observed,omitempty"`
+	SourceAndVersion     SourceAndVersion          `json:"source_and_version"`
 	Findings             []Finding                 `json:"findings,omitempty"`
 	FindingSummary       FindingSummary            `json:"finding_summary"`
 	Suppressions         []string                  `json:"suppressions,omitempty"`
@@ -84,6 +92,8 @@ type ToolchainInfo struct {
 type Symbol struct {
 	Name      string `json:"name"`
 	Section   string `json:"section,omitempty"`
+	Offset    uint32 `json:"offset,omitempty"`
+	Function  bool   `json:"function,omitempty"`
 	Undefined bool   `json:"undefined,omitempty"`
 	External  bool   `json:"external,omitempty"`
 }
@@ -121,11 +131,12 @@ type AnalysisOptions struct {
 }
 
 type Relocation struct {
-	Section string  `json:"section"`
-	Offset  uint64  `json:"offset"`
-	Type    string  `json:"type"`
-	Code    *uint16 `json:"code,omitempty"`
-	Symbol  string  `json:"symbol,omitempty"`
+	Section  string  `json:"section"`
+	Offset   uint64  `json:"offset"`
+	Type     string  `json:"type"`
+	Code     *uint16 `json:"code,omitempty"`
+	Symbol   string  `json:"symbol,omitempty"`
+	Function string  `json:"function,omitempty"`
 }
 
 type RuntimeInfo struct {
@@ -203,6 +214,7 @@ func AnalyzeWithOptions(path string, opts AnalysisOptions) (Analysis, error) {
 		Size:        info.Size(),
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 	}
+	a.SchemaVersion = 2
 	if sum, err := sha256File(path); err == nil {
 		a.SHA256 = sum
 	}
@@ -242,6 +254,7 @@ func AnalyzeAndPersistWithOptions(path string, opts AnalysisOptions) (Persisted,
 		return Persisted{}, err
 	}
 	a.Header = evidence.New(evidence.SchemaAnalysis, runlog.ID(runDir), "")
+	a.SchemaVersion = 2
 	jsonPath := filepath.Join(runDir, "analysis.json")
 	mdPath := filepath.Join(runDir, "analysis.md")
 	if err := writeJSON(jsonPath, a); err != nil {
@@ -272,6 +285,46 @@ func Markdown(a Analysis) string {
 	}
 	fmt.Fprintf(&b, "- Size: `%d`\n", a.Size)
 	fmt.Fprintf(&b, "- Relocations: `%d`\n\n", a.Relocations)
+	if len(a.Capabilities) > 0 {
+		b.WriteString("## Capabilities\n\n")
+		b.WriteString("_Static-analysis inference from imported APIs and selected visible strings. This shows what the object appears equipped to do; it is not proof that a code path executed._\n\n")
+		b.WriteString("| Capability | Confidence | Effects | What the object appears able to do | Evidence |\n| --- | --- | --- | --- | --- |\n")
+		for _, item := range a.Capabilities {
+			fmt.Fprintf(&b, "| **%s** | `%s` | `%s` | %s | `%s` |\n", escapeTable(item.Name), escapeTable(item.Confidence), escapeTable(strings.Join(item.Effects, ", ")), escapeTable(item.Summary), escapeTable(strings.Join(item.Evidence, ", ")))
+		}
+		b.WriteString("\n")
+	}
+	if len(a.BehaviorChains) > 0 {
+		b.WriteString("## Behavior Chains\n\n")
+		b.WriteString("_Function-local relocation evidence connects these primitives into stronger behavioral inferences._\n\n")
+		for _, chain := range a.BehaviorChains {
+			fmt.Fprintf(&b, "### %s\n\n- Confidence: `%s`\n- Function: `%s`\n- Effects: `%s`\n- Needs: %s\n\n%s\n\n", chain.Name, chain.Confidence, chain.Function, strings.Join(chain.Effects, ", "), escapeTable(strings.Join(chain.Needs, "; ")), chain.Summary)
+			for _, step := range chain.Steps {
+				fmt.Fprintf(&b, "1. %s — `%s` (`%s`)\n", step.Action, step.API, escapeTable(step.Evidence))
+			}
+			b.WriteString("\n")
+		}
+	}
+	if len(a.Observed) > 0 {
+		b.WriteString("## Observed at Runtime\n\n")
+		b.WriteString("_These receipts match this object SHA-256. They are runtime evidence, separate from static capability inference._\n\n")
+		b.WriteString("| Capability/output | Status | Evidence |\n| --- | --- | --- |\n")
+		for _, observed := range a.Observed {
+			fmt.Fprintf(&b, "| `%s` | `%s` | `%s` |\n", escapeTable(observed.Capability), escapeTable(observed.Status), escapeTable(strings.Join(observed.Evidence, "; ")))
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("## Operator Fit\n\n")
+	fmt.Fprintf(&b, "- Effects: `%s`\n", strings.Join(a.Effects, ", "))
+	fmt.Fprintf(&b, "- Needs: `%s`\n", strings.Join(append(append([]string{}, a.Requirements.Privilege...), a.Requirements.Host...), "; "))
+	fmt.Fprintf(&b, "- Works with: `%s`\n", strings.Join(a.WorksWith, ", "))
+	if len(a.Arguments) > 0 {
+		b.WriteString("\n### Arguments\n\n| Name | Type | Required | Source |\n| --- | --- | --- | --- |\n")
+		for _, argument := range a.Arguments {
+			fmt.Fprintf(&b, "| `%s` | `%s` | `%t` | `%s` |\n", argument.Name, argument.Type, argument.Required, argument.Source)
+		}
+	}
+	fmt.Fprintf(&b, "\n### Source and Version\n\n- Repository: `%s`\n- Ref: `%s`\n- Commit: `%s`\n- Object SHA-256: `%s`\n\n", a.SourceAndVersion.Repository, a.SourceAndVersion.Ref, a.SourceAndVersion.Commit, a.SourceAndVersion.ObjectSHA256)
 	if a.Runtime.Runtime != "" {
 		b.WriteString("## Runtime Compatibility\n\n| Runtime | Status | Host | Required | Next |\n| --- | --- | --- | --- | --- |\n")
 		host := strings.Trim(strings.TrimSpace(a.Runtime.HostOS+"/"+a.Runtime.HostArch), "/")
@@ -284,7 +337,7 @@ func Markdown(a Analysis) string {
 	}
 	if a.LoaderCompatibility != nil {
 		compatibility := a.LoaderCompatibility
-		fmt.Fprintf(&b, "## Loader Preflight\n\n- Catalog: `%s`\n- Status: `%s`\n- Compatible: `%t`\n", compatibility.CatalogVersion, compatibility.Status, compatibility.Compatible)
+		fmt.Fprintf(&b, "## Loader Support\n\n- Catalog: `%s`\n- Status: `%s`\n- Compatible: `%t`\n", compatibility.CatalogVersion, compatibility.Status, compatibility.Compatible)
 		if len(compatibility.Blockers) > 0 {
 			b.WriteString("\n### Blockers\n\n| Category | Symbol | Relocation | Detail |\n| --- | --- | --- | --- |\n")
 			for _, issue := range compatibility.Blockers {
@@ -292,7 +345,7 @@ func Markdown(a Analysis) string {
 			}
 		}
 		if len(compatibility.Warnings) > 0 {
-			b.WriteString("\n### Preflight Warnings\n\n| Category | Symbol | Detail |\n| --- | --- | --- |\n")
+			b.WriteString("\n### Loader Warnings\n\n| Category | Symbol | Detail |\n| --- | --- | --- |\n")
 			for _, issue := range compatibility.Warnings {
 				fmt.Fprintf(&b, "| `%s` | `%s` | %s |\n", issue.Category, escapeTable(issue.Symbol), escapeTable(issue.Detail))
 			}
@@ -339,7 +392,7 @@ func Markdown(a Analysis) string {
 		}
 	}
 	if len(a.RelocationDetails) > 0 {
-		b.WriteString("\n## Relocation Detail\n\n| Section | Offset | Code | Type | Symbol |\n| --- | ---: | ---: | --- | --- |\n")
+		b.WriteString("\n## Relocation Detail\n\n| Section | Function | Offset | Code | Type | Symbol |\n| --- | --- | ---: | ---: | --- | --- |\n")
 		limit := minInt(len(a.RelocationDetails), 120)
 		for i := 0; i < limit; i++ {
 			rel := a.RelocationDetails[i]
@@ -347,7 +400,7 @@ func Markdown(a Analysis) string {
 			if rel.Code != nil {
 				code = fmt.Sprintf("0x%04x", *rel.Code)
 			}
-			fmt.Fprintf(&b, "| `%s` | `0x%x` | `%s` | `%s` | `%s` |\n", rel.Section, rel.Offset, code, rel.Type, escapeTable(rel.Symbol))
+			fmt.Fprintf(&b, "| `%s` | `%s` | `0x%x` | `%s` | `%s` | `%s` |\n", rel.Section, rel.Function, rel.Offset, code, rel.Type, escapeTable(rel.Symbol))
 		}
 		if len(a.RelocationDetails) > limit {
 			fmt.Fprintf(&b, "\n_%d additional relocations omitted from Markdown; see JSON report._\n", len(a.RelocationDetails)-limit)
@@ -378,6 +431,7 @@ func analyzeCOFF(path, entry string, a Analysis) (Analysis, error) {
 	a.SHA256 = info.SHA256
 	a.Toolchain = detectCOFFToolchain(info)
 	a.COFFDiagnostics = append(a.COFFDiagnostics, info.Diagnostics...)
+	functions := coffFunctions(info)
 	for _, section := range info.Sections {
 		a.Sections = append(a.Sections, Section{
 			Name:          section.Name,
@@ -391,11 +445,12 @@ func analyzeCOFF(path, entry string, a Analysis) (Analysis, error) {
 		for _, rel := range section.Relocations {
 			code := rel.Type
 			a.RelocationDetails = append(a.RelocationDetails, Relocation{
-				Section: rel.Section,
-				Offset:  uint64(rel.VirtualAddress),
-				Type:    rel.TypeName,
-				Code:    &code,
-				Symbol:  rel.SymbolName,
+				Section:  rel.Section,
+				Offset:   uint64(rel.VirtualAddress),
+				Type:     rel.TypeName,
+				Code:     &code,
+				Symbol:   rel.SymbolName,
+				Function: coffFunctionAt(functions[rel.Section], rel.VirtualAddress),
 			})
 		}
 	}
@@ -406,7 +461,7 @@ func analyzeCOFF(path, entry string, a Analysis) (Analysis, error) {
 		if sym.SectionNumber > 0 && int(sym.SectionNumber) <= len(info.Sections) {
 			sectionName = info.Sections[sym.SectionNumber-1].Name
 		}
-		a.Symbols = append(a.Symbols, Symbol{Name: sym.Name, Section: sectionName, Undefined: undefined, External: sym.External})
+		a.Symbols = append(a.Symbols, Symbol{Name: sym.Name, Section: sectionName, Offset: sym.Value, Function: sym.Type&0x20 != 0, Undefined: undefined, External: sym.External})
 		if entrypointMatches(sym.Name, entry, info.Machine) && sym.SectionNumber > 0 {
 			entryMatches = append(entryMatches, sym)
 		}
@@ -440,6 +495,40 @@ func analyzeCOFF(path, entry string, a Analysis) (Analysis, error) {
 	}
 	a.AnalyzerNotes = append(a.AnalyzerNotes, "Windows COFF execution requires windows-coff runtime")
 	return a, nil
+}
+
+func coffFunctions(info *coff.File) map[string][]coff.Symbol {
+	out := map[string][]coff.Symbol{}
+	for _, symbol := range info.Symbols {
+		if symbol.SectionNumber <= 0 || symbol.Type&0x20 == 0 || int(symbol.SectionNumber) > len(info.Sections) {
+			continue
+		}
+		section := info.Sections[symbol.SectionNumber-1]
+		if !section.Executable {
+			continue
+		}
+		out[section.Name] = append(out[section.Name], symbol)
+	}
+	for section := range out {
+		sort.Slice(out[section], func(i, j int) bool {
+			if out[section][i].Value != out[section][j].Value {
+				return out[section][i].Value < out[section][j].Value
+			}
+			return out[section][i].Name < out[section][j].Name
+		})
+	}
+	return out
+}
+
+func coffFunctionAt(functions []coff.Symbol, offset uint32) string {
+	name := ""
+	for _, function := range functions {
+		if function.Value > offset {
+			break
+		}
+		name = function.Name
+	}
+	return name
 }
 
 func entrypointMatches(symbol, entry, arch string) bool {
@@ -500,6 +589,9 @@ func finishAnalysis(path string, a *Analysis) {
 			}
 		}
 	}
+	a.Capabilities = inferCapabilities(a.Imports, a.Strings)
+	enrichAnalysis(path, a)
+	applyObservedRuns(a)
 	sortFindings(a.Findings)
 	updateFindingSummary(a)
 }
@@ -513,7 +605,7 @@ func runtimeInfo(a Analysis) RuntimeInfo {
 	case KindCOFF:
 		info.Runtime = "windows-coff"
 		info.RequiredOS = "windows"
-		info.RequiredArch = "amd64"
+		info.RequiredArch = hostArchFor(a.Arch)
 		info.RunCommand = fmt.Sprintf("bofbench run %s --runtime windows-coff", a.Path)
 		info.TestCommand = fmt.Sprintf("bofbench test %s --runtime windows-coff", a.Path)
 		if a.LoaderCompatibility != nil && !a.LoaderCompatibility.Compatible {
@@ -521,7 +613,8 @@ func runtimeInfo(a Analysis) RuntimeInfo {
 			info.Note = fmt.Sprintf("loader preflight found %d blocking compatibility issue(s)", len(a.LoaderCompatibility.Blockers))
 			return info
 		}
-		if goruntime.GOOS == "windows" && goruntime.GOARCH == "amd64" {
+		windowsArchReady := goruntime.GOARCH == info.RequiredArch || (a.Arch == "x86" && goruntime.GOARCH == "amd64")
+		if goruntime.GOOS == "windows" && windowsArchReady {
 			info.Status = "runnable"
 			if a.LoaderCompatibility != nil && len(a.LoaderCompatibility.Warnings) > 0 {
 				info.Status = "runnable_with_runtime_lookup"
@@ -530,8 +623,12 @@ func runtimeInfo(a Analysis) RuntimeInfo {
 			info.Note = "native Windows COFF loader can run this artifact on the current host"
 			return info
 		}
-		info.Status = "requires_windows_amd64"
-		info.Note = "copy or sync the artifact to a Windows x64 lab and run the displayed command"
+		requiredArch := info.RequiredArch
+		if requiredArch == "" {
+			requiredArch = "compatible_arch"
+		}
+		info.Status = "requires_windows_" + requiredArch
+		info.Note = "copy or sync the artifact to a compatible Windows lab and run the displayed command"
 	case KindELF:
 		info.Runtime = "linux-elf"
 		info.RequiredOS = "linux"
@@ -570,10 +667,12 @@ func runtimeInfo(a Analysis) RuntimeInfo {
 func hostArchFor(artifactArch string) string {
 	lower := strings.ToLower(artifactArch)
 	switch {
-	case strings.Contains(lower, "x86-64"), strings.Contains(lower, "amd64"), strings.Contains(lower, "x86_64"):
+	case lower == "x64", strings.Contains(lower, "x86-64"), strings.Contains(lower, "amd64"), strings.Contains(lower, "x86_64"):
 		return "amd64"
 	case strings.Contains(lower, "arm64"), strings.Contains(lower, "aarch64"):
 		return "arm64"
+	case lower == "x86", strings.Contains(lower, "i386"), strings.Contains(lower, "386"):
+		return "386"
 	default:
 		return ""
 	}

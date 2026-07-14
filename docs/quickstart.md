@@ -1,116 +1,104 @@
 # Quickstart
 
-Build the CLI:
+This path creates a parameterized Windows discovery BOF, explains its capabilities, and prepares it for a runtime.
 
-```sh
+## 1. Build BOFBench
+
+```bash
 go build -o work/bin/bofbench ./cmd/bofbench
+work/bin/bofbench doctor
 ```
 
-Create a payload:
+MinGW-w64 is used for portable COFF builds. On Windows, MSVC is also supported. Native COFF execution uses the separate x64 and x86 loader helpers.
 
-```sh
-work/bin/bofbench new smoke
+## 2. Create a project from packs
+
+```bash
+work/bin/bofbench new fieldcheck \
+  --pack host-discovery,system-discovery
+work/bin/bofbench add bofs/fieldcheck domain-discovery
 ```
 
-Starter templates are available:
+The project now contains generated C source plus `bofbench.lock.json`. The lock records pack versions, source hashes, runtime arguments, and cleanup relationships.
 
-```sh
-work/bin/bofbench new pidcheck --template winapi
-work/bin/bofbench new badlink --template unresolved
-work/bin/bofbench new slow --template timeout
+Inspect the operator contract:
+
+```bash
+work/bin/bofbench pack show system-discovery
 ```
 
-Build it:
+## 3. Build
 
-```text
-created BOF payload workspace bofs/smoke
+```bash
+work/bin/bofbench build bofs/fieldcheck
 ```
 
-```sh
-work/bin/bofbench build bofs/smoke --verify-reproducible
+The concise result names the object, architecture, compiler, size, hash, and report directory. Use `--compiler mingw` or `--compiler msvc` when compiler selection must be explicit.
+
+## 4. Analyze
+
+```bash
+work/bin/bofbench analyze bofs/fieldcheck
 ```
 
-The default `auto` profile prefers MinGW-w64. On Windows x64, `bofbench` falls back to MSVC `cl.exe` when MinGW is not installed. Use `--compiler mingw` or `--compiler msvc` when toolchain identity must be explicit.
+Read the result from top to bottom:
 
-Example build output:
+- **Can do**: inferred primitives and function-local behavior chains.
+- **Effects**: reads, writes, execution, persistence, credential access, or remote reach.
+- **Needs**: privilege, target, domain, network, and host conditions.
+- **Arguments**: runtime values from the pack contract.
+- **Works with**: native, lab, Sliver, and Cobalt Strike support.
 
-```json
-{
-  "name": "smoke",
-  "arch": "x64",
-  "object": "dist/smoke.x64.o",
-  "compiler": {
-    "requested": "auto",
-    "profile": "mingw",
-    "path": "/opt/homebrew/bin/x86_64-w64-mingw32-gcc",
-    "version": "x86_64-w64-mingw32-gcc (GCC) 16.1.0",
-    "sha256": "..."
-  },
-  "reproducibility": {
-    "checked": true,
-    "reproducible": true,
-    "method": "double_compile",
-    "first": {"sha256": "..."},
-    "second": {"sha256": "..."}
-  },
-  "status": "built"
-}
+Use `--format text` for loader/object details, `--format md` for the complete report, or `--format json` for automation.
+
+## 5. Connect an existing Windows VM
+
+```bash
+work/bin/bofbench lab init --provider existing --host bofbench-winvm
+work/bin/bofbench lab bootstrap
+work/bin/bofbench lab status
 ```
 
-The complete build record and combined compiler log are persisted together under `runs/<timestamp>-build-smoke/`. A compiler or configuration failure produces the same JSON contract with `status: "error"`, diagnostics, and an evidence path.
+Bootstrap deploys the Windows CLI and both loader helpers, then reports usable capabilities such as compile, x64/x86 native run, Sliver, debugging, and snapshot support.
 
-Check compiler and object-pattern portability:
+## 6. Run with named arguments
 
-```sh
-work/bin/bofbench matrix bofs/smoke --compiler mingw --arch all --execute never
+```bash
+work/bin/bofbench run bofs/fieldcheck --via lab \
+  --arg process_filter=lsass \
+  --arg result_limit=25
 ```
 
-This preserves reproducible debug, size, and speed objects. x64 cells must pass loader preflight; x86 cells must remain explicitly unsupported and are never executed. Copy the complete matrix run directory to Windows and use `matrix replay <matrix.json>` to verify hashes and execute the x64 objects there.
+Change the filter or limit without rebuilding. The same argument names flow into Sliver and Cobalt Strike packages.
 
-Inspect:
+Other runtimes use the same command:
 
-```sh
-work/bin/bofbench inspect dist/smoke.x64.o
+```bash
+work/bin/bofbench run bofs/fieldcheck --via native \
+  --arg process_filter=lsass --arg result_limit=25
+work/bin/bofbench run bofs/fieldcheck --via sliver \
+  --arg process_filter=lsass --arg result_limit=25
+work/bin/bofbench run bofs/fieldcheck --via cobaltstrike \
+  --arg process_filter=lsass --arg result_limit=25
 ```
 
-Example inspect output:
+## 7. Export
 
-```text
-object: dist/smoke.x64.o
-kind: coff
-arch: x64
-toolchain: mingw-gcc confidence=reported compiler=GCC: (GNU) ...
-entry "go": yes
-  symbol=go section=.text offset=0x0
-sections:
-  .text              size=48       relocs=2    align=16    storage=file      flags=R-X
-unresolved externals:
-  BeaconPrintf
+```bash
+work/bin/bofbench export bofs/fieldcheck --for raw
+work/bin/bofbench export bofs/fieldcheck --for sliver
+work/bin/bofbench export bofs/fieldcheck --for cobaltstrike
 ```
 
-Write analysis reports:
+Each directory and ZIP self-verifies its object, argument packing, target metadata, reports, and file hashes. `stage` remains an alias for one major release.
 
-```sh
-work/bin/bofbench analyze dist/smoke.x64.o --format md
+## Analyze an existing public object
+
+No project or pack metadata is required:
+
+```bash
+work/bin/bofbench analyze \
+  arsenal/trustedsec-sa/SA/whoami/whoami.x64.o
 ```
 
-Reports are written under `runs/<timestamp>-analysis-*/analysis.json` and `analysis.md`.
-The report includes bounded COFF diagnostics, toolchain/entrypoint/section evidence, loader compatibility, import classification, visible strings, and review findings. Use repeatable `--suppress category` or `--suppress 'category=evidence-glob'` rules to mark acknowledged findings without deleting them.
-
-Run a named profile from `bofbench.toml`:
-
-```sh
-work/bin/bofbench test bofs/smoke --profile alt
-```
-
-Stage for Cobalt Strike:
-
-```sh
-work/bin/bofbench stage dist/smoke.x64.o --target cobaltstrike --args z:hello i:3
-```
-
-Open the terminal UI:
-
-```sh
-work/bin/bofbench tui
-```
+Continue with [Behavioral Analysis](analysis.md), [Windows Lab](windows-lab.md), or [Sliver](sliver.md).
