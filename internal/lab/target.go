@@ -13,24 +13,45 @@ import (
 const TargetServiceName = "BOFBenchTarget"
 
 type TargetState struct {
-	Schema        string `json:"schema"`
-	SchemaVersion int    `json:"schema_version"`
-	Service       string `json:"service"`
-	PID           int    `json:"pid"`
-	AlertableTID  uint32 `json:"alertable_tid"`
-	User          string `json:"user"`
-	CanaryFile    string `json:"canary_file"`
-	StartedAt     string `json:"started_at"`
+	Schema              string `json:"schema"`
+	SchemaVersion       int    `json:"schema_version"`
+	Service             string `json:"service"`
+	PID                 int    `json:"pid"`
+	AlertableTID        uint32 `json:"alertable_tid"`
+	User                string `json:"user"`
+	CanaryFile          string `json:"canary_file"`
+	CanaryFileSHA256    string `json:"canary_file_sha256,omitempty"`
+	MemoryCanaryAddress string `json:"memory_canary_address,omitempty"`
+	MemoryCanarySize    int    `json:"memory_canary_size,omitempty"`
+	MemoryCanarySHA256  string `json:"memory_canary_sha256,omitempty"`
+	FixtureError        string `json:"fixture_error,omitempty"`
+	StartedAt           string `json:"started_at"`
+}
+
+type TargetFixtureState struct {
+	Schema             string `json:"schema"`
+	SchemaVersion      int    `json:"schema_version"`
+	User               string `json:"user"`
+	CredentialTarget   string `json:"credential_target"`
+	CredentialSHA256   string `json:"credential_sha256"`
+	CredentialSize     int    `json:"credential_size"`
+	DPAPIUserPath      string `json:"dpapi_user_path"`
+	DPAPIUserSHA256    string `json:"dpapi_user_sha256"`
+	DPAPIMachinePath   string `json:"dpapi_machine_path"`
+	DPAPIMachineSHA256 string `json:"dpapi_machine_sha256"`
+	WMIMarkerPath      string `json:"wmi_marker_path"`
+	CreatedAt          string `json:"created_at"`
 }
 
 type TargetReport struct {
-	Operation string      `json:"operation"`
-	Status    string      `json:"status"`
-	Profile   string      `json:"profile"`
-	Host      string      `json:"host"`
-	Service   string      `json:"service"`
-	State     TargetState `json:"state,omitempty"`
-	Error     string      `json:"error,omitempty"`
+	Operation string             `json:"operation"`
+	Status    string             `json:"status"`
+	Profile   string             `json:"profile"`
+	Host      string             `json:"host"`
+	Service   string             `json:"service"`
+	State     TargetState        `json:"state,omitempty"`
+	Fixtures  TargetFixtureState `json:"fixtures,omitempty"`
+	Error     string             `json:"error,omitempty"`
 }
 
 func DeployTarget(ctx context.Context, name string, profile Profile, repository string) (TargetReport, error) {
@@ -63,7 +84,7 @@ func DeployTarget(ctx context.Context, name string, profile Profile, repository 
 	if _, stderr, err := remoteExecute(ctx, opts, fmt.Sprintf(`New-Item -ItemType Directory -Force -Path %s | Out-Null`, powerShellQuote(windowsDir(remoteExecutable)))); err != nil {
 		return report, fmt.Errorf("prepare disposable target directory: %w: %s", err, boundedText(string(stderr), 2048))
 	}
-	stopScript := fmt.Sprintf(`$existing=Get-Service -Name %s -ErrorAction SilentlyContinue; if($existing){if($existing.Status -ne 'Stopped'){Stop-Service -Name %s -Force}; sc.exe delete %s | Out-Null; Start-Sleep -Milliseconds 500}`, powerShellQuote(TargetServiceName), powerShellQuote(TargetServiceName), TargetServiceName)
+	stopScript := fmt.Sprintf(`$existing=Get-Service -Name %s -ErrorAction SilentlyContinue; if($existing){if($existing.Status -ne 'Stopped'){Stop-Service -Name %s -Force}; sc.exe delete %s | Out-Null; Start-Sleep -Milliseconds 500}; Write-Output 'ready'`, powerShellQuote(TargetServiceName), powerShellQuote(TargetServiceName), TargetServiceName)
 	if _, stderr, err := remoteExecute(ctx, opts, stopScript); err != nil {
 		return report, fmt.Errorf("stop prior disposable target: %w: %s", err, boundedText(string(stderr), 2048))
 	}
@@ -79,6 +100,15 @@ func DeployTarget(ctx context.Context, name string, profile Profile, repository 
 	}
 	if err := json.Unmarshal(stdout, &report.State); err != nil {
 		return report, fmt.Errorf("decode disposable target state: %w", err)
+	}
+	fixturePath := windowsJoin(profile.RemoteRoot, "target", "fixtures", "fixture.json")
+	fixtureOutput, fixtureStderr, fixtureErr := remoteExecute(ctx, opts, fmt.Sprintf(`$ErrorActionPreference='Stop'; Get-Content -LiteralPath %s -Raw`, powerShellQuote(fixturePath)))
+	if fixtureErr == nil {
+		if err := json.Unmarshal(fixtureOutput, &report.Fixtures); err != nil {
+			return report, fmt.Errorf("decode disposable target fixtures: %w", err)
+		}
+	} else if report.State.FixtureError == "" {
+		return report, fmt.Errorf("read disposable target fixtures: %w: %s", fixtureErr, boundedText(string(fixtureStderr), 2048))
 	}
 	report.Status = "pass"
 	return report, nil
@@ -101,6 +131,16 @@ func TargetStatus(ctx context.Context, name string, profile Profile) (TargetRepo
 	if err := json.Unmarshal(stdout, &report.State); err != nil {
 		return report, err
 	}
+	fixturePath := windowsJoin(profile.RemoteRoot, "target", "fixtures", "fixture.json")
+	fixtureOutput, fixtureStderr, fixtureErr := remoteExecute(ctx, opts, fmt.Sprintf(`$ErrorActionPreference='Stop'; Get-Content -LiteralPath %s -Raw`, powerShellQuote(fixturePath)))
+	if fixtureErr == nil {
+		if err := json.Unmarshal(fixtureOutput, &report.Fixtures); err != nil {
+			return report, fmt.Errorf("decode disposable target fixtures: %w", err)
+		}
+	} else if report.State.FixtureError == "" {
+		report.Error = boundedText(string(fixtureStderr), 4096)
+		return report, fmt.Errorf("read disposable target fixtures: %w: %s", fixtureErr, report.Error)
+	}
 	report.Status = "pass"
 	return report, nil
 }
@@ -112,7 +152,8 @@ func RemoveTarget(ctx context.Context, name string, profile Profile) (TargetRepo
 	if resolveErr != nil {
 		return report, resolveErr
 	}
-	script := fmt.Sprintf(`$ErrorActionPreference='Continue'; $service=Get-Service -Name %s -ErrorAction SilentlyContinue; if($service -and $service.Status -ne 'Stopped'){Stop-Service -Name %s -Force}; if($service){sc.exe delete %s | Out-Null}; Start-Sleep -Milliseconds 500; Remove-Item -LiteralPath %s -Recurse -Force -ErrorAction SilentlyContinue; if(Get-Service -Name %s -ErrorAction SilentlyContinue){throw 'target service still exists'}; Write-Output 'removed'`, powerShellQuote(TargetServiceName), powerShellQuote(TargetServiceName), TargetServiceName, powerShellQuote(windowsJoin(profile.RemoteRoot, "target")), powerShellQuote(TargetServiceName))
+	targetDirectory := windowsJoin(profile.RemoteRoot, "target")
+	script := fmt.Sprintf(`$ErrorActionPreference='Continue'; $service=Get-Service -Name %s -ErrorAction SilentlyContinue; if($service -and $service.Status -ne 'Stopped'){Stop-Service -Name %s -Force}; if($service){sc.exe delete %s | Out-Null}; Start-Sleep -Milliseconds 500; Remove-Item -LiteralPath %s -Recurse -Force -ErrorAction SilentlyContinue; if(Get-Service -Name %s -ErrorAction SilentlyContinue){throw 'target service still exists'}; if(Test-Path -LiteralPath %s){throw 'target directory still exists'}; Write-Output 'removed'`, powerShellQuote(TargetServiceName), powerShellQuote(TargetServiceName), TargetServiceName, powerShellQuote(targetDirectory), powerShellQuote(TargetServiceName), powerShellQuote(targetDirectory))
 	_, stderr, err := remoteExecute(ctx, opts, script)
 	if err != nil {
 		report.Error = boundedText(string(stderr), 4096)
@@ -124,7 +165,11 @@ func RemoveTarget(ctx context.Context, name string, profile Profile) (TargetRepo
 
 func TargetReportText(report TargetReport) string {
 	if report.Status == "pass" && report.Operation != "remove" {
-		return fmt.Sprintf("BOFBench target %s\nprofile    %s\ncomputer   %s\nservice    %s\npid        %d\nalertable  tid=%d\ncanary     %s\n", strings.ToUpper(report.Status), report.Profile, report.Host, report.Service, report.State.PID, report.State.AlertableTID, report.State.CanaryFile)
+		text := fmt.Sprintf("BOFBench target %s\nprofile     %s\ncomputer    %s\nservice     %s\npid         %d\nalertable   tid=%d\nmemory      address=%s bytes=%d sha256=%s\nfile        %s\ncredential  %s user=%s bytes=%d\ndpapi user  %s\ndpapi host  %s\nwmi marker  %s\n", strings.ToUpper(report.Status), report.Profile, report.Host, report.Service, report.State.PID, report.State.AlertableTID, report.State.MemoryCanaryAddress, report.State.MemoryCanarySize, report.State.MemoryCanarySHA256, report.State.CanaryFile, report.Fixtures.CredentialTarget, report.Fixtures.User, report.Fixtures.CredentialSize, report.Fixtures.DPAPIUserPath, report.Fixtures.DPAPIMachinePath, report.Fixtures.WMIMarkerPath)
+		if report.State.FixtureError != "" {
+			text += fmt.Sprintf("fixtures    unavailable: %s\n", report.State.FixtureError)
+		}
+		return text
 	}
 	return fmt.Sprintf("BOFBench target %s\nprofile    %s\nservice    %s\noperation  %s\n", strings.ToUpper(report.Status), report.Profile, report.Service, report.Operation)
 }

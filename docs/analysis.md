@@ -53,6 +53,14 @@ An isolated `OpenProcess` import does not become injection. BOFBench reports rem
 - registry Run-key persistence;
 - credential-process memory access;
 - process minidump collection.
+- handle duplication and object query;
+- process-token inventory and current-token privilege adjustment;
+- bounded process-memory read;
+- DPAPI file recovery;
+- Credential Manager inventory and targeted reads;
+- module, driver, session, and logged-on-user inventory;
+- WMI query and explicit-target process creation;
+- scheduled-task creation and cleanup.
 
 Each chain lists its ordered steps, API evidence, function, effects, and operating requirements in the Markdown and JSON reports.
 
@@ -60,9 +68,9 @@ Each chain lists its ordered steps, API evidence, function, effects, and operati
 
 Arguments are resolved from, in order:
 
-- the project pack lock;
 - adjacent Sliver `extension.json`;
 - Aggressor `.cna` argument packing;
+- the project pack lock associated with `dist/<project>.<arch>.o`;
 - BOF configuration and known Beacon data reads.
 
 The analyzer distinguishes an absent argument contract from an object that appears to take no arguments.
@@ -73,7 +81,7 @@ When known, reports include repository, Git ref, commit, and object SHA-256. The
 
 ## Observed behavior
 
-Static capability and runtime observation are separate fields. A strong chain says the object contains the sequence; an observed result says a matching object hash produced output or state in a recorded run. Keep both when comparing predicted and actual behavior.
+Static capability and runtime observation are separate fields. A strong chain says the object contains the sequence; an observed result says a matching object hash produced output or state in a recorded run. BOFBench accepts both legacy receipt hashes and version-2 `object_sha256`, but correlates neither unless the object hash matches exactly.
 
 ## Compare objects
 

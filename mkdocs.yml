@@ -51,6 +51,7 @@ nav:
       - Cobalt Strike: cobaltstrike.md
       - Export: staging.md
       - Operator Playbooks: playbooks.md
+      - Deep Capability Workflows: deep-capabilities.md
       - Live Capability Proof: live-proof.md
   - Reference:
       - Operator TUI: tui.md

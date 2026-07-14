@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -348,7 +347,6 @@ func discoverSliverConfigs() []string {
 			add(match)
 		}
 	}
-	sort.Strings(configs)
 	return configs
 }
 
@@ -367,7 +365,7 @@ func sliverConsoleQuote(value string) (string, error) {
 	if strings.ContainsAny(value, "\r\n") {
 		return "", fmt.Errorf("Sliver command arguments cannot contain newlines")
 	}
-	if value == "" || strings.ContainsAny(value, " \t\"'") {
+	if value == "" || strings.ContainsAny(value, " \t\"'\\") {
 		return strconv.Quote(value), nil
 	}
 	return value, nil
@@ -419,7 +417,9 @@ func runSliverRC(client, body string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, client, "console", "--rc", path).CombinedOutput()
+	command := exec.CommandContext(ctx, client, "console", "--rc", path)
+	command.Stdin = strings.NewReader("1\n")
+	output, err := command.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return string(output), fmt.Errorf("Sliver console timed out after 90s")
 	}
@@ -429,31 +429,38 @@ func runSliverRC(client, body string) (string, error) {
 	return string(output), nil
 }
 
-func conciseSliverLines(output, command string) []string {
+func conciseSliverLines(output, _ string) []string {
 	var lines []string
-	processRows, serviceRows, tcpRows := 0, 0, 0
+	rowsByTag := map[string]int{}
 	for _, raw := range strings.Split(output, "\n") {
 		line := strings.TrimSpace(raw)
-		keep := strings.HasPrefix(line, "[process]") || strings.HasPrefix(line, "[host]") || strings.HasPrefix(line, "[token-context]") || strings.HasPrefix(line, "[domain-context]") || strings.HasPrefix(line, "[lab-")
-		switch {
-		case strings.HasPrefix(line, "[process-list]") && processRows < 3:
-			processRows++
-			keep = true
-		case strings.HasPrefix(line, "[service-list]") && serviceRows < 3:
-			serviceRows++
-			keep = true
-		case strings.HasPrefix(line, "[tcp-connections]") && tcpRows < 3:
-			tcpRows++
-			keep = true
+		tag := structuredSliverTag(line)
+		if tag == "" || rowsByTag[tag] >= 8 || len(lines) >= 24 {
+			continue
 		}
-		if keep {
-			lines = append(lines, formatSliverReceipt(line))
-		}
+		rowsByTag[tag]++
+		lines = append(lines, formatSliverReceipt(line))
 	}
 	if len(lines) == 0 {
 		return []string{"output     command completed"}
 	}
 	return lines
+}
+
+func structuredSliverTag(line string) string {
+	if !strings.HasPrefix(line, "[") {
+		return ""
+	}
+	end := strings.IndexByte(line, ']')
+	if end < 2 || end > 80 {
+		return ""
+	}
+	for _, char := range line[1:end] {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' && char != '_' {
+			return ""
+		}
+	}
+	return line[1:end]
 }
 
 func formatSliverReceipt(line string) string {

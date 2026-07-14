@@ -99,7 +99,9 @@ bofbench lab target deploy --lab dedicated
 bofbench lab target status --lab dedicated
 ```
 
-The status output provides the `BOFBenchTarget` PID, alertable thread ID, user, and canary path. Use those exact values for `<TARGET_PID>`, `<TARGET_TID>`, and `<CANARY_PATH>` below.
+The status output provides the `BOFBenchTarget` PID, alertable thread ID, memory-canary address/size/hash, file canary, Credential Manager fixture, DPAPI paths, and WMI marker path. Use those exact values rather than a critical process or real credential material.
+
+Continue with [Deep Capability Workflows](deep-capabilities.md) for bounded memory, handle, token, Credential Manager, DPAPI, WMI, and Sliver examples.
 
 ### Token and execution proof
 
@@ -202,7 +204,7 @@ The remote-service target is always explicit; BOFBench does not scan for hosts o
 bofbench lab target remove --lab dedicated
 ```
 
-Confirm `BOFBenchTarget`, every `BOFBench-*` service/task/value, generated dump, and test file are absent before retaining or reusing the host.
+Removal also deletes the exact generated Credential Manager entry, DPAPI blobs, WMI marker, and target state. Confirm `BOFBenchTarget`, every `BOFBench-*` service/task/value, generated dump, and test file are absent before retaining or reusing the host.
 
 ## What counts as proof
 

@@ -58,6 +58,7 @@ type chainRule struct {
 	id              string
 	name            string
 	summary         string
+	confidence      string
 	steps           []chainRuleStep
 	effects         []string
 	needs           []string
@@ -118,7 +119,7 @@ var behaviorRules = []chainRule{
 	},
 	{
 		id: "run_key_persistence", name: "Registry Run-key persistence", summary: "Open or create an autorun registry location and set a value.",
-		effects: []string{"writes system state", "persists"}, needs: []string{"write access to the selected registry hive"}, requiredStrings: []string{`currentversion\run`},
+		effects: []string{"writes system state", "persists"}, needs: []string{"write access to the selected registry hive"}, requiredStrings: []string{"[run-key]"},
 		steps: []chainRuleStep{
 			{action: "open or create registry key", apis: []string{"regopenkeyexa", "regopenkeyexw", "regcreatekeyexa", "regcreatekeyexw"}},
 			{action: "set autorun value", apis: []string{"regsetvalueexa", "regsetvalueexw"}},
@@ -139,6 +140,108 @@ var behaviorRules = []chainRule{
 			{action: "open target process", apis: []string{"openprocess", "ntopenprocess"}},
 			{action: "write process dump", apis: []string{"minidumpwritedump"}},
 		},
+	},
+	{
+		id: "handle_duplicate_query", name: "Handle duplication and object query", summary: "Open a process, duplicate one selected handle, and query the duplicated object's type.",
+		effects: []string{"accesses another process", "reads handle metadata"}, needs: []string{"a source PID", "an exact handle value", "process handle-duplication rights"},
+		steps: []chainRuleStep{
+			{action: "open source process", apis: []string{"openprocess", "ntopenprocess"}},
+			{action: "duplicate selected handle", apis: []string{"duplicatehandle"}},
+			{action: "query duplicated object", apis: []string{"ntqueryobject"}},
+		},
+	},
+	{
+		id: "token_inventory", name: "Process-token inventory", summary: "Enumerate processes, open their tokens, and inspect identity, elevation, and integrity details.",
+		effects: []string{"reads process metadata", "reads security token metadata"}, needs: []string{"a process filter", "token query rights for matching processes"},
+		steps: []chainRuleStep{
+			{action: "enumerate processes", apis: []string{"createtoolhelp32snapshot", "enumprocesses", "k32enumprocesses"}},
+			{action: "open process token", apis: []string{"openprocesstoken"}},
+			{action: "inspect token", apis: []string{"gettokeninformation"}},
+		},
+	},
+	{
+		id: "privilege_adjustment", name: "Current-token privilege adjustment", summary: "Resolve one named privilege and request that it be enabled in the current token.",
+		effects: []string{"changes current process token state"}, needs: []string{"the named privilege must already be present in the token"},
+		steps: []chainRuleStep{
+			{action: "resolve privilege identifier", apis: []string{"lookupprivilegevaluea", "lookupprivilegevaluew"}},
+			{action: "adjust token privilege", apis: []string{"adjusttokenprivileges"}},
+		},
+	},
+	{
+		id: "process_memory_read", name: "Bounded process-memory read", summary: "Open one explicitly selected process and read bytes from a supplied address.",
+		effects: []string{"accesses another process", "reads memory"}, needs: []string{"a target PID", "an exact address and byte limit", "process memory-read rights"},
+		steps: []chainRuleStep{
+			{action: "open target process", apis: []string{"openprocess", "ntopenprocess"}},
+			{action: "read target memory", apis: []string{"readprocessmemory", "ntreadvirtualmemory"}},
+		},
+	},
+	{
+		id: "dpapi_file_unprotect", name: "DPAPI file recovery", summary: "Read an explicit protected blob and ask DPAPI to recover it in the current user or machine context.",
+		effects: []string{"reads a file", "accesses protected material"}, needs: []string{"an exact DPAPI blob path", "the matching user or machine context", "an output byte limit"},
+		steps: []chainRuleStep{
+			{action: "read protected blob", apis: []string{"readfile", "ntreadfile"}},
+			{action: "unprotect material", apis: []string{"cryptunprotectdata"}},
+		},
+	},
+	{
+		id: "module_inventory", name: "Process-module inventory", summary: "Create a module snapshot for one process and enumerate the loaded modules.",
+		effects: []string{"reads process metadata"}, needs: []string{"a target PID", "module snapshot access"},
+		steps: []chainRuleStep{
+			{action: "create module snapshot", apis: []string{"createtoolhelp32snapshot"}},
+			{action: "enumerate modules", apis: []string{"module32first", "module32firstw"}},
+		},
+	},
+	{
+		id: "driver_inventory", name: "Loaded-driver inventory", summary: "Enumerate loaded driver addresses and resolve their base names.",
+		effects: []string{"reads system metadata"}, needs: []string{"driver enumeration access"},
+		steps: []chainRuleStep{
+			{action: "enumerate driver addresses", apis: []string{"enumdevicedrivers"}},
+			{action: "resolve driver names", apis: []string{"getdevicedriverbasenamea", "getdevicedriverbasenamew"}},
+		},
+	},
+	{
+		id: "logged_on_users", name: "Logged-on user inventory", summary: "Enumerate interactive sessions and query the identity associated with each session.",
+		effects: []string{"reads session metadata"}, needs: []string{"session enumeration access"},
+		steps: []chainRuleStep{
+			{action: "enumerate sessions", apis: []string{"wtsenumeratesessionsa", "wtsenumeratesessionsw"}},
+			{action: "query session identity", apis: []string{"wtsquerysessioninformationa", "wtsquerysessioninformationw"}},
+		},
+	},
+	{
+		id: "wmi_query", name: "WMI query", summary: "Create a WMI client and authenticate it for an explicit bounded query.",
+		effects: []string{"reads system management data"}, needs: []string{"a namespace", "a WQL query", "a property and result limit", "WMI access"}, requiredStrings: []string{"[wmi-query]"},
+		steps: []chainRuleStep{
+			{action: "create WMI client", apis: []string{"cocreateinstance"}},
+			{action: "apply WMI security context", apis: []string{"cosetproxyblanket"}},
+		},
+	},
+	{
+		id: "wmi_process_creation", name: "WMI process creation", summary: "Create a WMI client and invoke Win32_Process.Create on one supplied host.",
+		effects: []string{"reaches a supplied host", "starts execution"}, needs: []string{"one target host", "one command", "WMI process-create rights"}, requiredStrings: []string{"[wmi-process-create]"},
+		steps: []chainRuleStep{
+			{action: "create WMI client", apis: []string{"cocreateinstance"}},
+			{action: "apply WMI security context", apis: []string{"cosetproxyblanket"}},
+		},
+	},
+	{
+		id: "credential_manager_inventory", name: "Credential Manager inventory", summary: "Enumerate bounded Credential Manager metadata in the current user context.", confidence: "confirmed primitive",
+		effects: []string{"reads credential metadata"}, needs: []string{"the matching Credential Manager user context", "a result limit"}, requiredStrings: []string{"[credential-list]"},
+		steps: []chainRuleStep{{action: "enumerate credential metadata", apis: []string{"credenumeratea", "credenumeratew"}}},
+	},
+	{
+		id: "credential_manager_read", name: "Targeted Credential Manager read", summary: "Read one exact Credential Manager entry and return only the requested bounded bytes.", confidence: "confirmed primitive",
+		effects: []string{"accesses credential material"}, needs: []string{"the matching Credential Manager user context", "an exact target name", "an output byte limit"}, requiredStrings: []string{"[credential-read]"},
+		steps: []chainRuleStep{{action: "read exact credential", apis: []string{"credreada", "credreadw"}}},
+	},
+	{
+		id: "scheduled_task_persistence", name: "Scheduled-task persistence", summary: "Launch schtasks to create one explicitly named logon task.",
+		effects: []string{"writes system state", "persists", "starts execution"}, needs: []string{"an exact task name", "a command", "task creation rights"}, requiredStrings: []string{"[scheduled-task]"},
+		steps: []chainRuleStep{{action: "launch scheduled-task creation", apis: []string{"createprocessa", "createprocessw"}}},
+	},
+	{
+		id: "scheduled_task_cleanup", name: "Scheduled-task cleanup", summary: "Launch schtasks to remove one explicitly named task.",
+		effects: []string{"writes system state"}, needs: []string{"an exact task name", "task deletion rights"}, requiredStrings: []string{"[scheduled-task-cleanup]"},
+		steps: []chainRuleStep{{action: "launch scheduled-task removal", apis: []string{"createprocessa", "createprocessw"}}},
 	},
 }
 
@@ -171,12 +274,20 @@ func applyObservedRuns(analysis *Analysis) {
 		var receipt struct {
 			Status            string `json:"status"`
 			Runtime           string `json:"runtime"`
+			ObjectSHA256      string `json:"object_sha256"`
 			ObjectFingerprint *struct {
 				SHA256 string `json:"sha256"`
 			} `json:"object_fingerprint"`
 			Output []string `json:"output"`
 		}
-		if json.Unmarshal(data, &receipt) != nil || receipt.ObjectFingerprint == nil || !strings.EqualFold(receipt.ObjectFingerprint.SHA256, analysis.SHA256) {
+		if json.Unmarshal(data, &receipt) != nil {
+			continue
+		}
+		objectSHA256 := receipt.ObjectSHA256
+		if objectSHA256 == "" && receipt.ObjectFingerprint != nil {
+			objectSHA256 = receipt.ObjectFingerprint.SHA256
+		}
+		if !strings.EqualFold(objectSHA256, analysis.SHA256) {
 			continue
 		}
 		status := receipt.Status
@@ -191,9 +302,19 @@ func applyObservedRuns(analysis *Analysis) {
 			}
 			continue
 		}
+		hasStructured := false
+		for _, line := range receipt.Output {
+			if structuredOutputName(line) != "" {
+				hasStructured = true
+				break
+			}
+		}
 		for _, line := range receipt.Output {
 			capability := structuredOutputName(line)
 			if capability == "" {
+				if hasStructured {
+					continue
+				}
 				capability = "object output"
 			}
 			key := capability + "\x00" + status
@@ -217,6 +338,11 @@ func structuredOutputName(line string) string {
 	end := strings.IndexByte(line, ']')
 	if end <= 1 || end > 80 {
 		return ""
+	}
+	for _, char := range line[1:end] {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' && char != '_' {
+			return ""
+		}
 	}
 	return line[1:end]
 }
@@ -250,6 +376,9 @@ func inferBehaviorChains(relocations []Relocation, visibleStrings []String) []Be
 	for _, function := range functions {
 		apis := byFunction[function]
 		for _, rule := range behaviorRules {
+			if rule.id == "process_memory_read" && seen["credential_process_memory@"+function] {
+				continue
+			}
 			if !stringsMatch(stringsLower, rule.requiredStrings) {
 				continue
 			}
@@ -262,7 +391,11 @@ func inferBehaviorChains(relocations []Relocation, visibleStrings []String) []Be
 				continue
 			}
 			seen[key] = true
-			chains = append(chains, BehaviorChain{ID: rule.id, Name: rule.name, Summary: rule.summary, Confidence: "strong chain", Function: function, Effects: append([]string(nil), rule.effects...), Needs: append([]string(nil), rule.needs...), Steps: steps})
+			confidence := rule.confidence
+			if confidence == "" {
+				confidence = "strong chain"
+			}
+			chains = append(chains, BehaviorChain{ID: rule.id, Name: rule.name, Summary: rule.summary, Confidence: confidence, Function: function, Effects: append([]string(nil), rule.effects...), Needs: append([]string(nil), rule.needs...), Steps: steps})
 		}
 	}
 	sort.Slice(chains, func(i, j int) bool {
@@ -331,6 +464,12 @@ func capabilityEffects(impact string) []string {
 	if strings.Contains(lower, "memory") || strings.Contains(lower, "cross-process") {
 		effects = append(effects, "accesses another process")
 	}
+	if strings.Contains(lower, "credential") {
+		effects = append(effects, "accesses credential material")
+	}
+	if strings.Contains(lower, "protected material") {
+		effects = append(effects, "accesses protected material")
+	}
 	if len(effects) == 0 {
 		effects = append(effects, "supports execution")
 	}
@@ -347,6 +486,18 @@ func capabilityNeeds(id string) []string {
 		return []string{"network availability for outbound operations"}
 	case "persistence_mechanism":
 		return []string{"write access to the selected persistence location"}
+	case "handle_inventory":
+		return []string{"an exact target PID or handle for targeted operations"}
+	case "privilege_adjustment":
+		return []string{"a privilege name already present in the current token"}
+	case "credential_manager_access":
+		return []string{"the matching Credential Manager user context", "an exact target name and byte limit for secret reads"}
+	case "dpapi_access":
+		return []string{"the matching DPAPI user or machine context", "an exact protected blob and byte limit"}
+	case "wmi_access":
+		return []string{"an explicit namespace or target host", "WMI access in the current security context"}
+	case "share_inventory":
+		return []string{"one explicitly supplied host"}
 	default:
 		return nil
 	}
@@ -412,6 +563,72 @@ func inferArgumentHints(path string) []ArgumentHint {
 		if hints := cnaArgumentHints(match); len(hints) > 0 {
 			return hints
 		}
+	}
+	if hints := packLockArgumentHints(path); len(hints) > 0 {
+		return hints
+	}
+	return nil
+}
+
+func packLockArgumentHints(path string) []ArgumentHint {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil
+	}
+	base := filepath.Base(absolute)
+	for _, suffix := range []string{".x64.o", ".x86.o", ".o"} {
+		if strings.HasSuffix(strings.ToLower(base), suffix) {
+			base = base[:len(base)-len(suffix)]
+			break
+		}
+	}
+	objectDir := filepath.Dir(absolute)
+	workspace := objectDir
+	if strings.EqualFold(filepath.Base(objectDir), "dist") {
+		workspace = filepath.Dir(objectDir)
+	}
+	candidates := []string{
+		filepath.Join(workspace, "bofs", base, "bofbench.lock.json"),
+		filepath.Join(objectDir, "bofbench.lock.json"),
+		filepath.Join(filepath.Dir(objectDir), "bofbench.lock.json"),
+	}
+	seenPath := map[string]bool{}
+	for _, candidate := range candidates {
+		candidate = filepath.Clean(candidate)
+		if seenPath[candidate] {
+			continue
+		}
+		seenPath[candidate] = true
+		data, readErr := os.ReadFile(candidate)
+		if readErr != nil {
+			continue
+		}
+		var lock struct {
+			Schema string `json:"schema"`
+			Packs  []struct {
+				Arguments []struct {
+					Name     string `json:"name"`
+					Type     string `json:"type"`
+					Required bool   `json:"required"`
+				} `json:"arguments"`
+			} `json:"packs"`
+		}
+		if json.Unmarshal(data, &lock) != nil || lock.Schema != "bofbench.pack-lock" {
+			continue
+		}
+		var hints []ArgumentHint
+		seen := map[string]bool{}
+		for _, item := range lock.Packs {
+			for _, argument := range item.Arguments {
+				key := argument.Name + "\x00" + argument.Type
+				if argument.Name == "" || argument.Type == "" || seen[key] {
+					continue
+				}
+				seen[key] = true
+				hints = append(hints, ArgumentHint{Name: argument.Name, Type: argument.Type, Required: argument.Required, Source: "pack lock"})
+			}
+		}
+		return hints
 	}
 	return nil
 }
