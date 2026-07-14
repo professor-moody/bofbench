@@ -14,6 +14,7 @@ import (
 
 	"bofbench/internal/argpack"
 	"bofbench/internal/runlog"
+	"bofbench/internal/runtimeadapter"
 	"bofbench/internal/stage"
 )
 
@@ -28,25 +29,12 @@ type cobaltStrikeRunOptions struct {
 	CLIValues        []string
 }
 
-type cobaltStrikeReceipt struct {
-	Runtime       string   `json:"runtime"`
-	Status        string   `json:"status"`
-	Host          string   `json:"host"`
-	Port          string   `json:"port"`
-	User          string   `json:"user"`
-	Beacon        string   `json:"beacon"`
-	Object        string   `json:"object"`
-	Entrypoint    string   `json:"entrypoint"`
-	ArgumentTypes []string `json:"argument_types,omitempty"`
-	Output        []string `json:"output,omitempty"`
-	StartedAt     string   `json:"started_at"`
-	CompletedAt   string   `json:"completed_at"`
-	DurationMS    int64    `json:"duration_ms"`
-	Error         string   `json:"error,omitempty"`
-	ReceiptPath   string   `json:"receipt_path"`
+func runCobaltStrike(stdout io.Writer, opts cobaltStrikeRunOptions) error {
+	_, err := executeCobaltStrike(context.Background(), stdout, opts)
+	return err
 }
 
-func runCobaltStrike(stdout io.Writer, opts cobaltStrikeRunOptions) error {
+func executeCobaltStrike(parent context.Context, stdout io.Writer, opts cobaltStrikeRunOptions) (runtimeadapter.Receipt, error) {
 	host := strings.TrimSpace(os.Getenv("BOFBENCH_CS_HOST"))
 	port := strings.TrimSpace(os.Getenv("BOFBENCH_CS_PORT"))
 	user := strings.TrimSpace(os.Getenv("BOFBENCH_CS_USER"))
@@ -63,55 +51,60 @@ func runCobaltStrike(stdout io.Writer, opts cobaltStrikeRunOptions) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("Cobalt Strike execution needs %s in the environment; credentials are never read from a project", strings.Join(missing, ", "))
+		return runtimeadapter.Receipt{}, fmt.Errorf("Cobalt Strike execution needs %s in the environment; credentials are never read from a project", strings.Join(missing, ", "))
 	}
 	if _, err := exec.LookPath(agscript); err != nil {
-		return fmt.Errorf("licensed Cobalt Strike agscript client %q was not found: %w", agscript, err)
+		return runtimeadapter.Receipt{}, fmt.Errorf("licensed Cobalt Strike agscript client %q was not found: %w", agscript, err)
 	}
 	options, err := prepareStageOptions(stageInputOptions{
 		Input: opts.Input, Target: "cobaltstrike", Entrypoint: opts.Entrypoint, ArgumentTokens: opts.ArgumentTokens,
 		ArgumentNames: opts.ArgumentNames, ArgumentOptional: opts.ArgumentOptional, ArgumentsExplicit: true, Compiler: opts.Compiler, Runtime: opts.Runtime, SkipRun: true,
 	})
 	if err != nil {
-		return err
+		return runtimeadapter.Receipt{}, err
 	}
 	staged, err := stage.StageWithOptions(options)
 	if err != nil {
-		return err
+		return runtimeadapter.Receipt{}, err
 	}
 	manifest, err := loadStageManifest(staged.Manifest)
 	if err != nil {
-		return err
+		return runtimeadapter.Receipt{}, err
 	}
 	object := filepath.Join(staged.Output, filepath.FromSlash(manifest.StagedObject))
 	script, argumentTypes, err := cobaltAutomationScript(beacon, object, manifest.Entrypoint, opts.ArgumentTokens, opts.CLIValues)
 	if err != nil {
-		return err
+		return runtimeadapter.Receipt{}, err
 	}
 	temp, err := os.CreateTemp("", "bofbench-cobaltstrike-*.cna")
 	if err != nil {
-		return err
+		return runtimeadapter.Receipt{}, err
 	}
 	scriptPath := temp.Name()
 	defer os.Remove(scriptPath)
 	if err := temp.Chmod(0o600); err != nil {
 		temp.Close()
-		return err
+		return runtimeadapter.Receipt{}, err
 	}
 	if _, err := temp.WriteString(script); err != nil {
 		temp.Close()
-		return err
+		return runtimeadapter.Receipt{}, err
 	}
 	if err := temp.Close(); err != nil {
-		return err
+		return runtimeadapter.Receipt{}, err
 	}
 	runDir, err := runlog.NewDir("cobaltstrike-" + safeName(filepath.Base(opts.Input)))
 	if err != nil {
-		return err
+		return runtimeadapter.Receipt{}, err
 	}
 	started := time.Now()
-	receipt := cobaltStrikeReceipt{Runtime: "cobaltstrike", Status: "fail", Host: host, Port: port, User: user, Beacon: beacon, Object: object, Entrypoint: manifest.Entrypoint, ArgumentTypes: argumentTypes, StartedAt: started.UTC().Format(time.RFC3339Nano), ReceiptPath: filepath.Join(runDir, "cobaltstrike.json")}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	receipt := runtimeadapter.Receipt{
+		Schema: runtimeadapter.ReceiptSchema, SchemaVersion: runtimeadapter.ReceiptSchemaVersion,
+		Runtime: "cobaltstrike", Status: "fail", Transport: "agscript", RemoteHost: host + ":" + port,
+		Session: beacon, Object: object, Entrypoint: manifest.Entrypoint, Arguments: argumentTypes,
+		TimeoutMS: 90000, StartedAt: started.UTC().Format(time.RFC3339Nano), ReceiptPath: filepath.Join(runDir, "result.json"),
+	}
+	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
 	defer cancel()
 	output, runErr := exec.CommandContext(ctx, agscript, host, port, user, password, scriptPath).CombinedOutput()
 	clean := strings.TrimSpace(stripANSI(string(output)))
@@ -120,26 +113,28 @@ func runCobaltStrike(stdout io.Writer, opts cobaltStrikeRunOptions) error {
 	}
 	if ctx.Err() == context.DeadlineExceeded {
 		runErr = fmt.Errorf("Cobalt Strike execution timed out waiting for task output")
+		receipt.TimedOut = true
 	}
 	if runErr == nil && strings.Contains(clean, "BOFBENCH_TASK_SUBMITTED") {
-		receipt.Status = "submitted"
+		receipt.Status = "pass"
+		receipt.ExitState = "submitted"
 	} else if runErr == nil {
 		runErr = fmt.Errorf("agscript exited without confirming BOF task submission")
 	}
 	if runErr != nil {
 		receipt.Error = runErr.Error()
+		receipt.ExitState = "error"
 	}
 	receipt.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	receipt.DurationMS = time.Since(started).Milliseconds()
-	data, _ := json.MarshalIndent(receipt, "", "  ")
-	_ = os.WriteFile(receipt.ReceiptPath, append(data, '\n'), 0o600)
+	_ = writeJSON(receipt.ReceiptPath, receipt)
 	if printErr := printJSON(stdout, receipt); printErr != nil {
-		return printErr
+		return receipt, printErr
 	}
 	if runErr != nil {
-		return codedError{code: 1, err: runErr}
+		return receipt, codedError{code: 1, err: runErr}
 	}
-	return nil
+	return receipt, nil
 }
 
 func loadStageManifest(path string) (stage.Manifest, error) {

@@ -1,6 +1,6 @@
 # Argument Packing
 
-`bofbench` uses Cobalt Strike-style BOF packed arguments from CLI tokens.
+`bofbench` uses the standard Beacon BOF argument buffer for native, lab, Sliver, and Cobalt Strike execution. The buffer begins with a four-byte little-endian payload length followed by the typed values below.
 
 Supported tokens:
 
@@ -19,7 +19,17 @@ Example:
 bofbench run dist/arg_echo.x64.o --args z:test-message i:42
 ```
 
-The native loader exposes `BeaconDataParse`, `BeaconDataExtract`, `BeaconDataInt`, `BeaconDataShort`, and `BeaconDataLength`.
+The native x64/x86 loaders expose `BeaconDataParse`, `BeaconDataExtract`, `BeaconDataInt`, `BeaconDataShort`, and `BeaconDataLength` with the standard `datap` layout (`original`, `buffer`, `length`, and `size`). The same packed payload can therefore be passed to BOFBench's loaders and C2 adapters without a project-specific parser.
+
+Pack projects normally use named values instead of raw tokens:
+
+```bash
+bofbench run bofs/portable-survey --via lab --lab dedicated \
+  --arg process_filter=lsass \
+  --arg result_limit=5
+```
+
+`string`, `wstring`, `int`, `short`, `bytes`, and `file` pack arguments map to the corresponding packed types. Bytes accept base64 or `@path`; file arguments read the selected file at execution time.
 
 Tiny repeatable test config:
 

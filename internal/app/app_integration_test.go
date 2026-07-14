@@ -324,7 +324,7 @@ func TestCLIRecipeCreatesValidOperationalBOF(t *testing.T) {
 	}
 	mustExist(t, filepath.Join(tmp, "bofs", "survey", "bofbench.recipe.json"))
 	shown := runOK(t, tmp, bin, "recipe", "show", filepath.Join("bofs", "survey"))
-	for _, want := range []string{"Full Local Context Survey", "privilege  user", "impact     read_only", "WSACleanup and RegCloseKey"} {
+	for _, want := range []string{"Full Local Context Survey", "privilege  user", "effects    read_only", "WSACleanup and RegCloseKey"} {
 		if !strings.Contains(shown, want) {
 			t.Fatalf("recipe show missing %q:\n%s", want, shown)
 		}
@@ -334,7 +334,7 @@ func TestCLIRecipeCreatesValidOperationalBOF(t *testing.T) {
 		t.Fatalf("recipe validation:\n%s", validated)
 	}
 	dev := runOK(t, tmp, bin, "dev", filepath.Join("bofs", "survey"), "--compiler", "auto", "--skip-run")
-	for _, want := range []string{"BOF DEV PASS", "recipe    pass", "full-survey", "privilege=user", "network=local", "impact=read_only"} {
+	for _, want := range []string{"BOF DEV PASS", "recipe    pass", "full-survey", "privilege=user", "network=local", "effects=read_only"} {
 		if !strings.Contains(dev, want) {
 			t.Fatalf("recipe dev missing %q:\n%s", want, dev)
 		}
@@ -702,7 +702,7 @@ func TestCLIPreflightArsenalGateAndReports(t *testing.T) {
 	}
 
 	blocked, err := run(t, tmp, bin, "preflight", filepath.Join("arsenal", "demo"), "--select", "blocked")
-	if err == nil || !strings.Contains(blocked, "BOF PREFLIGHT REVIEW") || !strings.Contains(blocked, "object    arsenal/demo/blocked/blocked.x64.o") || !strings.Contains(blocked, "loader    blocked") || !strings.Contains(blocked, "shape     imports=1") || !strings.Contains(blocked, "blockers  unsupported_beacon_api") || !strings.Contains(blocked, "loader preflight gate failed") || !strings.Contains(blocked, "reports   runs/") {
+	if err == nil || !strings.Contains(blocked, "BOF PREFLIGHT REVIEW") || !strings.Contains(blocked, "object    arsenal/demo/blocked/blocked.x64.o") || !strings.Contains(blocked, "loader    blocked") || !strings.Contains(blocked, "shape     imports=1") || !strings.Contains(blocked, "blockers  unsupported_beacon_api") || !strings.Contains(blocked, "loader support blocked execution") || !strings.Contains(blocked, "reports   runs/") {
 		t.Fatalf("blocked preflight did not fail with evidence: err=%v\n%s", err, blocked)
 	}
 	allArchitectures, err := run(t, tmp, bin, "preflight", filepath.Join("arsenal", "demo"), "--select", "supported", "--arch", "all", "--format", "md")

@@ -13,11 +13,14 @@ func TestPackTokens(t *testing.T) {
 	if len(items) != 6 {
 		t.Fatalf("items = %d", len(items))
 	}
-	if got := binary.LittleEndian.Uint32(packed[:4]); got != 6 {
+	if got := binary.LittleEndian.Uint32(packed[:4]); got != uint32(len(packed)-4) {
+		t.Fatalf("argument buffer length = %d, want %d", got, len(packed)-4)
+	}
+	if got := binary.LittleEndian.Uint32(packed[4:8]); got != 6 {
 		t.Fatalf("z length = %d, want 6", got)
 	}
-	if string(packed[4:10]) != "hello\x00" {
-		t.Fatalf("z payload = %q", string(packed[4:10]))
+	if string(packed[8:14]) != "hello\x00" {
+		t.Fatalf("z payload = %q", string(packed[8:14]))
 	}
 }
 

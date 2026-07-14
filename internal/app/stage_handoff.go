@@ -39,7 +39,7 @@ func prepareStageOptions(input stageInputOptions) (stage.Options, error) {
 			Profile: input.Profile, SkipRun: input.SkipRun, VerifyReproducible: input.VerifyReproducible,
 		})
 		if err != nil {
-			return stage.Options{}, fmt.Errorf("project handoff gate failed: %w", err)
+			return stage.Options{}, fmt.Errorf("export preparation failed: %w", err)
 		}
 		cfg, _, err := config.LoadFor(input.Input)
 		if err != nil {

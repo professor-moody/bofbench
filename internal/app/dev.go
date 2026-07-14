@@ -383,7 +383,7 @@ func devLoopText(report devLoopReport) string {
 		}
 	}
 	if report.Recipe != nil && report.RecipeValidation != nil {
-		fmt.Fprintf(&b, "recipe    %-10s %s  impact=%s\n",
+		fmt.Fprintf(&b, "recipe    %-10s %s  effects=%s\n",
 			report.RecipeValidation.Status,
 			report.Recipe.Name,
 			report.Recipe.Impact,
@@ -471,7 +471,7 @@ func devLoopMarkdown(report devLoopReport) string {
 		)
 	}
 	if report.Recipe != nil && report.RecipeValidation != nil {
-		fmt.Fprintf(&b, "- Recipe: `%s` (`%s`); privilege `%s`; network `%s`; domain `%s`; impact `%s`\n",
+		fmt.Fprintf(&b, "- Recipe: `%s` (`%s`); privilege `%s`; network `%s`; domain `%s`; effects `%s`\n",
 			report.Recipe.Name,
 			report.RecipeValidation.Status,
 			report.Recipe.Privilege,

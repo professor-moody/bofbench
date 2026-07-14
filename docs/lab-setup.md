@@ -1,64 +1,110 @@
 # Lab Architecture and Setup
 
-The lab keeps the operator CLI, Windows execution host, and optional C2 runtime separate while preserving one project and one argument contract.
+The lab keeps project content, machine connection details, and runtime sessions separate while preserving one build/analyze/run workflow.
 
 ```mermaid
 flowchart LR
-    O["Operator host\nBOFBench CLI + catalogs"] -->|SSH or WinRM| W["Windows VM\ncompiler + x64/x86 loaders"]
-    O -->|mTLS client| S["Sliver server"]
-    S --> A["Windows Sliver session"]
-    O -->|agscript| C["Licensed Cobalt Strike team server"]
-    W --> R["runs/ receipts"]
+    O["Operator host\nBOFBench + catalogs"] --> P["Named lab profile"]
+    P -->|"SSH or WinRM"| W["Any Windows x64 host\nCLI + x64/x86 loaders"]
+    O -->|"Sliver client config"| S["Authorized Sliver server"]
+    S --> A["Profile-selected Windows session"]
+    O -->|"licensed agscript"| C["Cobalt Strike team server"]
+    W --> R["normalized run receipt"]
     A --> R
     C --> R
 ```
 
-## Existing VM checklist
+## Prepare a fresh Windows host
 
-The VM needs Windows x64, an operator-controlled transport, and enough disk for the remote workspace. Compilers and C2 tooling are optional and reported separately.
+The initial requirement is only an operator-controlled SSH or WinRM connection. Print the one-time elevated PowerShell for the selected transport:
 
 ```bash
-bofbench lab init \
-  --provider existing \
-  --host bofbench-winvm
-bofbench lab bootstrap
-bofbench lab status
+bofbench lab setup-script --transport ssh
+bofbench lab setup-script --transport winrm
 ```
 
-No Windows password, SSH private key, Sliver secret, or Cobalt Strike password is stored in `.bofbench/lab.json`.
+Run the printed block in an elevated PowerShell window on Windows, then register the host:
 
-Bootstrap deploys the Windows CLI and both loader helpers, creates the remote workspace, and probes:
+```bash
+bofbench lab add fresh \
+  --provider existing \
+  --transport ssh \
+  --host fresh-windows \
+  --user operator \
+  --remote-root 'C:\bofbench'
+
+bofbench lab bootstrap --lab fresh
+bofbench lab status --lab fresh
+```
+
+No Windows password, SSH private-key contents, Sliver secret, or Cobalt Strike password is stored in a project. The global profile stores only connection values and paths to key/known-hosts files.
+
+## What bootstrap provides
+
+Bootstrap is safe to repeat. It uploads the Windows CLI and loader helpers only when hashes differ and probes:
 
 | Capability | Result means |
 | --- | --- |
-| compile | MinGW or MSVC can build a project. |
+| remote compile | MinGW or MSVC can build the project on Windows. |
+| local-build fallback | The operator can build and upload the object when Windows has no compiler. |
 | native x64 | AMD64 BOFs can execute through the child loader. |
 | native x86 | I386 BOFs can execute through the WoW64 helper. |
-| Sliver | the requested Sliver prerequisites are usable. |
+| Sliver | the selected client/config/session prerequisites are available. |
 | debugging | crash/debug collection tooling is available. |
-| snapshots | the provider exposes restore points. |
+| snapshots | the provider exposes a recoverable snapshot operation. |
 
-## Transport
+Lab runs default to `--bootstrap auto`. Use `--bootstrap never` for a target that must not receive runtime updates.
 
-The existing provider defaults to SSH because Windows OpenSSH works consistently from macOS/Linux operator hosts. Provider-backed environments may use WinRM. Override the saved host, remote root, or executable through lab configuration or the corresponding command flags.
+## Build location
 
-## Standalone topology
+Set `--build-mode auto`, `remote`, or `local` when adding or cloning a profile:
+
+```bash
+bofbench lab add compiler-free --from fresh --build-mode local
+bofbench run bofs/portable-survey --via lab --lab compiler-free \
+  --arg process_filter=lsass --arg result_limit=5
+```
+
+`auto` prefers a supported compiler on Windows and otherwise builds locally. `remote` requires MinGW or MSVC on Windows. `local` always builds on the operator host and uploads the object.
+
+## SSH and WinRM
+
+Existing machines may use either transport. SSH keeps host-key verification enabled and supports aliases or direct host/user/port/identity fields. Existing-machine WinRM reads its password from a profile-specific environment variable or a no-echo prompt.
+
+```bash
+bofbench lab add clean-winrm \
+  --provider existing \
+  --transport winrm \
+  --host 10.0.0.60 \
+  --user operator
+
+export BOFBENCH_LAB_CLEAN_WINRM_WINRM_PASSWORD='...'
+bofbench lab status --lab clean-winrm
+```
+
+See [Portable Lab Profiles](lab-profiles.md) for the full configuration model and selection precedence.
+
+## Standalone Vagrant topology
 
 ```mermaid
 flowchart TB
     H["Operator host"] --> V["Windows workstation"]
     V --> L64["x64 loader"]
     V --> L86["x86 loader"]
-    V --> D["compiler + debugger"]
+    V --> D["optional compiler + debugger"]
 ```
 
 ```bash
-bofbench lab init --provider vagrant --topology standalone
-bofbench lab up
-bofbench lab snapshot clean
+bofbench lab add disposable \
+  --provider vagrant \
+  --vagrantfile lab/Vagrantfile \
+  --machine workstation \
+  --topology standalone
+bofbench lab up --lab disposable
+bofbench lab snapshot clean --lab disposable
 ```
 
-BOFBench invokes the operator-supplied Vagrantfile and licensed Windows box. It does not download or embed a Windows image.
+BOFBench invokes the operator-supplied Vagrantfile and licensed Windows box. Vagrant provides the current WinRM connection dynamically.
 
 ## Domain topology
 
@@ -69,16 +115,14 @@ flowchart LR
     DC <--> WS
 ```
 
-Use `--topology domain` with an operator-supplied Server/workstation Vagrant environment. Domain and lateral-movement packs target only hosts passed by the operator; there is no autonomous propagation or unconstrained scanning.
+Use `--topology domain` with an operator-supplied Server/workstation Vagrant environment. Domain and lateral-movement packs target only hosts explicitly passed by the operator; BOFBench does not autonomously propagate or scan address ranges.
 
-## Daily loop
+## Repeatable operating loop
 
 ```bash
-bofbench lab restore clean
-bofbench run bofs/fieldcheck --via lab \
-  --arg process_filter=lsass --arg result_limit=25
-bofbench analyze bofs/fieldcheck
-bofbench lab snapshot after-fieldcheck
+bofbench lab restore clean --lab disposable
+bofbench run bofs/portable-survey --via lab --lab disposable \
+  --arg process_filter=lsass --arg result_limit=5
+bofbench analyze bofs/portable-survey
+bofbench lab snapshot after-survey --lab disposable
 ```
-
-Use a clean snapshot for repeatable state-changing tests. Cleanup companions remove their exact named artifact, but snapshot restore remains the strongest whole-machine reset.

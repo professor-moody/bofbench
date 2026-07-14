@@ -45,11 +45,13 @@ nav:
   - Run:
       - Runtime Adapters: runtime.md
       - Windows Lab: windows-lab.md
+      - Portable Lab Profiles: lab-profiles.md
       - Lab Architecture: lab-setup.md
       - Sliver: sliver.md
       - Cobalt Strike: cobaltstrike.md
       - Export: staging.md
       - Operator Playbooks: playbooks.md
+      - Live Capability Proof: live-proof.md
   - Reference:
       - Operator TUI: tui.md
       - Argument Packing: arg-packing.md

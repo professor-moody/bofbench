@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +30,7 @@ import (
 	"bofbench/internal/recipe"
 	"bofbench/internal/runlog"
 	runtimesvc "bofbench/internal/runtime"
+	"bofbench/internal/runtimeadapter"
 	"bofbench/internal/scaffold"
 	"bofbench/internal/sourceaudit"
 	"bofbench/internal/stage"
@@ -284,7 +284,7 @@ func featureCommand(stdout io.Writer) *cobra.Command {
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
 				for _, pack := range scaffold.FeaturePacks() {
-					fmt.Fprintf(stdout, "%-18s impact=%-14s features=%-2d %s\n", pack.Name, pack.Impact, len(pack.Features), pack.Description)
+					fmt.Fprintf(stdout, "%-18s effects=%-14s features=%-2d %s\n", pack.Name, pack.Impact, len(pack.Features), pack.Description)
 					fmt.Fprintf(stdout, "  %s\n", strings.Join(pack.Features, ","))
 				}
 				return nil
@@ -825,7 +825,7 @@ func preflightCommand(stdout io.Writer) *cobra.Command {
 				fmt.Fprintf(stdout, "\nreports: %s %s\n", persisted.JSONPath, persisted.MDPath)
 			}
 			if !reportOnly && persisted.Report.HasProblems(strict) {
-				return codedError{code: 1, err: fmt.Errorf("loader preflight gate failed with status %s", persisted.Report.Status)}
+				return codedError{code: 1, err: fmt.Errorf("loader support blocked execution with status %s", persisted.Report.Status)}
 			}
 			return nil
 		},
@@ -965,12 +965,16 @@ func runCommand(stdout io.Writer) *cobra.Command {
 	var via string
 	var namedArgs []string
 	var compiler string
+	var arch string
 	var sliverClient string
 	var sliverSession string
+	var labName string
+	var labProfiles string
 	var labHost string
 	var labRoot string
 	var labExecutable string
 	var transportTimeout time.Duration
+	var bootstrapMode string
 	var cleanup bool
 	cmd := &cobra.Command{
 		Use:   "run <project|artifact> [--via native|lab|sliver|cobaltstrike] [--arg name=value]",
@@ -1010,87 +1014,48 @@ func runCommand(stdout io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			selectedAdapter, err := resolveRuntimeAdapter(via)
+			run := &runtimeRunContext{
+				stdout: stdout, input: args[0], projectInput: projectInput, entry: entry, timeout: timeout,
+				runtimeName: runtimeName, compiler: compiler, arch: arch, resolved: resolved, packed: packed, items: items,
+				labName: labName, labProfiles: labProfiles, labHost: labHost, labRoot: labRoot, labExecutable: labExecutable,
+				transportTimeout: transportTimeout, bootstrapMode: bootstrapMode, sliverClient: sliverClient, sliverSession: sliverSession,
+			}
+			registry, err := runtimeAdapterRegistry(run)
 			if err != nil {
 				return err
 			}
-			switch selectedAdapter {
-			case "lab":
-				if !projectInput {
-					return fmt.Errorf("lab execution requires a project directory so BOFBench can sync its source and lockfile")
-				}
-				ctx := cmd.Context()
-				if transportTimeout > 0 {
-					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, transportTimeout)
-					defer cancel()
-				}
-				report, runErr := lab.RemoteRun(ctx, args[0], lab.RemoteRunOptions{
-					RemoteOptions: lab.RemoteOptions{Host: labHost, RemoteRoot: labRoot, Executable: labExecutable, SSH: "ssh", SCP: "scp"},
-					Compiler:      compiler, Runtime: "windows-coff", Args: resolved.Tokens,
-				})
-				fmt.Fprint(stdout, lab.RemoteRunText(report))
-				if runErr != nil {
-					return codedError{code: 1, err: runErr}
-				}
-				return nil
-			case "sliver":
-				options, err := prepareStageOptions(stageInputOptions{
-					Input: args[0], Target: "sliver", Entrypoint: entry, ArgumentTokens: resolved.Tokens, ArgumentNames: resolved.Names, ArgumentOptional: resolved.Optional, ArgumentsExplicit: true,
-					Compiler: compiler, Runtime: runtimeName, SkipRun: true,
-				})
-				if err != nil {
-					return err
-				}
-				result, err := stage.StageWithOptions(options)
-				if err != nil {
-					return err
-				}
-				return runSliverExtension(stdout, sliverOptions{Client: sliverClient, SessionFilter: sliverSession}, result.Output, "", resolved.CLIValues)
-			case "cobaltstrike":
-				return runCobaltStrike(stdout, cobaltStrikeRunOptions{Input: args[0], Entrypoint: entry, Compiler: compiler, Runtime: runtimeName, ArgumentTokens: resolved.Tokens, ArgumentNames: resolved.Names, ArgumentOptional: resolved.Optional, CLIValues: resolved.CLIValues})
-			case "native":
+			adapter, err := registry.Resolve(via)
+			if err != nil {
+				return fmt.Errorf("--via: %w", err)
 			}
-			object := args[0]
-			if projectInput {
-				build, buildErr := buildsys.BuildWithOptions(args[0], buildsys.Options{Arch: "x64", Compiler: compiler})
-				if buildErr != nil {
-					return codedError{code: 1, err: buildErr}
-				}
-				object = build.Object
-				cfg, _, cfgErr := config.LoadFor(args[0])
-				if cfgErr == nil {
-					if entry == "go" && cfg.Entrypoint != "" {
-						entry = cfg.Entrypoint
-					}
-					if timeout == 5000 && cfg.TimeoutMS > 0 {
-						timeout = cfg.TimeoutMS
-					}
-				}
+			availability, err := adapter.Detect(cmd.Context())
+			if err != nil {
+				return fmt.Errorf("detect %s runtime: %w", adapter.Name(), err)
 			}
-			runDir, err := runlog.NewDir("run-" + safeName(objectBase(args[0])))
+			if !availability.Available {
+				return fmt.Errorf("%s runtime is unavailable: %s", adapter.Name(), emptyText(availability.Detail, "no usable runtime was detected"))
+			}
+			request := runtimeadapter.Request{Input: args[0], Entrypoint: entry, Cleanup: cleanup}
+			for index, item := range items {
+				name := fmt.Sprintf("arg%d", index+1)
+				if index < len(resolved.Names) {
+					name = resolved.Names[index]
+				}
+				request.Arguments = append(request.Arguments, runtimeadapter.Argument{Name: name, Type: item.Kind, Value: item.Value})
+			}
+			if _, err := adapter.ConvertArguments(request.Arguments); err != nil {
+				return fmt.Errorf("convert %s arguments: %w", adapter.Name(), err)
+			}
+			prepared, err := adapter.Prepare(cmd.Context(), request)
 			if err != nil {
 				return err
 			}
-			res, err := runtimesvc.Run(runtimesvc.Request{
-				Path:      object,
-				Entry:     entry,
-				ArgHex:    argpack.Hex(packed),
-				Tokens:    resolved.Tokens,
-				TimeoutMS: timeout,
-				Runtime:   runtimeName,
-			})
-			res.Header = evidence.New(evidence.SchemaRun, runlog.ID(runDir), "")
-			_ = os.WriteFile(filepath.Join(runDir, "result.md"), []byte(runMarkdown(res, items)), 0o644)
-			_ = writeJSON(filepath.Join(runDir, "result.json"), res)
-			_ = printJSON(stdout, res)
-			if err != nil {
-				return codedError{code: 1, err: err}
+			if cleanup {
+				_, err = adapter.Cleanup(cmd.Context(), prepared)
+			} else {
+				_, err = adapter.Execute(cmd.Context(), prepared)
 			}
-			if res.Status != "pass" {
-				return codedError{code: 1, err: fmt.Errorf("payload run failed: %s", res.ExitState)}
-			}
-			return nil
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&entry, "entry", "go", "entrypoint")
@@ -1100,13 +1065,16 @@ func runCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&via, "via", "native", "execution target: native, lab, sliver, or cobaltstrike")
 	cmd.Flags().StringArrayVar(&namedArgs, "arg", nil, "named pack argument (name=value); repeatable")
 	cmd.Flags().StringVar(&compiler, "compiler", "auto", "compiler profile for project input: auto, mingw, or msvc")
-	cmd.Flags().StringVar(&sliverClient, "sliver-client", filepath.Join("work", "tools", "sliver", "sliver-client_macos-arm64"), "Sliver client binary")
-	cmd.Flags().StringVar(&sliverSession, "session", "DEVBOX", "Sliver session ID, name, or filter")
-	defaults := lab.DefaultRemoteOptions()
-	cmd.Flags().StringVar(&labHost, "host", defaults.Host, "Windows lab SSH host or alias")
-	cmd.Flags().StringVar(&labRoot, "remote-root", defaults.RemoteRoot, "BOFBench root on the Windows lab")
-	cmd.Flags().StringVar(&labExecutable, "remote-exe", defaults.Executable, "BOFBench executable on the Windows lab")
+	cmd.Flags().StringVar(&arch, "arch", "x64", "project build architecture: x64 or x86")
+	cmd.Flags().StringVar(&sliverClient, "sliver-client", "", "Sliver client binary; discovered automatically when omitted")
+	cmd.Flags().StringVar(&sliverSession, "session", "", "Sliver session ID, name, or filter; defaults to the selected lab profile")
+	cmd.Flags().StringVar(&labName, "lab", "", "named lab profile for lab or Sliver execution")
+	cmd.Flags().StringVar(&labProfiles, "profiles", lab.ProfilesPath(), "global lab profiles file")
+	cmd.Flags().StringVar(&labHost, "host", "", "compatibility lab host override; prefer --lab")
+	cmd.Flags().StringVar(&labRoot, "remote-root", "", "compatibility remote-root override; prefer the lab profile")
+	cmd.Flags().StringVar(&labExecutable, "remote-exe", "", "compatibility remote executable override")
 	cmd.Flags().DurationVar(&transportTimeout, "transport-timeout", 3*time.Minute, "lab operation timeout")
+	cmd.Flags().StringVar(&bootstrapMode, "bootstrap", "auto", "lab runtime bootstrap: auto, always, or never")
 	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "run the cleanup companion packs instead of the project's action packs")
 	return cmd
 }
@@ -1385,6 +1353,14 @@ func labCommand(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Run and summarize local lab workflows",
 	}
 	cmd.AddCommand(
+		labAddCommand(stdout),
+		labListCommand(stdout),
+		labShowCommand(stdout),
+		labUseCommand(stdout),
+		labRemoveCommand(stdout),
+		labImportCommand(stdout),
+		labSetupScriptCommand(stdout),
+		labTargetCommand(stdout),
 		labInitCommand(stdout),
 		labBootstrapCommand(stdout),
 		labProviderCommand(stdout, "up"),
@@ -2112,7 +2088,7 @@ func printAnalysisCapabilities(w io.Writer, capabilities []artifact.Capability) 
 		}
 	}
 	printWrappedValues(w, "can do", names, 78)
-	fmt.Fprintf(w, "impact    %s\n", analysisCapabilityImpact(capabilities))
+	fmt.Fprintf(w, "effects   %s\n", analysisCapabilityImpact(capabilities))
 	basis := "imported APIs"
 	if usesStrings {
 		basis = "imported APIs + visible strings"
@@ -2510,9 +2486,10 @@ func templateBeaconHeader() string {
 #define DECLSPEC_IMPORT __declspec(dllimport)
 #endif
 typedef struct {
+    char *original;
     char *buffer;
     int length;
-    int offset;
+    int size;
 } datap;
 typedef struct {
     char *original;

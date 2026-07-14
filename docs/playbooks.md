@@ -3,12 +3,12 @@
 ## Build and run a parameterized survey
 
 ```bash
-bofbench new survey --pack host-discovery,system-discovery,domain-discovery
-bofbench build bofs/survey
-bofbench analyze bofs/survey
-bofbench run bofs/survey --via lab \
+bofbench new portable-survey --pack deep-survey
+bofbench build bofs/portable-survey --arch x64
+bofbench analyze bofs/portable-survey
+bofbench run bofs/portable-survey --via lab --lab dedicated \
   --arg process_filter=lsass \
-  --arg result_limit=25
+  --arg result_limit=5
 ```
 
 Change `process_filter` to another image or an empty string and rerun the same object.
@@ -28,9 +28,12 @@ Confirm whether the result is token discovery, impersonation, or alternate-token
 bofbench catalog add ~/bofbench-packs-internal --name internal
 bofbench new token-op --pack internal/token-impersonation
 bofbench analyze bofs/token-op
-bofbench run bofs/token-op --via sliver \
-  --arg source_pid=1234 \
-  --arg command=whoami
+bofbench lab target deploy --lab dedicated
+bofbench lab target status --lab dedicated
+bofbench run bofs/token-op --via sliver --lab dedicated \
+  --arg source_pid=<TARGET_PID> \
+  --arg command='C:\Windows\System32\whoami.exe'
+bofbench lab target remove --lab dedicated
 ```
 
 Analysis should identify both token duplication/impersonation and process creation with another token before execution.
@@ -53,12 +56,12 @@ The diff should separate remote-thread creation from APC queueing while retainin
 ```bash
 bofbench new lab-task --pack internal/scheduled-task
 bofbench analyze bofs/lab-task
-bofbench run bofs/lab-task --via lab \
-  --arg task_name=BOFBenchLab \
-  --arg command='cmd.exe /c whoami > %TEMP%\bofbench-task.txt'
+bofbench run bofs/lab-task --via lab --lab disposable \
+  --arg task_name=BOFBench-Lab \
+  --arg command='C:\Windows\System32\cmd.exe /d /c exit 0'
 
-bofbench run bofs/lab-task --via lab --cleanup \
-  --arg task_name=BOFBenchLab
+bofbench run bofs/lab-task --via lab --lab disposable --cleanup \
+  --arg task_name=BOFBench-Lab
 ```
 
 Observe the named task independently before cleanup, then confirm that exact task is gone.
@@ -68,14 +71,14 @@ Observe the named task independently before cleanup, then confirm that exact tas
 ```bash
 bofbench new remote-service --pack internal/remote-service
 bofbench analyze bofs/remote-service
-bofbench run bofs/remote-service --via sliver \
-  --arg target_host=LAB-WKS01 \
-  --arg service_name=BOFBenchLab \
-  --arg command='C:\Windows\System32\cmd.exe /c whoami'
+bofbench run bofs/remote-service --via sliver --lab domain-member \
+  --arg target_host=<AUTHORIZED_LAB_COMPUTER> \
+  --arg service_name=BOFBench-Lab \
+  --arg command='C:\bofbench\target\bofbench-target.exe'
 
-bofbench run bofs/remote-service --via sliver --cleanup \
-  --arg target_host=LAB-WKS01 \
-  --arg service_name=BOFBenchLab
+bofbench run bofs/remote-service --via sliver --lab domain-member --cleanup \
+  --arg target_host=<AUTHORIZED_LAB_COMPUTER> \
+  --arg service_name=BOFBench-Lab
 ```
 
 The pack operates only on the supplied host and service name.

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,46 +15,20 @@ import (
 )
 
 func labInitCommand(stdout io.Writer) *cobra.Command {
-	var configPath string
-	var provider string
-	var topology string
-	var transport string
-	var host string
-	var remoteRoot string
-	var executable string
-	var vagrantFile string
-	cmd := &cobra.Command{
-		Use: "init", Short: "Configure an existing Windows VM or a Vagrant-backed lab", Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			config := lab.DefaultConfig(provider)
-			config.Topology = strings.ToLower(topology)
-			config.Transport = strings.ToLower(transport)
-			config.Host = host
-			config.RemoteRoot = remoteRoot
-			config.Executable = executable
-			config.VagrantFile = vagrantFile
-			if err := lab.SaveConfig(configPath, config); err != nil {
-				return err
-			}
-			absolute, _ := filepath.Abs(configPath)
-			fmt.Fprintf(stdout, "Windows lab configured\nprovider    %s\ntopology    %s\ntransport   %s\nconfig      %s\nnext        bofbench lab bootstrap\n", config.Provider, config.Topology, config.Transport, absolute)
-			return nil
-		},
+	cmd := labAddCommand(stdout)
+	run := cmd.RunE
+	cmd.Use = "init"
+	cmd.Short = "Compatibility alias for 'lab add default'"
+	cmd.Args = cobra.NoArgs
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		return run(cmd, []string{"default"})
 	}
-	defaults := lab.DefaultConfig("existing")
-	cmd.Flags().StringVar(&configPath, "config", lab.DefaultConfigPath(), "lab configuration path")
-	cmd.Flags().StringVar(&provider, "provider", "existing", "provider: existing or vagrant")
-	cmd.Flags().StringVar(&topology, "topology", defaults.Topology, "topology: standalone or domain")
-	cmd.Flags().StringVar(&transport, "transport", defaults.Transport, "existing-VM transport: ssh or winrm")
-	cmd.Flags().StringVar(&host, "host", defaults.Host, "existing Windows VM SSH host or alias")
-	cmd.Flags().StringVar(&remoteRoot, "remote-root", defaults.RemoteRoot, "managed BOFBench directory on Windows")
-	cmd.Flags().StringVar(&executable, "remote-exe", defaults.Executable, "BOFBench executable path on Windows")
-	cmd.Flags().StringVar(&vagrantFile, "vagrantfile", defaults.VagrantFile, "operator-supplied Vagrantfile")
 	return cmd
 }
 
 func labBootstrapCommand(stdout io.Writer) *cobra.Command {
-	var configPath string
+	var labName string
+	var profilesPath string
 	var repository string
 	var executable string
 	var loader string
@@ -68,9 +41,9 @@ func labBootstrapCommand(stdout io.Writer) *cobra.Command {
 			if format != "text" && format != "json" {
 				return fmt.Errorf("lab bootstrap format must be text or json")
 			}
-			config, err := lab.LoadConfig(configPath)
+			resolved, err := lab.ResolveProfile(labName, ".", profilesPath)
 			if err != nil {
-				return fmt.Errorf("load lab config; run 'bofbench lab init' first: %w", err)
+				return err
 			}
 			ctx := cmd.Context()
 			if timeout > 0 {
@@ -78,7 +51,7 @@ func labBootstrapCommand(stdout io.Writer) *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, timeout)
 				defer cancel()
 			}
-			report, bootstrapErr := lab.Bootstrap(ctx, lab.BootstrapOptions{Config: config, ConfigPath: configPath, Repository: repository, Executable: executable, LoaderX64: loader, LoaderX86: loaderX86})
+			report, bootstrapErr := lab.Bootstrap(ctx, lab.BootstrapOptions{ProfileName: resolved.Name, Profile: resolved.Profile, Repository: repository, Executable: executable, LoaderX64: loader, LoaderX86: loaderX86})
 			if format == "json" {
 				if err := printJSON(stdout, report); err != nil {
 					return err
@@ -92,7 +65,8 @@ func labBootstrapCommand(stdout io.Writer) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&configPath, "config", lab.DefaultConfigPath(), "lab configuration path")
+	cmd.Flags().StringVar(&labName, "lab", "", "named lab profile; follows standard profile precedence when omitted")
+	cmd.Flags().StringVar(&profilesPath, "profiles", lab.ProfilesPath(), "global lab profiles file")
 	cmd.Flags().StringVar(&repository, "repo", "", "BOFBench repository root; default current directory")
 	cmd.Flags().StringVar(&executable, "bofbench-exe", "", "prebuilt Windows bofbench.exe; otherwise cross-build it")
 	cmd.Flags().StringVar(&loader, "loader-x64", "", "prebuilt x64 loader; default native/loader/bofbench-loader.exe")
@@ -103,7 +77,8 @@ func labBootstrapCommand(stdout io.Writer) *cobra.Command {
 }
 
 func labProviderCommand(stdout io.Writer, operation string) *cobra.Command {
-	var configPath string
+	var labName string
+	var profilesPath string
 	var machine string
 	use := operation
 	if operation == "snapshot" || operation == "restore" {
@@ -118,33 +93,41 @@ func labProviderCommand(stdout io.Writer, operation string) *cobra.Command {
 			return cobra.NoArgs(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			config, err := lab.LoadConfig(configPath)
+			resolved, err := lab.ResolveProfile(labName, ".", profilesPath)
 			if err != nil {
 				return err
 			}
-			if config.Provider != "vagrant" {
+			profile := resolved.Profile
+			if profile.Provider != "vagrant" {
 				return fmt.Errorf("lab %s requires the vagrant provider; existing VMs are controlled by their operator snapshot system", operation)
+			}
+			selectedMachine := machine
+			if selectedMachine == "" {
+				selectedMachine = profile.VagrantMachine
 			}
 			vagrantArgs := []string{}
 			switch operation {
 			case "up":
 				vagrantArgs = append(vagrantArgs, "up")
+				if selectedMachine != "" {
+					vagrantArgs = append(vagrantArgs, selectedMachine)
+				}
 			case "snapshot":
 				vagrantArgs = append(vagrantArgs, "snapshot", "save")
-				if machine != "" {
-					vagrantArgs = append(vagrantArgs, machine)
+				if selectedMachine != "" {
+					vagrantArgs = append(vagrantArgs, selectedMachine)
 				}
 				vagrantArgs = append(vagrantArgs, args[0])
 			case "restore":
 				vagrantArgs = append(vagrantArgs, "snapshot", "restore")
-				if machine != "" {
-					vagrantArgs = append(vagrantArgs, machine)
+				if selectedMachine != "" {
+					vagrantArgs = append(vagrantArgs, selectedMachine)
 				}
 				vagrantArgs = append(vagrantArgs, args[0])
 			}
 			command := exec.CommandContext(cmd.Context(), "vagrant", vagrantArgs...)
-			if config.VagrantFile != "" {
-				absolute, err := filepath.Abs(config.VagrantFile)
+			if profile.VagrantFile != "" {
+				absolute, err := filepath.Abs(profile.VagrantFile)
 				if err != nil {
 					return err
 				}
@@ -161,7 +144,8 @@ func labProviderCommand(stdout io.Writer, operation string) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&configPath, "config", lab.DefaultConfigPath(), "lab configuration path")
+	cmd.Flags().StringVar(&labName, "lab", "", "named Vagrant lab profile")
+	cmd.Flags().StringVar(&profilesPath, "profiles", lab.ProfilesPath(), "global lab profiles file")
 	if operation == "snapshot" || operation == "restore" {
 		cmd.Flags().StringVar(&machine, "machine", "", "Vagrant machine name; omit for single-machine labs")
 	}

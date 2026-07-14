@@ -9,7 +9,7 @@ bofbench analyze dist/payload.x64.o
 bofbench export dist/payload.x64.o --for raw
 ```
 
-`analyze` still reports compiled capabilities and loader support. Continue with `bofbench run <project> --via lab` or move the object to Windows. x64 uses `bofbench-loader.exe`; x86 uses `bofbench-loader-x86.exe` under WoW64.
+`analyze` still reports compiled capabilities and loader support. Continue with `bofbench run <project> --via lab --lab <name>` or move the object to Windows. x64 uses `bofbench-loader.exe`; x86 uses `bofbench-loader-x86.exe` under WoW64.
 
 For other artifact types, `run --runtime auto` reports `requires_linux`, `requires_darwin`, or the matching setup state instead of pretending execution happened. On Linux and macOS, ELF and Mach-O execution also requires `cc` because the runner links the object into a small local harness before execution.
 
@@ -30,6 +30,52 @@ cl /nologo /c payload.c /Fo:dist\payload.x64.o /I payload-dir /DBOF /Brepro /exp
 ```
 
 Use `--compiler mingw` or `--compiler msvc` to stop auto-selection and receive an explicit `compiler_unavailable` diagnostic when that profile cannot be used. The persisted `build.json` records the requested profile even when selection fails.
+
+For a remote Windows machine without a compiler, clone or add the profile with `--build-mode local`. BOFBench builds on the operator host and uploads the object:
+
+```sh
+bofbench lab add compiler-free --from dedicated --build-mode local
+bofbench run bofs/portable-survey --via lab --lab compiler-free
+```
+
+## Lab profile is ambiguous
+
+When more than one profile exists and none is selected, BOFBench prints the available names instead of guessing. Select one for the command, environment, project, or global configuration:
+
+```sh
+bofbench lab list
+bofbench lab use dedicated
+bofbench lab use dedicated --project bofs/portable-survey
+BOFBENCH_LAB=dedicated bofbench lab status
+```
+
+Selection order is `--lab`, `BOFBENCH_LAB`, project default, active global profile, and the only configured profile.
+
+## SSH host key changed
+
+BOFBench keeps SSH host-key verification enabled. Confirm that the host was intentionally rebuilt or replaced, then update the correct user or profile-specific `known_hosts` file using your normal SSH tooling. Do not bypass verification in a lab profile.
+
+## WinRM authentication failed
+
+Existing-machine WinRM passwords are not stored. Set the sanitized profile-specific environment variable printed by `lab show`, or run from an interactive terminal to receive a no-echo prompt. For example, a profile named `clean-winrm` uses:
+
+```sh
+export BOFBENCH_LAB_CLEAN_WINRM_WINRM_PASSWORD='...'
+bofbench lab status --lab clean-winrm
+```
+
+For a Vagrant profile, use `bofbench lab up --lab <name>` first. BOFBench retrieves the current WinRM connection from Vagrant and does not use the existing-machine password variable.
+
+## Bootstrap is partial or timed out
+
+Run status to see which capabilities are already usable, then repeat the idempotent bootstrap with a longer timeout:
+
+```sh
+bofbench lab status --lab dedicated
+bofbench lab bootstrap --lab dedicated --timeout 10m
+```
+
+Ordinary `run --via lab` uses `--bootstrap auto`. Use `--bootstrap always` to recheck hashes or `--bootstrap never` to prevent deployment on a controlled target.
 
 ## Configuration rejected
 

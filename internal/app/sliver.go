@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,13 +9,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf16"
 
 	"github.com/spf13/cobra"
 
+	"bofbench/internal/lab"
 	"bofbench/internal/runlog"
 	"bofbench/internal/runtimeadapter"
 	"bofbench/internal/stage"
@@ -26,6 +26,10 @@ import (
 type sliverOptions struct {
 	Client        string
 	SessionFilter string
+	Lab           string
+	Profiles      string
+	ProfileName   string
+	RemoteHost    string
 }
 
 type sliverExtension struct {
@@ -46,14 +50,16 @@ var (
 )
 
 func sliverCommand(stdout io.Writer) *cobra.Command {
-	opts := sliverOptions{}
+	opts := sliverOptions{Profiles: lab.ProfilesPath()}
 	cmd := &cobra.Command{
 		Use:   "sliver",
 		Short: "Load and run verified BOFBench extensions through Sliver",
 	}
-	cmd.PersistentFlags().StringVar(&opts.Client, "client", filepath.Join("work", "tools", "sliver", "sliver-client_macos-arm64"), "Sliver client binary")
-	cmd.PersistentFlags().StringVar(&opts.SessionFilter, "session", "DEVBOX", "live session name or filter")
-	cmd.AddCommand(sliverSessionsCommand(stdout, &opts), sliverRunCommand(stdout, &opts))
+	cmd.PersistentFlags().StringVar(&opts.Client, "client", "", "Sliver client binary; discovered automatically when omitted")
+	cmd.PersistentFlags().StringVar(&opts.SessionFilter, "session", "", "live session selector; defaults to the selected lab profile")
+	cmd.PersistentFlags().StringVar(&opts.Lab, "lab", "", "named lab profile")
+	cmd.PersistentFlags().StringVar(&opts.Profiles, "profiles", opts.Profiles, "global lab profiles file")
+	cmd.AddCommand(sliverSetupCommand(stdout, &opts), sliverSessionsCommand(stdout, &opts), sliverRunCommand(stdout, &opts))
 	return cmd
 }
 
@@ -63,11 +69,15 @@ func sliverSessionsCommand(stdout io.Writer, opts *sliverOptions) *cobra.Command
 		Short: "Find the live Sliver session selected for BOF execution",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			session, err := findSliverSession(*opts)
+			resolved, err := resolveSliverOptions(*opts, ".", true)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(stdout, "SLIVER SESSION PASS\nfilter    %s\nsession   %s [ALIVE]\n", opts.SessionFilter, session)
+			session, err := findSliverSession(resolved)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(stdout, "Sliver session ready\nSelector   %s\nSession    %s [ALIVE]\n", resolved.SessionFilter, session)
 			return nil
 		},
 	}
@@ -80,34 +90,80 @@ func sliverRunCommand(stdout io.Writer, opts *sliverOptions) *cobra.Command {
 		Short: "Verify, load, and execute a staged Sliver BOF extension",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSliverExtension(stdout, *opts, args[0], commandName, args[1:])
+			resolved, err := resolveSliverOptions(*opts, args[0], true)
+			if err != nil {
+				return err
+			}
+			return runSliverExtension(stdout, resolved, args[0], commandName, args[1:])
 		},
 	}
 	cmd.Flags().StringVar(&commandName, "command", "", "extension command override; defaults to extension.json command_name")
 	return cmd
 }
 
+func sliverSetupCommand(stdout io.Writer, opts *sliverOptions) *cobra.Command {
+	var install bool
+	cmd := &cobra.Command{
+		Use: "setup", Short: "Verify the Sliver client, config, and coff-loader for a lab profile", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resolved, err := resolveSliverOptions(*opts, ".", false)
+			if err != nil {
+				return err
+			}
+			configs := discoverSliverConfigs()
+			if len(configs) == 0 {
+				return fmt.Errorf("no Sliver client config found; set BOFBENCH_SLIVER_CONFIG or place a config in ~/.sliver-client/configs")
+			}
+			loaderPath := filepath.Join(sliverClientHome(), "extensions", "coff-loader", "extension.json")
+			if _, err := os.Stat(loaderPath); err != nil && install {
+				output, installErr := runSliverRC(resolved.Client, "armory install coff-loader\nexit\n")
+				if installErr != nil {
+					return fmt.Errorf("install coff-loader: %w", installErr)
+				}
+				if !strings.Contains(strings.ToLower(stripANSI(output)), "coff") {
+					return fmt.Errorf("Sliver did not confirm coff-loader installation")
+				}
+			}
+			if _, err := os.Stat(loaderPath); err != nil {
+				return fmt.Errorf("coff-loader is not installed at %s; rerun with --install", loaderPath)
+			}
+			fmt.Fprintf(stdout, "Sliver support ready\nClient      %s\nConfig      %s\ncoff-loader %s\n", resolved.Client, configs[0], loaderPath)
+			if resolved.SessionFilter != "" {
+				fmt.Fprintf(stdout, "Session     %s\n", resolved.SessionFilter)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&install, "install", false, "explicitly install coff-loader through the configured Sliver server")
+	return cmd
+}
+
 func runSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath, commandOverride string, commandArgs []string) error {
+	_, err := executeSliverExtension(stdout, opts, extensionPath, commandOverride, commandArgs)
+	return err
+}
+
+func executeSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath, commandOverride string, commandArgs []string) (runtimeadapter.Receipt, error) {
 	if _, err := os.Stat(opts.Client); err != nil {
-		return fmt.Errorf("Sliver client %s: %w", opts.Client, err)
+		return runtimeadapter.Receipt{}, fmt.Errorf("Sliver client %s: %w", opts.Client, err)
 	}
 	verification := stage.Verify(extensionPath)
 	if !verification.Passed() {
-		return fmt.Errorf("exported extension verification failed; run 'bofbench export verify %s'", extensionPath)
+		return runtimeadapter.Receipt{}, fmt.Errorf("exported extension verification failed; run 'bofbench export verify %s'", extensionPath)
 	}
 	extension, err := loadSliverExtension(extensionPath)
 	if err != nil {
-		return err
+		return runtimeadapter.Receipt{}, err
 	}
 	commandName := extension.CommandName
 	if commandOverride != "" {
 		commandName = commandOverride
 	}
 	if commandName == "" {
-		return fmt.Errorf("extension command is empty; set command_name in extension.json or pass --command")
+		return runtimeadapter.Receipt{}, fmt.Errorf("extension command is empty; set command_name in extension.json or pass --command")
 	}
 	if !safeSliverCommand.MatchString(commandName) {
-		return fmt.Errorf("extension command %q is not safe for the Sliver console", commandName)
+		return runtimeadapter.Receipt{}, fmt.Errorf("extension command %q is not safe for the Sliver console", commandName)
 	}
 	required := 0
 	for _, argument := range extension.Arguments {
@@ -116,23 +172,19 @@ func runSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath, com
 		}
 	}
 	if len(commandArgs) < required || len(commandArgs) > len(extension.Arguments) {
-		return fmt.Errorf("extension command requires %d to %d argument(s), got %d", required, len(extension.Arguments), len(commandArgs))
+		return runtimeadapter.Receipt{}, fmt.Errorf("extension command requires %d to %d argument(s), got %d", required, len(extension.Arguments), len(commandArgs))
 	}
 	absolute, err := filepath.Abs(extensionPath)
 	if err != nil {
-		return err
+		return runtimeadapter.Receipt{}, err
 	}
 	session, err := findSliverSession(opts)
 	if err != nil {
-		return err
+		return runtimeadapter.Receipt{}, err
 	}
-	commandLine := commandName
-	for _, value := range commandArgs {
-		quoted, err := sliverConsoleQuote(value)
-		if err != nil {
-			return err
-		}
-		commandLine += " " + quoted
+	commandLine, err := sliverExtensionCommandLine(commandName, extension, commandArgs)
+	if err != nil {
+		return runtimeadapter.Receipt{}, err
 	}
 	quotedExtension, _ := sliverConsoleQuote(absolute)
 	rc := fmt.Sprintf("extensions load %s\nuse %s\n%s\nexit\n", quotedExtension, session, commandLine)
@@ -144,13 +196,13 @@ func runSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath, com
 	}
 	runDir, receiptErr := runlog.NewDir("sliver-" + safeName(extension.Name))
 	if receiptErr != nil {
-		return receiptErr
+		return runtimeadapter.Receipt{}, receiptErr
 	}
 	receipt := runtimeadapter.Receipt{
-		Schema: runtimeadapter.ReceiptSchema, SchemaVersion: 1, Runtime: "sliver", Status: "fail",
-		Session: session, Entrypoint: "go", StartedAt: started.UTC().Format(time.RFC3339Nano),
+		Schema: runtimeadapter.ReceiptSchema, SchemaVersion: runtimeadapter.ReceiptSchemaVersion, Runtime: "sliver", Status: "fail", Profile: opts.ProfileName,
+		Transport: "sliver", RemoteHost: opts.RemoteHost, Session: session, Entrypoint: "go", TimeoutMS: 90000, StartedAt: started.UTC().Format(time.RFC3339Nano),
 		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), DurationMS: time.Since(started).Milliseconds(),
-		ReceiptPath: filepath.Join(runDir, "sliver.json"),
+		ReceiptPath: filepath.Join(runDir, "result.json"),
 	}
 	if manifest, manifestErr := loadStageManifest(filepath.Join(extensionPath, "manifest.json")); manifestErr == nil {
 		receipt.Object = manifest.Object
@@ -162,27 +214,153 @@ func runSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath, com
 	}
 	if clean != "" {
 		receipt.Output = strings.Split(strings.TrimSpace(clean), "\n")
+		receipt.RemoteComputer = sliverOutputComputer(receipt.Output)
 	}
 	if match := sliverTaskID.FindStringSubmatch(clean); len(match) == 2 {
 		receipt.TaskID = match[1]
 	}
 	if runErr == nil {
 		receipt.Status = "pass"
+		receipt.ExitState = "success"
 	} else {
 		receipt.Error = runErr.Error()
+		receipt.ExitState = "error"
+		receipt.TimedOut = strings.Contains(strings.ToLower(receipt.Error), "timed out")
 	}
 	if err := writeJSON(receipt.ReceiptPath, receipt); err != nil {
-		return err
+		return receipt, err
 	}
 	if runErr != nil {
-		return runErr
+		return receipt, runErr
 	}
 	fmt.Fprintln(stdout, "SLIVER BOF PASS")
 	fmt.Fprintf(stdout, "extension  %s\ncommand    %s\nsession    %s\narguments  %d\nreceipt    %s\n", extension.Name, commandName, session, len(commandArgs), receipt.ReceiptPath)
 	for _, line := range conciseSliverLines(clean, commandName) {
 		fmt.Fprintln(stdout, line)
 	}
-	return nil
+	return receipt, nil
+}
+
+func sliverExtensionCommandLine(commandName string, extension sliverExtension, commandArgs []string) (string, error) {
+	commandLine := commandName
+	if len(commandArgs) > 0 {
+		// Sliver v1.7 parses extension values with a second flag parser. The
+		// separator keeps Cobra from consuming those manifest-defined flags.
+		commandLine += " --"
+	}
+	for index, value := range commandArgs {
+		if index >= len(extension.Arguments) {
+			return "", fmt.Errorf("extension command has no definition for argument %d", index+1)
+		}
+		name := extension.Arguments[index].Name
+		if !safeSliverCommand.MatchString(name) {
+			return "", fmt.Errorf("extension argument name %q is not safe for the Sliver console", name)
+		}
+		quoted, err := sliverConsoleQuote(value)
+		if err != nil {
+			return "", err
+		}
+		commandLine += " --" + name + " " + quoted
+	}
+	return commandLine, nil
+}
+
+func resolveSliverOptions(opts sliverOptions, project string, requireSession bool) (sliverOptions, error) {
+	if opts.Client == "" {
+		client, err := discoverSliverClient()
+		if err != nil {
+			return opts, err
+		}
+		opts.Client = client
+	}
+	if opts.Lab != "" || opts.SessionFilter == "" {
+		resolved, err := lab.ResolveProfile(opts.Lab, project, opts.Profiles)
+		if err != nil {
+			if opts.Lab != "" || (opts.SessionFilter == "" && requireSession) {
+				return opts, err
+			}
+		} else if opts.SessionFilter == "" {
+			opts.SessionFilter = resolved.Profile.SliverSession
+		}
+		if err == nil {
+			opts.ProfileName = resolved.Name
+			opts.RemoteHost = resolved.Profile.Host
+		}
+	}
+	if requireSession && opts.SessionFilter == "" {
+		return opts, fmt.Errorf("Sliver session selector is required; set --session or sliver_session in the selected lab profile")
+	}
+	return opts, nil
+}
+
+func sliverOutputComputer(lines []string) string {
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[host] name=") {
+			return strings.TrimPrefix(line, "[host] name=")
+		}
+	}
+	return ""
+}
+
+func discoverSliverClient() (string, error) {
+	if configured := strings.TrimSpace(os.Getenv("BOFBENCH_SLIVER_CLIENT")); configured != "" {
+		if info, err := os.Stat(configured); err == nil && !info.IsDir() {
+			return configured, nil
+		}
+		return "", fmt.Errorf("BOFBENCH_SLIVER_CLIENT points to an unavailable file: %s", configured)
+	}
+	for _, name := range []string{"sliver-client", "sliver"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return path, nil
+		}
+	}
+	platform := runtime.GOOS + "-" + runtime.GOARCH
+	candidates := []string{
+		filepath.Join("work", "tools", "sliver", "sliver-client_"+platform),
+		filepath.Join("work", "tools", "sliver", "sliver-client_macos-arm64"),
+	}
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			absolute, _ := filepath.Abs(candidate)
+			return absolute, nil
+		}
+	}
+	return "", fmt.Errorf("Sliver client not found; install it, set BOFBENCH_SLIVER_CLIENT, or pass --client")
+}
+
+func discoverSliverConfigs() []string {
+	seen := map[string]bool{}
+	configs := []string{}
+	add := func(path string) {
+		if path == "" || seen[path] {
+			return
+		}
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			seen[path] = true
+			configs = append(configs, path)
+		}
+	}
+	add(strings.TrimSpace(os.Getenv("BOFBENCH_SLIVER_CONFIG")))
+	for _, root := range []string{filepath.Join(sliverClientHome(), "configs"), filepath.Join("work", "sliver-lab", "client")} {
+		matches, _ := filepath.Glob(filepath.Join(root, "*.cfg"))
+		for _, match := range matches {
+			add(match)
+		}
+	}
+	sort.Strings(configs)
+	return configs
+}
+
+func sliverClientHome() string {
+	if configured := strings.TrimSpace(os.Getenv("SLIVER_CLIENT_HOME")); configured != "" {
+		return configured
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".sliver-client"
+	}
+	return filepath.Join(home, ".sliver-client")
 }
 
 func sliverConsoleQuote(value string) (string, error) {
@@ -308,55 +486,58 @@ func stripANSI(value string) string {
 }
 
 func labStateCommand(stdout io.Writer) *cobra.Command {
-	var host string
+	var labName string
+	var profilesPath string
+	var timeout time.Duration
 	cmd := &cobra.Command{
 		Use:   "verify <active|clean>",
 		Short: "Verify BOFBench-managed state independently on the Windows lab host",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			resolved, err := lab.ResolveProfile(labName, ".", profilesPath)
+			if err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
+			defer cancel()
+			opts, resolveErr := lab.ResolveRemoteOptions(ctx, resolved.Name, resolved.Profile)
+			if resolveErr != nil {
+				return resolveErr
+			}
 			switch args[0] {
 			case "active":
-				return verifyActiveState(stdout, host)
+				return verifyActiveState(ctx, stdout, opts)
 			case "clean":
-				return verifyCleanState(stdout, host)
+				return verifyCleanState(ctx, stdout, opts)
 			default:
 				return fmt.Errorf("state must be active or clean")
 			}
 		},
 	}
-	cmd.Flags().StringVar(&host, "host", "bofbench-winvm", "SSH alias for the Windows lab host")
+	cmd.Flags().StringVar(&labName, "lab", "", "named lab profile")
+	cmd.Flags().StringVar(&profilesPath, "profiles", lab.ProfilesPath(), "global lab profiles file")
+	cmd.Flags().DurationVar(&timeout, "transport-timeout", 2*time.Minute, "verification timeout")
 	return cmd
 }
 
-func verifyActiveState(stdout io.Writer, host string) error {
+func verifyActiveState(ctx context.Context, stdout io.Writer, opts lab.RemoteOptions) error {
 	script := `$ProgressPreference='SilentlyContinue'; $count=0; foreach($path in @("$env:TEMP\bofbench-active-marker.txt","$env:TEMP\bofbench-process-marker.txt")){ if(Test-Path $path){$item=Get-Item $path; Write-Output ("[file] present name="+$item.Name+" bytes="+$item.Length); $count++}}; $marker=Get-ItemPropertyValue -Path HKCU:\Software\BOFBench -Name LabMarker -ErrorAction SilentlyContinue; if($marker){Write-Output ("[registry] LabMarker="+$marker);$count++}; $run=Get-ItemPropertyValue -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -Name BOFBenchLab -ErrorAction SilentlyContinue; if($run){Write-Output ("[run-key] BOFBenchLab="+$run);$count++}; if($count -ne 4){Write-Error ("expected 4 BOFBench artifacts; found "+$count);exit 1}; Write-Output "LAB STATE PASS  expected=active artifacts=4"`
-	return runRemotePowerShell(stdout, host, script)
+	return runRemotePowerShell(ctx, stdout, opts, script)
 }
 
-func verifyCleanState(stdout io.Writer, host string) error {
+func verifyCleanState(ctx context.Context, stdout io.Writer, opts lab.RemoteOptions) error {
 	script := `$ProgressPreference='SilentlyContinue'; $run=Get-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -ErrorAction SilentlyContinue; $bad=(Test-Path "$env:TEMP\bofbench-active-marker.txt") -or (Test-Path "$env:TEMP\bofbench-process-marker.txt") -or ($null -ne (Get-ItemProperty -Path HKCU:\Software\BOFBench -ErrorAction SilentlyContinue)) -or ($null -ne $run.BOFBenchLab); if($bad){Write-Error "BOFBench-managed state remains";exit 1}; Write-Output "LAB STATE PASS  expected=clean artifacts=0"`
-	return runRemotePowerShell(stdout, host, script)
+	return runRemotePowerShell(ctx, stdout, opts, script)
 }
 
-func runRemotePowerShell(stdout io.Writer, host, script string) error {
-	encoded := encodePowerShell(script)
-	remote := fmt.Sprintf("powershell -NoProfile -NonInteractive -EncodedCommand %s; exit $LASTEXITCODE", encoded)
-	output, err := exec.Command("ssh", host, remote).CombinedOutput()
+func runRemotePowerShell(ctx context.Context, stdout io.Writer, opts lab.RemoteOptions, script string) error {
+	output, stderr, err := lab.ExecutePowerShell(ctx, opts, script)
 	clean := strings.TrimSpace(stripANSI(string(output)))
 	if clean != "" {
 		fmt.Fprintln(stdout, clean)
 	}
 	if err != nil {
-		return fmt.Errorf("lab check failed: %w", err)
+		return fmt.Errorf("lab check failed: %w: %s", err, strings.TrimSpace(string(stderr)))
 	}
 	return nil
-}
-
-func encodePowerShell(script string) string {
-	encoded := utf16.Encode([]rune(script))
-	data := make([]byte, len(encoded)*2)
-	for index, value := range encoded {
-		binary.LittleEndian.PutUint16(data[index*2:], value)
-	}
-	return base64.StdEncoding.EncodeToString(data)
 }

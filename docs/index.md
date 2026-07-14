@@ -25,14 +25,13 @@ new → add packs → build → analyze → run → export
 ```
 
 ```bash
-bofbench new fieldcheck --pack host-discovery,system-discovery
-bofbench add bofs/fieldcheck domain-discovery
-bofbench build bofs/fieldcheck
-bofbench analyze bofs/fieldcheck
-bofbench run bofs/fieldcheck --via lab \
+bofbench new portable-survey --pack deep-survey
+bofbench build bofs/portable-survey --arch x64
+bofbench analyze bofs/portable-survey
+bofbench run bofs/portable-survey --via lab --lab dedicated \
   --arg process_filter=lsass \
-  --arg result_limit=25
-bofbench export bofs/fieldcheck --for sliver
+  --arg result_limit=5
+bofbench export bofs/portable-survey --for sliver
 ```
 
 The project lock records the resolved pack versions, source hashes, arguments, and cleanup companions. The analyzer leads with what the BOF can do, what it needs, its effects, its typed arguments, and which runtimes support it. Loader internals and report paths stay available without taking over the workflow.
@@ -67,4 +66,4 @@ bofbench pack search token
 bofbench pack show internal/token-impersonation
 ```
 
-Continue with the [Quickstart](quickstart.md), [Capability Packs](packs.md), or [Behavioral Analysis](analysis.md).
+Continue with the [Quickstart](quickstart.md), [Portable Lab Profiles](lab-profiles.md), [Capability Packs](packs.md), or [Behavioral Analysis](analysis.md).

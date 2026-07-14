@@ -15,7 +15,7 @@ func TestRemoteStatusPersistsDoctorAndLoaderState(t *testing.T) {
 		if executable != "ssh-test" || len(args) < 2 || args[0] != "lab.test" {
 			return nil, nil, fmt.Errorf("unexpected transport: %s %v", executable, args)
 		}
-		payload := `{"computer_name":"DEVBOX","powershell":"7.5.2","loader_ready":true,"version":{"tool":{"version":"dev"}},"doctor":{"checks":[{"name":"runtime","status":"pass"},{"name":"docs","status":"warn"}]}}`
+		payload := `{"computer_name":"WINDOWS-LAB","powershell":"7.5.2","loader_ready":true,"loader_x86_ready":true,"version":{"tool":{"version":"dev"}},"doctor":{"checks":[{"name":"runtime","status":"pass"},{"name":"docs","status":"warn"}]}}`
 		return []byte(payload), nil, nil
 	})
 	opts := testRemoteOptions()
@@ -23,7 +23,7 @@ func TestRemoteStatusPersistsDoctorAndLoaderState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Status != "pass_with_warnings" || report.ComputerName != "DEVBOX" || !report.LoaderReady || report.Schema != "bofbench.lab-remote-status" {
+	if report.Status != "pass" || report.ComputerName != "WINDOWS-LAB" || !report.LoaderReady || report.Schema != "bofbench.lab-remote-status" {
 		t.Fatalf("status report = %+v", report)
 	}
 	if _, err := os.Stat(report.EvidencePath); err != nil {
@@ -85,6 +85,45 @@ func TestRemoteRunCollectsCompleteDevEvidence(t *testing.T) {
 	for _, path := range []string{report.EvidencePath, report.MarkdownPath} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+func TestRemoteRunIsolatesNamedProfileAndRunWorkspace(t *testing.T) {
+	withRemoteTestWorkspace(t)
+	project := filepath.Join(t.TempDir(), "demo")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "demo.c"), []byte("void go(char *a, int l) {(void)a;(void)l;}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opts := testRemoteOptions()
+	opts.ProfileName = "dedicated"
+	var calls []string
+	withFakeTransport(t, func(ctx context.Context, executable string, args ...string) ([]byte, []byte, error) {
+		calls = append(calls, executable+" "+strings.Join(args, " "))
+		return fakeRemoteRunTransport(ctx, executable, args...)
+	})
+	report, err := RemoteRun(context.Background(), project, RemoteRunOptions{RemoteOptions: opts, Compiler: "msvc", Runtime: "windows-coff"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileRun := `C:\bofbench\runs\dedicated\` + report.RunID
+	if report.RemoteRunPath != profileRun {
+		t.Fatalf("remote run path = %q, want %q", report.RemoteRunPath, profileRun)
+	}
+	projectPrefix := `C:\bofbench\work\projects\dedicated\` + report.RunID + `\`
+	if !strings.HasPrefix(report.RemoteProject, projectPrefix) {
+		t.Fatalf("remote project = %q, want prefix %q", report.RemoteProject, projectPrefix)
+	}
+	if report.Receipt == nil || report.Receipt.Profile != "dedicated" {
+		t.Fatalf("receipt = %+v", report.Receipt)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{"BOFBENCH_LOADER", `runs\dedicated\` + report.RunID} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("remote execution missing %q:\n%s", want, joined)
 		}
 	}
 }

@@ -11,29 +11,41 @@ new → add packs → build → analyze → run → export
 ```bash
 go build -o work/bin/bofbench ./cmd/bofbench
 
-work/bin/bofbench new fieldcheck \
-  --pack host-discovery,system-discovery
-work/bin/bofbench add bofs/fieldcheck domain-discovery
-work/bin/bofbench build bofs/fieldcheck
-work/bin/bofbench analyze bofs/fieldcheck
+work/bin/bofbench new portable-survey --pack deep-survey
+work/bin/bofbench build bofs/portable-survey
+work/bin/bofbench analyze bofs/portable-survey
 ```
 
-Run it on an existing Windows lab with runtime arguments:
+Register any Windows system reachable over SSH or WinRM, then run with runtime arguments:
 
 ```bash
-work/bin/bofbench lab init --provider existing --host bofbench-winvm
-work/bin/bofbench lab bootstrap
-work/bin/bofbench run bofs/fieldcheck --via lab \
+work/bin/bofbench lab add dedicated \
+  --provider existing \
+  --transport ssh \
+  --host windows-lab \
+  --user operator
+work/bin/bofbench lab bootstrap --lab dedicated
+work/bin/bofbench run bofs/portable-survey --via lab --lab dedicated \
   --arg process_filter=lsass \
   --arg result_limit=25
 ```
 
+Moving the same project to another machine does not change its source or lock file:
+
+```bash
+work/bin/bofbench lab add replacement --from dedicated --host 10.0.0.50
+work/bin/bofbench lab bootstrap --lab replacement
+work/bin/bofbench lab use replacement
+```
+
+See [Portable Lab Profiles](docs/lab-profiles.md) for SSH, WinRM, Vagrant, build modes, selection rules, and fresh-host setup.
+
 Export the same BOF:
 
 ```bash
-work/bin/bofbench export bofs/fieldcheck --for raw
-work/bin/bofbench export bofs/fieldcheck --for sliver
-work/bin/bofbench export bofs/fieldcheck --for cobaltstrike
+work/bin/bofbench export bofs/portable-survey --for raw
+work/bin/bofbench export bofs/portable-survey --for sliver
+work/bin/bofbench export bofs/portable-survey --for cobaltstrike
 ```
 
 ## Capability packs
@@ -51,7 +63,7 @@ Add a private/local or Git-backed catalog without rebuilding BOFBench:
 ```bash
 work/bin/bofbench catalog add ~/bofbench-packs-internal --name internal
 work/bin/bofbench pack show internal/token-impersonation
-work/bin/bofbench add bofs/fieldcheck internal/token-impersonation
+work/bin/bofbench add bofs/portable-survey internal/token-impersonation
 ```
 
 Resolved versions, source hashes, argument contracts, external catalog roots, and cleanup companions are stored in `bofbench.lock.json`.
@@ -59,7 +71,7 @@ Resolved versions, source hashes, argument contracts, external catalog roots, an
 ## Analyze BOFBench and third-party objects
 
 ```bash
-work/bin/bofbench analyze bofs/fieldcheck
+work/bin/bofbench analyze bofs/portable-survey
 work/bin/bofbench analyze arsenal/trustedsec-sa/SA/whoami/whoami.x64.o
 work/bin/bofbench analyze first.x64.o --compare second.x64.o
 ```
@@ -77,10 +89,10 @@ The analyzer recognizes chains including remote-thread/APC injection, token dupl
 ## Runtime adapters
 
 ```bash
-work/bin/bofbench run bofs/fieldcheck --via native
-work/bin/bofbench run bofs/fieldcheck --via lab
-work/bin/bofbench run bofs/fieldcheck --via sliver
-work/bin/bofbench run bofs/fieldcheck --via cobaltstrike
+work/bin/bofbench run bofs/portable-survey --via native
+work/bin/bofbench run bofs/portable-survey --via lab --lab dedicated
+work/bin/bofbench run bofs/portable-survey --via sliver --lab dedicated
+work/bin/bofbench run bofs/portable-survey --via cobaltstrike
 ```
 
 - Native execution uses child-process Windows COFF loaders with timeouts, exception reporting, output limits, and per-section memory protection.
@@ -96,7 +108,7 @@ Stateful packs declare exact cleanup companions:
 
 ```bash
 work/bin/bofbench pack show internal/run-key --cleanup
-work/bin/bofbench run bofs/persist --via lab --cleanup \
+work/bin/bofbench run bofs/persist --via lab --lab disposable --cleanup \
   --arg value_name=BOFBenchLab
 ```
 

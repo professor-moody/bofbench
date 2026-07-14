@@ -76,7 +76,7 @@ func Builtins() []Document {
 			StateChanges:  []string{"none beyond the short-lived loader process and output buffers"},
 			Artifacts:     []string{"Beacon output containing PID/TID, computer name, user name, and temporary path"},
 			Cleanup:       []string{"none required; all buffers are stack-local"},
-			OperatorNotes: []string{"use as a low-impact first proof of loader, identity, and environment context"},
+			OperatorNotes: []string{"use as a read-only first proof of loader, identity, and environment context"},
 		},
 		{
 			Name: "network-survey", Title: "Local Network Context Survey", Description: "Report the Windows computer name and Winsock host name from the current network context.",
@@ -250,7 +250,7 @@ func Validate(path string, document Document, presentFeatures []string) Validati
 		report.Errors = append(report.Errors, "domain must be none, optional, or required")
 	}
 	if !containsString([]string{"read_only", "modifies_state", "destructive"}, document.Impact) {
-		report.Errors = append(report.Errors, "impact must be read_only, modifies_state, or destructive")
+		report.Errors = append(report.Errors, "effects must be read_only, modifies_state, or destructive")
 	}
 	for label, values := range map[string][]string{"features": document.Features, "prerequisites": document.Prerequisites, "state_changes": document.StateChanges, "artifacts": document.Artifacts, "cleanup": document.Cleanup} {
 		if len(nonEmptyStrings(values)) == 0 {
@@ -291,7 +291,7 @@ func Validate(path string, document Document, presentFeatures []string) Validati
 		}
 	}
 	if document.Impact != "read_only" && onlyNone(document.Cleanup) {
-		report.Errors = append(report.Errors, "state-changing recipes require explicit cleanup or an irreversible-impact note")
+		report.Errors = append(report.Errors, "state-changing recipes require explicit cleanup or an irreversible-effects note")
 	}
 	if len(report.Errors) > 0 {
 		report.Status = "fail"
@@ -325,7 +325,7 @@ func PersistValidation(report Validation) (Validation, error) {
 func Text(document Document) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s — %s\n", document.Name, document.Title)
-	fmt.Fprintf(&b, "category   %s\nprivilege  %s\nplatform   %s\nnetwork    %s\ndomain     %s\nimpact     %s\nfeatures   %s\n", document.Category, document.Privilege, strings.Join(document.Platforms, ","), document.Network, document.Domain, document.Impact, strings.Join(document.Features, ","))
+	fmt.Fprintf(&b, "category   %s\nprivilege  %s\nplatform   %s\nnetwork    %s\ndomain     %s\neffects    %s\nfeatures   %s\n", document.Category, document.Privilege, strings.Join(document.Platforms, ","), document.Network, document.Domain, document.Impact, strings.Join(document.Features, ","))
 	fmt.Fprintf(&b, "description %s\n", document.Description)
 	appendTextList(&b, "prereq", document.Prerequisites)
 	appendTextList(&b, "changes", document.StateChanges)
@@ -336,7 +336,7 @@ func Text(document Document) string {
 
 func Markdown(document Document) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s\n\n%s\n\n- Recipe: `%s`\n- Category: `%s`\n- Privilege: `%s`\n- Platforms: `%s`\n- Network: `%s`\n- Domain: `%s`\n- Impact: `%s`\n- Features: `%s`\n", document.Title, document.Description, document.Name, document.Category, document.Privilege, strings.Join(document.Platforms, ", "), document.Network, document.Domain, document.Impact, strings.Join(document.Features, ", "))
+	fmt.Fprintf(&b, "# %s\n\n%s\n\n- Recipe: `%s`\n- Category: `%s`\n- Privilege: `%s`\n- Platforms: `%s`\n- Network: `%s`\n- Domain: `%s`\n- Effects: `%s`\n- Features: `%s`\n", document.Title, document.Description, document.Name, document.Category, document.Privilege, strings.Join(document.Platforms, ", "), document.Network, document.Domain, document.Impact, strings.Join(document.Features, ", "))
 	appendMarkdownList(&b, "Prerequisites", document.Prerequisites)
 	appendMarkdownList(&b, "State Changes", document.StateChanges)
 	appendMarkdownList(&b, "Observable Artifacts", document.Artifacts)

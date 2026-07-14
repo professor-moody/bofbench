@@ -14,42 +14,61 @@ import (
 	"strings"
 	"time"
 
+	"bofbench/internal/buildsys"
 	"bofbench/internal/evidence"
 	"bofbench/internal/runlog"
+	runtimesvc "bofbench/internal/runtime"
+	"bofbench/internal/runtimeadapter"
 )
 
 type RemoteOptions struct {
-	Host       string
-	RemoteRoot string
-	Executable string
-	SSH        string
-	SCP        string
+	ProfileName     string
+	Transport       string
+	Host            string
+	User            string
+	Port            int
+	IdentityFile    string
+	KnownHosts      string
+	WinRMHTTPS      bool
+	WinRMPassword   string
+	BuildMode       string
+	SnapshotSupport bool
+	RemoteRoot      string
+	Executable      string
+	SSH             string
+	SCP             string
 }
 
 type RemoteStatusReport struct {
 	evidence.Header
-	Operation      string          `json:"operation"`
-	Status         string          `json:"status"`
-	Host           string          `json:"host"`
-	RemoteRoot     string          `json:"remote_root"`
-	Executable     string          `json:"executable"`
-	ComputerName   string          `json:"computer_name,omitempty"`
-	PowerShell     string          `json:"powershell,omitempty"`
-	LoaderReady    bool            `json:"loader_ready"`
-	Version        json.RawMessage `json:"version,omitempty"`
-	Doctor         json.RawMessage `json:"doctor,omitempty"`
-	StartedAt      string          `json:"started_at"`
-	CompletedAt    string          `json:"completed_at"`
-	DurationMS     int64           `json:"duration_ms"`
-	Error          string          `json:"error,omitempty"`
-	TransportError string          `json:"transport_error,omitempty"`
-	EvidencePath   string          `json:"evidence_path"`
+	Operation       string            `json:"operation"`
+	Status          string            `json:"status"`
+	Profile         string            `json:"profile,omitempty"`
+	Host            string            `json:"host"`
+	RemoteRoot      string            `json:"remote_root"`
+	Executable      string            `json:"executable"`
+	ComputerName    string            `json:"computer_name,omitempty"`
+	PowerShell      string            `json:"powershell,omitempty"`
+	LoaderReady     bool              `json:"loader_ready"`
+	ExecutableReady bool              `json:"executable_ready"`
+	Capabilities    LabCapabilities   `json:"capabilities"`
+	System          BootstrapSystem   `json:"system"`
+	RuntimeHashes   map[string]string `json:"runtime_hashes,omitempty"`
+	Version         json.RawMessage   `json:"version,omitempty"`
+	Doctor          json.RawMessage   `json:"doctor,omitempty"`
+	StartedAt       string            `json:"started_at"`
+	CompletedAt     string            `json:"completed_at"`
+	DurationMS      int64             `json:"duration_ms"`
+	Error           string            `json:"error,omitempty"`
+	TransportError  string            `json:"transport_error,omitempty"`
+	EvidencePath    string            `json:"evidence_path"`
 }
 
 type RemoteSyncReport struct {
 	evidence.Header
 	Operation       string                   `json:"operation"`
 	Status          string                   `json:"status"`
+	Profile         string                   `json:"profile,omitempty"`
 	Host            string                   `json:"host"`
 	RemoteRoot      string                   `json:"remote_root"`
 	Project         string                   `json:"project"`
@@ -65,35 +84,47 @@ type RemoteSyncReport struct {
 
 type RemoteRunOptions struct {
 	RemoteOptions
-	Compiler string
-	Runtime  string
-	Profile  string
-	NoSync   bool
-	Args     []string
+	Compiler  string
+	Arch      string
+	Runtime   string
+	Profile   string
+	NoSync    bool
+	Args      []string
+	BuildMode string
+	TimeoutMS int
 }
 
 type RemoteRunReport struct {
 	evidence.Header
-	Operation       string           `json:"operation"`
-	Status          string           `json:"status"`
-	Host            string           `json:"host"`
-	RemoteRoot      string           `json:"remote_root"`
-	Project         string           `json:"project"`
-	RemoteProject   string           `json:"remote_project"`
-	Compiler        string           `json:"compiler"`
-	Runtime         string           `json:"runtime"`
-	Profile         string           `json:"profile,omitempty"`
-	Arguments       []string         `json:"arguments,omitempty"`
-	StartedAt       string           `json:"started_at"`
-	CompletedAt     string           `json:"completed_at"`
-	DurationMS      int64            `json:"duration_ms"`
-	RemoteDev       *RemoteDevReport `json:"remote_dev,omitempty"`
-	RemoteStderr    string           `json:"remote_stderr,omitempty"`
-	Collected       []CollectedFile  `json:"collected,omitempty"`
-	TransportEvents []TransportEvent `json:"transport_events"`
-	Error           string           `json:"error,omitempty"`
-	EvidencePath    string           `json:"evidence_path"`
-	MarkdownPath    string           `json:"markdown_path"`
+	Operation       string                  `json:"operation"`
+	Status          string                  `json:"status"`
+	LabProfile      string                  `json:"lab_profile,omitempty"`
+	Host            string                  `json:"host"`
+	RemoteRoot      string                  `json:"remote_root"`
+	Project         string                  `json:"project"`
+	RemoteProject   string                  `json:"remote_project"`
+	Compiler        string                  `json:"compiler"`
+	Arch            string                  `json:"arch"`
+	Runtime         string                  `json:"runtime"`
+	Profile         string                  `json:"profile,omitempty"`
+	BuildMode       string                  `json:"build_mode"`
+	TimeoutMS       int                     `json:"timeout_ms"`
+	Arguments       []string                `json:"arguments,omitempty"`
+	StartedAt       string                  `json:"started_at"`
+	CompletedAt     string                  `json:"completed_at"`
+	DurationMS      int64                   `json:"duration_ms"`
+	RemoteDev       *RemoteDevReport        `json:"remote_dev,omitempty"`
+	LocalBuild      *buildsys.Result        `json:"local_build,omitempty"`
+	RemoteResult    *runtimesvc.Result      `json:"remote_result,omitempty"`
+	RemoteRunPath   string                  `json:"remote_run_path,omitempty"`
+	RemoteComputer  string                  `json:"remote_computer,omitempty"`
+	Receipt         *runtimeadapter.Receipt `json:"receipt,omitempty"`
+	RemoteStderr    string                  `json:"remote_stderr,omitempty"`
+	Collected       []CollectedFile         `json:"collected,omitempty"`
+	TransportEvents []TransportEvent        `json:"transport_events"`
+	Error           string                  `json:"error,omitempty"`
+	EvidencePath    string                  `json:"evidence_path"`
+	MarkdownPath    string                  `json:"markdown_path"`
 }
 
 type RemoteDevReport struct {
@@ -110,14 +141,16 @@ type RemoteDevReport struct {
 		EvidencePath string `json:"evidence_path"`
 		LogPath      string `json:"log_path"`
 	} `json:"build"`
-	RuntimeState string `json:"runtime_state"`
-	Error        string `json:"error,omitempty"`
+	Run          *runtimesvc.Result `json:"run,omitempty"`
+	RuntimeState string             `json:"runtime_state"`
+	Error        string             `json:"error,omitempty"`
 }
 
 type RemoteCollectReport struct {
 	evidence.Header
 	Operation       string                   `json:"operation"`
 	Status          string                   `json:"status"`
+	Profile         string                   `json:"profile,omitempty"`
 	Host            string                   `json:"host"`
 	RemoteRoot      string                   `json:"remote_root"`
 	RemoteRunID     string                   `json:"remote_run_id"`
@@ -135,6 +168,7 @@ type RemoteResetReport struct {
 	evidence.Header
 	Operation       string           `json:"operation"`
 	Status          string           `json:"status"`
+	Profile         string           `json:"profile,omitempty"`
 	Host            string           `json:"host"`
 	RemoteRoot      string           `json:"remote_root"`
 	Scope           string           `json:"scope"`
@@ -163,11 +197,23 @@ type CollectedFile struct {
 }
 
 type remoteStatusPayload struct {
-	ComputerName string          `json:"computer_name"`
-	PowerShell   string          `json:"powershell"`
-	LoaderReady  bool            `json:"loader_ready"`
-	Version      json.RawMessage `json:"version"`
-	Doctor       json.RawMessage `json:"doctor"`
+	ComputerName    string          `json:"computer_name"`
+	PowerShell      string          `json:"powershell"`
+	ExecutableReady bool            `json:"executable_ready"`
+	LoaderReady     bool            `json:"loader_ready"`
+	LoaderX86Ready  bool            `json:"loader_x86_ready"`
+	Compiler        string          `json:"compiler"`
+	Sliver          bool            `json:"sliver"`
+	Debugging       bool            `json:"debugging"`
+	WindowsVersion  string          `json:"windows_version"`
+	Architecture    string          `json:"architecture"`
+	Elevated        bool            `json:"elevated"`
+	DiskFreeBytes   int64           `json:"disk_free_bytes"`
+	ExecutableHash  string          `json:"executable_sha256"`
+	LoaderX64Hash   string          `json:"loader_x64_sha256"`
+	LoaderX86Hash   string          `json:"loader_x86_sha256"`
+	Version         json.RawMessage `json:"version"`
+	Doctor          json.RawMessage `json:"doctor"`
 }
 
 type transportFunc func(context.Context, string, ...string) ([]byte, []byte, error)
@@ -178,9 +224,6 @@ var safeRemoteName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 func DefaultRemoteOptions() RemoteOptions {
 	host := strings.TrimSpace(os.Getenv("BOFBENCH_LAB_HOST"))
-	if host == "" {
-		host = "bofbench-winvm"
-	}
 	root := strings.TrimSpace(os.Getenv("BOFBENCH_LAB_ROOT"))
 	if root == "" {
 		root = `C:\bofbench`
@@ -189,7 +232,18 @@ func DefaultRemoteOptions() RemoteOptions {
 	if executable == "" {
 		executable = windowsJoin(root, "work", "bin", "bofbench.exe")
 	}
-	return RemoteOptions{Host: host, RemoteRoot: root, Executable: executable, SSH: "ssh", SCP: "scp"}
+	return RemoteOptions{Transport: "ssh", Host: host, Port: 22, RemoteRoot: root, Executable: executable, SSH: "ssh", SCP: "scp"}
+}
+
+func RemoteOptionsFromProfile(name string, profile Profile) RemoteOptions {
+	profile = NormalizeProfile(profile)
+	return RemoteOptions{
+		ProfileName: name, Transport: profile.Transport, Host: profile.Host, User: profile.User,
+		Port: profile.Port, IdentityFile: expandUserPath(profile.IdentityFile), KnownHosts: expandUserPath(profile.KnownHosts),
+		WinRMHTTPS: profile.WinRMHTTPS, WinRMPassword: os.Getenv(WinRMPasswordEnvironment(name)), BuildMode: profile.BuildMode, SnapshotSupport: profile.Provider == "vagrant",
+		RemoteRoot: profile.RemoteRoot, Executable: windowsJoin(profile.RemoteRoot, "work", "bin", "bofbench.exe"),
+		SSH: "ssh", SCP: "scp",
+	}
 }
 
 func RemoteStatus(ctx context.Context, opts RemoteOptions) (RemoteStatusReport, error) {
@@ -204,12 +258,14 @@ func RemoteStatus(ctx context.Context, opts RemoteOptions) (RemoteStatusReport, 
 	}
 	report := RemoteStatusReport{
 		Header: evidence.New(evidence.SchemaLabRemoteStatus, runlog.ID(runDir), ""), Operation: "status", Status: "fail",
-		Host: opts.Host, RemoteRoot: opts.RemoteRoot, Executable: opts.Executable, StartedAt: start.UTC().Format(time.RFC3339Nano),
+		Profile: opts.ProfileName, Host: opts.Host, RemoteRoot: opts.RemoteRoot, Executable: opts.Executable, StartedAt: start.UTC().Format(time.RFC3339Nano),
 		EvidencePath: filepath.Join(runDir, "status.json"),
 	}
-	script := fmt.Sprintf(`$ErrorActionPreference='Stop'; Set-Location %s; $version=(& %s version --format json | ConvertFrom-Json); $doctor=(& %s doctor --format json | ConvertFrom-Json); [ordered]@{computer_name=$env:COMPUTERNAME; powershell=$PSVersionTable.PSVersion.ToString(); loader_ready=(Test-Path %s); version=$version; doctor=$doctor} | ConvertTo-Json -Depth 12 -Compress`,
-		powerShellQuote(opts.RemoteRoot), powerShellQuote(opts.Executable), powerShellQuote(opts.Executable), powerShellQuote(windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader.exe")))
-	stdout, stderr, runErr := executeRemoteTransport(ctx, opts.SSH, opts.Host, script)
+	loaderX64 := windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader.exe")
+	loaderX86 := windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader-x86.exe")
+	script := fmt.Sprintf(`$ErrorActionPreference='Stop'; $exeReady=Test-Path %s; $loaderReady=Test-Path %s; $loaderX86Ready=Test-Path %s; $version=$null; if($exeReady){$version=(& %s version --format json | ConvertFrom-Json)}; $compiler=if(Get-Command cl.exe -ErrorAction SilentlyContinue){'msvc'}elseif(Get-Command x86_64-w64-mingw32-gcc.exe -ErrorAction SilentlyContinue){'mingw'}else{''}; $identity=[Security.Principal.WindowsIdentity]::GetCurrent(); $principal=New-Object Security.Principal.WindowsPrincipal($identity); $root=Get-Item %s -ErrorAction SilentlyContinue; [ordered]@{computer_name=$env:COMPUTERNAME;powershell=$PSVersionTable.PSVersion.ToString();windows_version=[Environment]::OSVersion.Version.ToString();architecture=$env:PROCESSOR_ARCHITECTURE;elevated=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);disk_free_bytes=if($root){$root.PSDrive.Free}else{0};executable_ready=$exeReady;loader_ready=$loaderReady;loader_x86_ready=$loaderX86Ready;executable_sha256=if($exeReady){(Get-FileHash -Algorithm SHA256 -LiteralPath %s).Hash.ToLower()}else{''};loader_x64_sha256=if($loaderReady){(Get-FileHash -Algorithm SHA256 -LiteralPath %s).Hash.ToLower()}else{''};loader_x86_sha256=if($loaderX86Ready){(Get-FileHash -Algorithm SHA256 -LiteralPath %s).Hash.ToLower()}else{''};compiler=$compiler;sliver=((Get-Command sliver-client.exe -ErrorAction SilentlyContinue) -ne $null);debugging=(((Get-Command cdb.exe -ErrorAction SilentlyContinue) -ne $null) -or ((Get-Command windbg.exe -ErrorAction SilentlyContinue) -ne $null));version=$version} | ConvertTo-Json -Depth 12 -Compress`,
+		powerShellQuote(opts.Executable), powerShellQuote(loaderX64), powerShellQuote(loaderX86), powerShellQuote(opts.Executable), powerShellQuote(opts.RemoteRoot), powerShellQuote(opts.Executable), powerShellQuote(loaderX64), powerShellQuote(loaderX86))
+	stdout, stderr, runErr := remoteExecute(ctx, opts, script)
 	if runErr != nil {
 		report.TransportError = boundedText(string(stderr), 4096)
 		report.Error = runErr.Error()
@@ -222,11 +278,16 @@ func RemoteStatus(ctx context.Context, opts RemoteOptions) (RemoteStatusReport, 
 			report.ComputerName = payload.ComputerName
 			report.PowerShell = payload.PowerShell
 			report.LoaderReady = payload.LoaderReady
+			report.ExecutableReady = payload.ExecutableReady || (payload.LoaderReady && len(payload.Version) > 0)
 			report.Version = payload.Version
 			report.Doctor = payload.Doctor
-			report.Status = doctorStatus(payload.Doctor, payload.LoaderReady)
-			if report.Status == "fail" {
-				runErr = errors.New("remote lab doctor has failing checks or the native loader is missing")
+			report.RuntimeHashes = map[string]string{"bofbench.exe": payload.ExecutableHash, "bofbench-loader.exe": payload.LoaderX64Hash, "bofbench-loader-x86.exe": payload.LoaderX86Hash}
+			report.Capabilities = LabCapabilities{Compile: payload.Compiler != "", Compiler: payload.Compiler, NativeX64: payload.LoaderReady, NativeX86: payload.LoaderX86Ready, Sliver: payload.Sliver, Debugging: payload.Debugging, SnapshotSupport: opts.SnapshotSupport}
+			report.System = BootstrapSystem{ComputerName: payload.ComputerName, WindowsVersion: payload.WindowsVersion, Architecture: payload.Architecture, Elevated: payload.Elevated, DiskFreeBytes: payload.DiskFreeBytes, BOFBench: payload.Version}
+			if report.ExecutableReady && payload.LoaderReady && payload.LoaderX86Ready {
+				report.Status = "pass"
+			} else {
+				runErr = errors.New("remote BOFBench runtime is missing; run 'bofbench lab bootstrap'")
 				report.Error = runErr.Error()
 			}
 		}
@@ -250,10 +311,10 @@ func RemoteSync(ctx context.Context, project string, opts RemoteOptions) (Remote
 	}
 	report := RemoteSyncReport{
 		Header: evidence.New(evidence.SchemaLabRemoteSync, runlog.ID(runDir), ""), Operation: "sync", Status: "fail",
-		Host: opts.Host, RemoteRoot: opts.RemoteRoot, Project: project, StartedAt: start.UTC().Format(time.RFC3339Nano),
+		Profile: opts.ProfileName, Host: opts.Host, RemoteRoot: opts.RemoteRoot, Project: project, StartedAt: start.UTC().Format(time.RFC3339Nano),
 		EvidencePath: filepath.Join(runDir, "sync.json"),
 	}
-	remoteProject, fingerprint, events, syncErr := syncRemoteProject(ctx, project, opts)
+	remoteProject, fingerprint, events, syncErr := syncRemoteProject(ctx, project, opts, "")
 	report.RemoteProject = remoteProject
 	report.SourceTree = fingerprint
 	report.TransportEvents = events
@@ -276,11 +337,32 @@ func RemoteRun(ctx context.Context, project string, opts RemoteRunOptions) (Remo
 		return RemoteRunReport{}, err
 	}
 	opts.RemoteOptions = remoteOpts
+	enforceBuildMode := opts.BuildMode != "" || opts.RemoteOptions.BuildMode != ""
+	if opts.BuildMode == "" {
+		opts.BuildMode = opts.RemoteOptions.BuildMode
+	}
+	if opts.BuildMode == "" {
+		// Direct callers from the version-1 API retain remote-build behavior.
+		// Named profiles always provide their explicit auto/local/remote mode.
+		opts.BuildMode = "remote"
+	}
+	if opts.BuildMode != "auto" && opts.BuildMode != "local" && opts.BuildMode != "remote" {
+		return RemoteRunReport{}, fmt.Errorf("build mode must be auto, local, or remote")
+	}
 	if opts.Compiler == "" {
 		opts.Compiler = "msvc"
 	}
+	if opts.Arch == "" {
+		opts.Arch = "x64"
+	}
+	if opts.Arch != "x64" && opts.Arch != "x86" {
+		return RemoteRunReport{}, fmt.Errorf("lab architecture must be x64 or x86")
+	}
 	if opts.Runtime == "" {
 		opts.Runtime = "windows-coff"
+	}
+	if opts.TimeoutMS <= 0 {
+		opts.TimeoutMS = 5000
 	}
 	runDir, err := runlog.NewDir("lab-run-" + remoteSafeName(project))
 	if err != nil {
@@ -288,14 +370,59 @@ func RemoteRun(ctx context.Context, project string, opts RemoteRunOptions) (Remo
 	}
 	report := RemoteRunReport{
 		Header: evidence.New(evidence.SchemaLabRemoteRun, runlog.ID(runDir), ""), Operation: "run", Status: "fail",
-		Host: opts.Host, RemoteRoot: opts.RemoteRoot, Project: project, Compiler: opts.Compiler, Runtime: opts.Runtime, Profile: opts.Profile, Arguments: append([]string(nil), opts.Args...),
+		LabProfile: opts.ProfileName, Host: opts.Host, RemoteRoot: opts.RemoteRoot, Project: project, Compiler: opts.Compiler, Arch: opts.Arch, Runtime: opts.Runtime, Profile: opts.Profile, BuildMode: opts.BuildMode, TimeoutMS: opts.TimeoutMS, Arguments: append([]string(nil), opts.Args...),
 		StartedAt: start.UTC().Format(time.RFC3339Nano), EvidencePath: filepath.Join(runDir, "lab-run.json"), MarkdownPath: filepath.Join(runDir, "lab-run.md"),
 	}
-	var runErr error
-	if opts.NoSync {
-		report.RemoteProject = windowsJoin(opts.RemoteRoot, "work", "projects", remoteSafeName(project))
+	identityStart := time.Now()
+	if computer, identityErr := detectRemoteComputer(ctx, opts.RemoteOptions); identityErr == nil {
+		report.RemoteComputer = computer
+		report.TransportEvents = append(report.TransportEvents, transportEvent(opts.Transport+"-identity", identityStart, nil, ""))
 	} else {
-		remoteProject, _, events, syncErr := syncRemoteProject(ctx, project, opts.RemoteOptions)
+		report.TransportEvents = append(report.TransportEvents, transportEvent(opts.Transport+"-identity", identityStart, identityErr, ""))
+	}
+	var runErr error
+	if opts.BuildMode == "auto" {
+		remoteCompiler, compilerErr := detectRemoteCompiler(ctx, opts.RemoteOptions)
+		if compilerErr == nil && remoteCompiler != "" {
+			opts.BuildMode = "remote"
+			report.BuildMode = "remote"
+		} else {
+			opts.BuildMode = "local"
+			report.BuildMode = "local"
+		}
+	}
+	if opts.BuildMode == "remote" && enforceBuildMode {
+		remoteCompiler, compilerErr := detectRemoteCompiler(ctx, opts.RemoteOptions)
+		if compilerErr != nil {
+			return report, compilerErr
+		}
+		if remoteCompiler == "" {
+			return report, fmt.Errorf("lab profile %q requires remote compilation but no MinGW or MSVC compiler is available", opts.ProfileName)
+		}
+	}
+	if opts.BuildMode == "local" {
+		runErr = runLocallyBuiltObject(ctx, runDir, project, &report, opts)
+		if runErr != nil {
+			report.Error = runErr.Error()
+		}
+		finishRemoteRun(&report, start)
+		persistRemoteRuntimeReceipt(&report, runDir, runErr)
+		if persistErr := writeRemoteJSON(report.EvidencePath, report); persistErr != nil && runErr == nil {
+			runErr = persistErr
+		}
+		if persistErr := os.WriteFile(report.MarkdownPath, []byte(RemoteRunMarkdown(report)), 0o644); persistErr != nil && runErr == nil {
+			runErr = persistErr
+		}
+		return report, runErr
+	}
+	if opts.NoSync {
+		projectsRoot := windowsJoin(opts.RemoteRoot, "work", "projects")
+		if opts.ProfileName != "" {
+			projectsRoot = windowsJoin(projectsRoot, remoteProfileSegment(opts.ProfileName))
+		}
+		report.RemoteProject = windowsJoin(projectsRoot, remoteSafeName(project))
+	} else {
+		remoteProject, _, events, syncErr := syncRemoteProject(ctx, project, opts.RemoteOptions, report.RunID)
 		report.RemoteProject = remoteProject
 		report.TransportEvents = append(report.TransportEvents, events...)
 		if syncErr != nil {
@@ -304,7 +431,17 @@ func RemoteRun(ctx context.Context, project string, opts RemoteRunOptions) (Remo
 		}
 	}
 	if runErr == nil {
-		args := []string{"dev", report.RemoteProject, "--compiler", opts.Compiler, "--runtime", opts.Runtime, "--format", "json"}
+		remoteWorkspace := windowsJoin(opts.RemoteRoot, "runs", remoteProfileSegment(opts.ProfileName), report.RunID)
+		report.RemoteRunPath = remoteWorkspace
+		eventStart := time.Now()
+		_, stderr, prepareErr := remoteExecute(ctx, opts.RemoteOptions, fmt.Sprintf(`New-Item -ItemType Directory -Force -Path %s | Out-Null`, powerShellQuote(remoteWorkspace)))
+		report.TransportEvents = append(report.TransportEvents, transportEvent(opts.Transport+"-prepare-run", eventStart, prepareErr, string(stderr)))
+		if prepareErr != nil {
+			runErr = prepareErr
+		}
+	}
+	if runErr == nil {
+		args := []string{"dev", report.RemoteProject, "--compiler", opts.Compiler, "--arch", opts.Arch, "--runtime", opts.Runtime, "--format", "json"}
 		if opts.Profile != "" {
 			args = append(args, "--profile", opts.Profile)
 		}
@@ -315,17 +452,21 @@ func RemoteRun(ctx context.Context, project string, opts RemoteRunOptions) (Remo
 		for _, arg := range args {
 			quotedArgs = append(quotedArgs, powerShellQuote(arg))
 		}
-		script := fmt.Sprintf(`$ErrorActionPreference='Continue'; Set-Location %s; & %s %s`, powerShellQuote(opts.RemoteRoot), powerShellQuote(opts.Executable), strings.Join(quotedArgs, " "))
+		loaderX64 := windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader.exe")
+		loaderX86 := windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader-x86.exe")
+		script := fmt.Sprintf(`$ErrorActionPreference='Continue'; Set-Location %s; $env:BOFBENCH_LOADER=%s; $env:BOFBENCH_LOADER_X86=%s; & %s %s`, powerShellQuote(report.RemoteRunPath), powerShellQuote(loaderX64), powerShellQuote(loaderX86), powerShellQuote(opts.Executable), strings.Join(quotedArgs, " "))
 		eventStart := time.Now()
-		stdout, stderr, devErr := executeRemoteTransport(ctx, opts.SSH, opts.Host, script)
-		report.TransportEvents = append(report.TransportEvents, transportEvent("ssh-dev", eventStart, devErr, string(stderr)))
+		stdout, stderr, devErr := remoteExecute(ctx, opts.RemoteOptions, script)
+		report.TransportEvents = append(report.TransportEvents, transportEvent(opts.Transport+"-dev", eventStart, devErr, string(stderr)))
 		report.RemoteStderr = boundedText(string(stderr), 8192)
 		var remoteDev RemoteDevReport
 		if decodeErr := json.Unmarshal(stdout, &remoteDev); decodeErr != nil {
 			runErr = fmt.Errorf("decode remote dev report: %w", decodeErr)
 		} else {
 			report.RemoteDev = &remoteDev
-			collected, events, collectErr := collectDevEvidence(ctx, runDir, remoteDev, opts.RemoteOptions)
+			evidenceOptions := opts.RemoteOptions
+			evidenceOptions.RemoteRoot = report.RemoteRunPath
+			collected, events, collectErr := collectDevEvidence(ctx, runDir, remoteDev, evidenceOptions)
 			report.Collected = collected
 			report.TransportEvents = append(report.TransportEvents, events...)
 			if collectErr != nil {
@@ -344,6 +485,7 @@ func RemoteRun(ctx context.Context, project string, opts RemoteRunOptions) (Remo
 		report.Error = runErr.Error()
 	}
 	finishRemoteRun(&report, start)
+	persistRemoteRuntimeReceipt(&report, runDir, runErr)
 	if persistErr := writeRemoteJSON(report.EvidencePath, report); persistErr != nil && runErr == nil {
 		runErr = persistErr
 	}
@@ -351,6 +493,164 @@ func RemoteRun(ctx context.Context, project string, opts RemoteRunOptions) (Remo
 		runErr = persistErr
 	}
 	return report, runErr
+}
+
+func detectRemoteComputer(ctx context.Context, opts RemoteOptions) (string, error) {
+	stdout, stderr, err := remoteExecute(ctx, opts, `Write-Output $env:COMPUTERNAME`)
+	if err != nil {
+		return "", fmt.Errorf("identify remote computer: %w: %s", err, boundedText(string(stderr), 1024))
+	}
+	computer := strings.TrimSpace(string(stdout))
+	if computer == "" {
+		return "", fmt.Errorf("remote computer name was empty")
+	}
+	return computer, nil
+}
+
+func persistRemoteRuntimeReceipt(report *RemoteRunReport, runDir string, operationErr error) {
+	result := report.RemoteResult
+	if result == nil && report.RemoteDev != nil {
+		result = report.RemoteDev.Run
+	}
+	receipt := runtimeadapter.Receipt{
+		Schema: runtimeadapter.ReceiptSchema, SchemaVersion: runtimeadapter.ReceiptSchemaVersion,
+		Runtime: "lab", Status: report.Status, Profile: report.LabProfile,
+		Transport: reportTransport(report), RemoteHost: report.Host, RemoteComputer: report.RemoteComputer,
+		StartedAt: report.StartedAt, CompletedAt: report.CompletedAt, DurationMS: report.DurationMS,
+		ReceiptPath: filepath.Join(runDir, "result.json"), Arguments: runtimeArgumentTypes(report.Arguments), TimeoutMS: report.TimeoutMS,
+	}
+	if result != nil {
+		receipt.Object = result.Object
+		if result.ObjectFingerprint != nil {
+			receipt.ObjectSHA256 = result.ObjectFingerprint.SHA256
+		}
+		receipt.Entrypoint = result.Entry
+		receipt.Output = cleanReceiptOutput(result.Output)
+		receipt.ExitState = result.ExitState
+		receipt.TimedOut = result.ExitState == "timeout"
+		if result.LoaderProcess != nil {
+			receipt.ExitCode = result.LoaderProcess.ExitCode
+		}
+	}
+	if operationErr != nil {
+		receipt.Error = operationErr.Error()
+		if receipt.Status == "" || receipt.Status == "pass" {
+			receipt.Status = "fail"
+		}
+	}
+	if receipt.Status == "" {
+		receipt.Status = "fail"
+	}
+	data, err := json.MarshalIndent(receipt, "", "  ")
+	if err == nil {
+		err = os.WriteFile(receipt.ReceiptPath, append(data, '\n'), 0o600)
+	}
+	if err == nil {
+		report.Receipt = &receipt
+	}
+}
+
+func cleanReceiptOutput(lines []string) []string {
+	clean := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			clean = append(clean, line)
+		}
+	}
+	return clean
+}
+
+func reportTransport(report *RemoteRunReport) string {
+	for _, event := range report.TransportEvents {
+		if index := strings.IndexByte(event.Type, '-'); index > 0 {
+			return event.Type[:index]
+		}
+	}
+	return ""
+}
+
+func runtimeArgumentTypes(tokens []string) []string {
+	types := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		kind := token
+		if index := strings.IndexByte(token, ':'); index > 0 {
+			kind = token[:index]
+		}
+		types = append(types, kind)
+	}
+	return types
+}
+
+func detectRemoteCompiler(ctx context.Context, opts RemoteOptions) (string, error) {
+	script := `$compiler=if(Get-Command cl.exe -ErrorAction SilentlyContinue){'msvc'}elseif(Get-Command x86_64-w64-mingw32-gcc.exe -ErrorAction SilentlyContinue){'mingw'}else{''}; Write-Output $compiler`
+	stdout, stderr, err := remoteExecute(ctx, opts, script)
+	if err != nil {
+		return "", fmt.Errorf("probe remote compiler: %w: %s", err, boundedText(string(stderr), 1024))
+	}
+	return strings.TrimSpace(string(stdout)), nil
+}
+
+func runLocallyBuiltObject(ctx context.Context, runDir, project string, report *RemoteRunReport, opts RemoteRunOptions) error {
+	compiler := opts.Compiler
+	if compiler == "" || compiler == "msvc" {
+		compiler = "auto"
+	}
+	build, err := buildsys.BuildWithOptions(project, buildsys.Options{Arch: opts.Arch, Compiler: compiler, ParentRunID: report.RunID})
+	report.LocalBuild = &build
+	if err != nil {
+		return err
+	}
+	remoteRun := windowsJoin(opts.RemoteRoot, "runs", remoteProfileSegment(opts.ProfileName), report.RunID)
+	remoteObject := windowsJoin(remoteRun, filepath.Base(build.Object))
+	report.RemoteRunPath = remoteRun
+	report.RemoteProject = remoteObject
+	eventStart := time.Now()
+	_, stderr, err := remoteExecute(ctx, opts.RemoteOptions, fmt.Sprintf(`New-Item -ItemType Directory -Force -Path %s | Out-Null`, powerShellQuote(remoteRun)))
+	report.TransportEvents = append(report.TransportEvents, transportEvent(opts.Transport+"-prepare-object", eventStart, err, string(stderr)))
+	if err != nil {
+		return err
+	}
+	eventStart = time.Now()
+	_, stderr, err = remoteUploadFile(ctx, opts.RemoteOptions, build.Object, remoteObject)
+	report.TransportEvents = append(report.TransportEvents, transportEvent(opts.Transport+"-object", eventStart, err, string(stderr)))
+	if err != nil {
+		return err
+	}
+	arguments := []string{"run", remoteObject, "--runtime", "windows-coff", "--entry", "go", "--timeout", fmt.Sprintf("%d", opts.TimeoutMS), "--args"}
+	arguments = append(arguments, opts.Args...)
+	quoted := make([]string, 0, len(arguments))
+	for _, argument := range arguments {
+		quoted = append(quoted, powerShellQuote(argument))
+	}
+	remoteResultPath := windowsJoin(remoteRun, "result.json")
+	remoteStderrPath := windowsJoin(remoteRun, "stderr.txt")
+	loaderX64 := windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader.exe")
+	loaderX86 := windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader-x86.exe")
+	script := fmt.Sprintf(`$ErrorActionPreference='Continue'; $env:BOFBENCH_LOADER=%s; $env:BOFBENCH_LOADER_X86=%s; & %s %s 1> %s 2> %s; $exit=$LASTEXITCODE; $output=Get-Content -LiteralPath %s -Raw; $errors=if(Test-Path %s){Get-Content -LiteralPath %s -Raw}else{''}; Write-Output $output; if($errors){[Console]::Error.Write($errors)}; exit $exit`, powerShellQuote(loaderX64), powerShellQuote(loaderX86), powerShellQuote(opts.Executable), strings.Join(quoted, " "), powerShellQuote(remoteResultPath), powerShellQuote(remoteStderrPath), powerShellQuote(remoteResultPath), powerShellQuote(remoteStderrPath), powerShellQuote(remoteStderrPath))
+	eventStart = time.Now()
+	stdout, stderr, executeErr := remoteExecute(ctx, opts.RemoteOptions, script)
+	report.TransportEvents = append(report.TransportEvents, transportEvent(opts.Transport+"-run-object", eventStart, executeErr, string(stderr)))
+	report.RemoteStderr = boundedText(string(stderr), 8192)
+	var result runtimesvc.Result
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(stdout))), &result); err != nil {
+		if executeErr != nil {
+			return fmt.Errorf("remote object execution failed: %w: %s", executeErr, boundedText(string(stderr), 4096))
+		}
+		return fmt.Errorf("decode remote runtime result: %w", err)
+	}
+	report.RemoteResult = &result
+	localResult := filepath.Join(runDir, "remote-result.json")
+	if err := os.WriteFile(localResult, append(bytes.TrimSpace(stdout), '\n'), 0o600); err == nil {
+		if fingerprint, fingerprintErr := evidence.FingerprintFile(localResult); fingerprintErr == nil {
+			report.Collected = append(report.Collected, CollectedFile{RemotePath: remoteResultPath, LocalPath: localResult, Size: fingerprint.Size, SHA256: fingerprint.SHA256})
+		}
+	}
+	if executeErr != nil || result.Status != "pass" {
+		return fmt.Errorf("remote object run failed: %s", emptyRemote(result.ExitState, result.Status))
+	}
+	report.Status = "pass"
+	return nil
 }
 
 func RemoteCollect(ctx context.Context, remoteRunID string, opts RemoteOptions) (RemoteCollectReport, error) {
@@ -369,13 +669,17 @@ func RemoteCollect(ctx context.Context, remoteRunID string, opts RemoteOptions) 
 	localPath := filepath.Join(runDir, "remote-run")
 	report := RemoteCollectReport{
 		Header: evidence.New(evidence.SchemaLabRemoteCollect, runlog.ID(runDir), ""), Operation: "collect", Status: "fail",
-		Host: opts.Host, RemoteRoot: opts.RemoteRoot, RemoteRunID: remoteRunID, LocalPath: localPath,
+		Profile: opts.ProfileName, Host: opts.Host, RemoteRoot: opts.RemoteRoot, RemoteRunID: remoteRunID, LocalPath: localPath,
 		StartedAt: start.UTC().Format(time.RFC3339Nano), EvidencePath: filepath.Join(runDir, "collect.json"),
 	}
-	remotePath := windowsJoin(opts.RemoteRoot, "runs", remoteRunID)
+	remotePath := windowsJoin(opts.RemoteRoot, "runs")
+	if opts.ProfileName != "" {
+		remotePath = windowsJoin(remotePath, remoteProfileSegment(opts.ProfileName))
+	}
+	remotePath = windowsJoin(remotePath, remoteRunID)
 	eventStart := time.Now()
-	_, stderr, collectErr := executeRemoteTransport(ctx, opts.SCP, "-r", remoteSpec(opts.Host, remotePath), localPath)
-	report.TransportEvents = append(report.TransportEvents, transportEvent("scp-run", eventStart, collectErr, string(stderr)))
+	_, stderr, collectErr := remoteDownloadDirectory(ctx, opts, remotePath, localPath)
+	report.TransportEvents = append(report.TransportEvents, transportEvent(opts.Transport+"-run", eventStart, collectErr, string(stderr)))
 	if collectErr == nil {
 		report.Fingerprint, collectErr = evidence.FingerprintTree(localPath)
 	}
@@ -401,13 +705,30 @@ func RemoteReset(ctx context.Context, scope string, opts RemoteOptions) (RemoteR
 	if scope == "" {
 		scope = "managed"
 	}
-	paths := []string{windowsJoin(opts.RemoteRoot, "work", "projects"), windowsJoin(opts.RemoteRoot, "work", "sync")}
+	projectsRoot := windowsJoin(opts.RemoteRoot, "work", "projects")
+	syncRoot := windowsJoin(opts.RemoteRoot, "work", "sync")
+	runsRoot := windowsJoin(opts.RemoteRoot, "runs")
+	if opts.ProfileName != "" {
+		segment := remoteProfileSegment(opts.ProfileName)
+		projectsRoot = windowsJoin(projectsRoot, segment)
+		syncRoot = windowsJoin(syncRoot, segment)
+		runsRoot = windowsJoin(runsRoot, segment)
+	}
+	paths := []string{projectsRoot, syncRoot}
 	switch scope {
 	case "managed":
 	case "artifacts":
-		paths = append(paths, windowsJoin(opts.RemoteRoot, "dist"), windowsJoin(opts.RemoteRoot, "stage"))
+		if opts.ProfileName != "" {
+			paths = append(paths, runsRoot)
+		} else {
+			paths = append(paths, windowsJoin(opts.RemoteRoot, "dist"), windowsJoin(opts.RemoteRoot, "stage"))
+		}
 	case "runs":
-		paths = append(paths, windowsJoin(opts.RemoteRoot, "dist"), windowsJoin(opts.RemoteRoot, "stage"), windowsJoin(opts.RemoteRoot, "runs"))
+		if opts.ProfileName != "" {
+			paths = append(paths, runsRoot)
+		} else {
+			paths = append(paths, windowsJoin(opts.RemoteRoot, "dist"), windowsJoin(opts.RemoteRoot, "stage"), runsRoot)
+		}
 	default:
 		return RemoteResetReport{}, fmt.Errorf("reset scope must be managed, artifacts, or runs")
 	}
@@ -417,17 +738,17 @@ func RemoteReset(ctx context.Context, scope string, opts RemoteOptions) (RemoteR
 	}
 	report := RemoteResetReport{
 		Header: evidence.New(evidence.SchemaLabRemoteReset, runlog.ID(runDir), ""), Operation: "reset", Status: "fail",
-		Host: opts.Host, RemoteRoot: opts.RemoteRoot, Scope: scope, Removed: paths, StartedAt: start.UTC().Format(time.RFC3339Nano),
+		Profile: opts.ProfileName, Host: opts.Host, RemoteRoot: opts.RemoteRoot, Scope: scope, Removed: paths, StartedAt: start.UTC().Format(time.RFC3339Nano),
 		EvidencePath: filepath.Join(runDir, "reset.json"),
 	}
 	var statements []string
 	for _, path := range paths {
 		statements = append(statements, fmt.Sprintf(`if(Test-Path %s){Remove-Item -LiteralPath %s -Recurse -Force}`, powerShellQuote(path), powerShellQuote(path)))
 	}
-	statements = append(statements, fmt.Sprintf(`New-Item -ItemType Directory -Force -Path %s,%s | Out-Null`, powerShellQuote(windowsJoin(opts.RemoteRoot, "work", "projects")), powerShellQuote(windowsJoin(opts.RemoteRoot, "work", "sync"))))
+	statements = append(statements, fmt.Sprintf(`New-Item -ItemType Directory -Force -Path %s,%s | Out-Null`, powerShellQuote(projectsRoot), powerShellQuote(syncRoot)))
 	eventStart := time.Now()
-	_, stderr, resetErr := executeRemoteTransport(ctx, opts.SSH, opts.Host, strings.Join(statements, "; "))
-	report.TransportEvents = append(report.TransportEvents, transportEvent("ssh-reset", eventStart, resetErr, string(stderr)))
+	_, stderr, resetErr := remoteExecute(ctx, opts, strings.Join(statements, "; "))
+	report.TransportEvents = append(report.TransportEvents, transportEvent(opts.Transport+"-reset", eventStart, resetErr, string(stderr)))
 	if resetErr != nil {
 		report.Error = resetErr.Error()
 	} else {
@@ -441,7 +762,7 @@ func RemoteReset(ctx context.Context, scope string, opts RemoteOptions) (RemoteR
 }
 
 func RemoteStatusText(report RemoteStatusReport) string {
-	return fmt.Sprintf("Windows lab %s\nhost      %s\ncomputer  %s\nroot      %s\nloader    %s\nreports   %s\n", strings.ToUpper(report.Status), report.Host, report.ComputerName, report.RemoteRoot, yesNoRemote(report.LoaderReady), report.EvidencePath)
+	return fmt.Sprintf("Windows lab %s\nprofile   %s\nhost      %s\ncomputer  %s (%s %s)\nroot      %s\nbuild     remote=%t %s local=%t\nrun       x64=%t x86=%t sliver=%t debug=%t snapshots=%t\nreports   %s\n", strings.ToUpper(report.Status), report.Profile, report.Host, report.ComputerName, report.System.WindowsVersion, report.System.Architecture, report.RemoteRoot, report.Capabilities.Compile, report.Capabilities.Compiler, report.LoaderReady, report.Capabilities.NativeX64, report.Capabilities.NativeX86, report.Capabilities.Sliver, report.Capabilities.Debugging, report.Capabilities.SnapshotSupport, report.EvidencePath)
 }
 
 func RemoteSyncText(report RemoteSyncReport) string {
@@ -451,9 +772,19 @@ func RemoteSyncText(report RemoteSyncReport) string {
 func RemoteRunText(report RemoteRunReport) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Windows lab run %s\n", strings.ToUpper(report.Status))
-	fmt.Fprintf(&b, "project   %s\nremote    %s:%s\n", report.Project, report.Host, report.RemoteProject)
+	fmt.Fprintf(&b, "profile   %s\nproject   %s\nremote    %s:%s\nbuild     %s\n", report.LabProfile, report.Project, report.Host, report.RemoteProject, report.BuildMode)
 	if report.RemoteDev != nil {
 		fmt.Fprintf(&b, "dev       %s runtime=%s run=%s\n", report.RemoteDev.Status, report.RemoteDev.RuntimeState, report.RemoteDev.RunID)
+		if report.RemoteDev.Run != nil {
+			for _, line := range conciseObservedLines(report.RemoteDev.Run.Output, 12) {
+				fmt.Fprintf(&b, "observed  %s\n", line)
+			}
+		}
+	}
+	if report.RemoteResult != nil {
+		for _, line := range conciseObservedLines(report.RemoteResult.Output, 12) {
+			fmt.Fprintf(&b, "observed  %s\n", line)
+		}
 	}
 	fmt.Fprintf(&b, "evidence  %d file(s)\n", len(report.Collected))
 	for _, file := range report.Collected {
@@ -464,6 +795,21 @@ func RemoteRunText(report RemoteRunReport) string {
 	}
 	fmt.Fprintf(&b, "reports   %s\n", report.EvidencePath)
 	return b.String()
+}
+
+func conciseObservedLines(lines []string, limit int) []string {
+	result := make([]string, 0, limit)
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		result = append(result, line)
+		if len(result) == limit {
+			break
+		}
+	}
+	return result
 }
 
 func RemoteRunMarkdown(report RemoteRunReport) string {
@@ -492,7 +838,7 @@ func RemoteResetText(report RemoteResetReport) string {
 	return fmt.Sprintf("Windows lab reset %s\nhost      %s\nscope     %s\nremoved   %s\nreports   %s\n", strings.ToUpper(report.Status), report.Host, report.Scope, strings.Join(report.Removed, ", "), report.EvidencePath)
 }
 
-func syncRemoteProject(ctx context.Context, project string, opts RemoteOptions) (string, evidence.TreeFingerprint, []TransportEvent, error) {
+func syncRemoteProject(ctx context.Context, project string, opts RemoteOptions, runID string) (string, evidence.TreeFingerprint, []TransportEvent, error) {
 	info, err := os.Stat(project)
 	if err != nil {
 		return "", evidence.TreeFingerprint{}, nil, err
@@ -512,25 +858,39 @@ func syncRemoteProject(ctx context.Context, project string, opts RemoteOptions) 
 		return "", evidence.TreeFingerprint{}, nil, fmt.Errorf("project name %q is not portable", name)
 	}
 	stamp := time.Now().UTC().Format("20060102-150405.000000000")
-	stagingParent := windowsJoin(opts.RemoteRoot, "work", "sync", stamp+"-"+name)
+	projectsRoot := windowsJoin(opts.RemoteRoot, "work", "projects")
+	syncRoot := windowsJoin(opts.RemoteRoot, "work", "sync")
+	if opts.ProfileName != "" {
+		profileSegment := remoteProfileSegment(opts.ProfileName)
+		projectsRoot = windowsJoin(projectsRoot, profileSegment)
+		syncRoot = windowsJoin(syncRoot, profileSegment)
+	}
+	if runID != "" {
+		if !safeRemoteName.MatchString(runID) {
+			return "", evidence.TreeFingerprint{}, nil, fmt.Errorf("run id %q is not portable", runID)
+		}
+		projectsRoot = windowsJoin(projectsRoot, runID)
+		syncRoot = windowsJoin(syncRoot, runID)
+	}
+	stagingParent := windowsJoin(syncRoot, stamp+"-"+name)
 	stagedProject := windowsJoin(stagingParent, filepath.Base(filepath.Clean(project)))
-	remoteProject := windowsJoin(opts.RemoteRoot, "work", "projects", name)
+	remoteProject := windowsJoin(projectsRoot, name)
 	backupProject := remoteProject + ".previous-" + stamp
 	var events []TransportEvent
 	eventStart := time.Now()
-	_, stderr, err := executeRemoteTransport(ctx, opts.SSH, opts.Host, fmt.Sprintf(`New-Item -ItemType Directory -Force -Path %s | Out-Null`, powerShellQuote(stagingParent)))
-	events = append(events, transportEvent("ssh-prepare", eventStart, err, string(stderr)))
+	_, stderr, err := remoteExecute(ctx, opts, fmt.Sprintf(`New-Item -ItemType Directory -Force -Path %s | Out-Null`, powerShellQuote(stagingParent)))
+	events = append(events, transportEvent(opts.Transport+"-prepare", eventStart, err, string(stderr)))
 	if err != nil {
 		return remoteProject, fingerprint, events, err
 	}
 	eventStart = time.Now()
-	_, stderr, err = executeRemoteTransport(ctx, opts.SCP, "-r", project, remoteSpec(opts.Host, stagingParent))
-	events = append(events, transportEvent("scp-project", eventStart, err, string(stderr)))
+	_, stderr, err = remoteUploadDirectory(ctx, opts, project, stagedProject)
+	events = append(events, transportEvent(opts.Transport+"-project", eventStart, err, string(stderr)))
 	if err != nil {
 		return remoteProject, fingerprint, events, err
 	}
 	script := fmt.Sprintf(`$ErrorActionPreference='Stop'; New-Item -ItemType Directory -Force -Path %s | Out-Null; if(Test-Path %s){Remove-Item -LiteralPath %s -Recurse -Force}; if(Test-Path %s){Move-Item -LiteralPath %s -Destination %s}; try { Move-Item -LiteralPath %s -Destination %s; if(Test-Path %s){Remove-Item -LiteralPath %s -Recurse -Force} } catch { if(Test-Path %s){Remove-Item -LiteralPath %s -Recurse -Force}; if(Test-Path %s){Move-Item -LiteralPath %s -Destination %s}; throw }; Remove-Item -LiteralPath %s -Recurse -Force -ErrorAction SilentlyContinue`,
-		powerShellQuote(windowsJoin(opts.RemoteRoot, "work", "projects")),
+		powerShellQuote(projectsRoot),
 		powerShellQuote(backupProject), powerShellQuote(backupProject),
 		powerShellQuote(remoteProject), powerShellQuote(remoteProject), powerShellQuote(backupProject),
 		powerShellQuote(stagedProject), powerShellQuote(remoteProject),
@@ -539,9 +899,16 @@ func syncRemoteProject(ctx context.Context, project string, opts RemoteOptions) 
 		powerShellQuote(backupProject), powerShellQuote(backupProject), powerShellQuote(remoteProject),
 		powerShellQuote(stagingParent))
 	eventStart = time.Now()
-	_, stderr, err = executeRemoteTransport(ctx, opts.SSH, opts.Host, script)
-	events = append(events, transportEvent("ssh-activate", eventStart, err, string(stderr)))
+	_, stderr, err = remoteExecute(ctx, opts, script)
+	events = append(events, transportEvent(opts.Transport+"-activate", eventStart, err, string(stderr)))
 	return remoteProject, fingerprint, events, err
+}
+
+func remoteProfileSegment(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return "default"
+	}
+	return remoteSafeName(name)
 }
 
 func validateSyncTree(root string) error {
@@ -604,8 +971,8 @@ func collectDevEvidence(ctx context.Context, runDir string, dev RemoteDevReport,
 		localPath := filepath.Join(destination, item.Label)
 		remotePath := windowsJoin(opts.RemoteRoot, item.Path)
 		eventStart := time.Now()
-		_, stderr, err := executeRemoteTransport(ctx, opts.SCP, remoteSpec(opts.Host, remotePath), localPath)
-		events = append(events, transportEvent("scp-"+item.Label, eventStart, err, string(stderr)))
+		_, stderr, err := remoteDownloadFile(ctx, opts, remotePath, localPath)
+		events = append(events, transportEvent(opts.Transport+"-"+item.Label, eventStart, err, string(stderr)))
 		if err != nil {
 			return collected, events, err
 		}
@@ -620,8 +987,8 @@ func collectDevEvidence(ctx context.Context, runDir string, dev RemoteDevReport,
 
 func normalizeRemoteOptions(opts RemoteOptions) (RemoteOptions, error) {
 	defaults := DefaultRemoteOptions()
-	if opts.Host == "" {
-		opts.Host = defaults.Host
+	if opts.Transport == "" {
+		opts.Transport = defaults.Transport
 	}
 	if opts.RemoteRoot == "" {
 		opts.RemoteRoot = defaults.RemoteRoot
@@ -635,8 +1002,31 @@ func normalizeRemoteOptions(opts RemoteOptions) (RemoteOptions, error) {
 	if opts.SCP == "" {
 		opts.SCP = defaults.SCP
 	}
+	if opts.Port == 0 {
+		if opts.Transport == "winrm" {
+			if opts.WinRMHTTPS {
+				opts.Port = 5986
+			} else {
+				opts.Port = 5985
+			}
+		} else {
+			opts.Port = 22
+		}
+	}
+	if opts.Transport != "ssh" && opts.Transport != "winrm" {
+		return RemoteOptions{}, fmt.Errorf("remote transport must be ssh or winrm")
+	}
+	if strings.TrimSpace(opts.Host) == "" {
+		return RemoteOptions{}, fmt.Errorf("remote host is required; select a configured lab profile")
+	}
 	if strings.HasPrefix(opts.Host, "-") || strings.ContainsAny(opts.Host, " \t\r\n;$`|&<>") {
-		return RemoteOptions{}, fmt.Errorf("invalid SSH host %q", opts.Host)
+		return RemoteOptions{}, fmt.Errorf("invalid remote host %q", opts.Host)
+	}
+	if strings.ContainsAny(opts.User, " \t\r\n;$`|&<>") {
+		return RemoteOptions{}, fmt.Errorf("invalid remote user %q", opts.User)
+	}
+	if opts.Port < 1 || opts.Port > 65535 {
+		return RemoteOptions{}, fmt.Errorf("remote port must be between 1 and 65535")
 	}
 	if !looksWindowsPath(opts.RemoteRoot) || !looksWindowsPath(opts.Executable) {
 		return RemoteOptions{}, fmt.Errorf("remote root and executable must be Windows paths")

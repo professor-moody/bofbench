@@ -8,7 +8,10 @@ import (
 	"time"
 )
 
-const ReceiptSchema = "bofbench.runtime-receipt"
+const (
+	ReceiptSchema        = "bofbench.runtime-receipt"
+	ReceiptSchemaVersion = 2
+)
 
 type Availability struct {
 	Available bool   `json:"available"`
@@ -52,22 +55,31 @@ type Prepared struct {
 }
 
 type Receipt struct {
-	Schema        string   `json:"schema"`
-	SchemaVersion int      `json:"schema_version"`
-	Runtime       string   `json:"runtime"`
-	Status        string   `json:"status"`
-	Session       string   `json:"session,omitempty"`
-	TaskID        string   `json:"task_id,omitempty"`
-	Object        string   `json:"object,omitempty"`
-	ObjectSHA256  string   `json:"object_sha256,omitempty"`
-	Entrypoint    string   `json:"entrypoint,omitempty"`
-	Arguments     []string `json:"argument_types,omitempty"`
-	Output        []string `json:"output,omitempty"`
-	StartedAt     string   `json:"started_at"`
-	CompletedAt   string   `json:"completed_at"`
-	DurationMS    int64    `json:"duration_ms"`
-	Error         string   `json:"error,omitempty"`
-	ReceiptPath   string   `json:"receipt_path,omitempty"`
+	Schema         string   `json:"schema"`
+	SchemaVersion  int      `json:"schema_version"`
+	Runtime        string   `json:"runtime"`
+	RuntimeVersion string   `json:"runtime_version,omitempty"`
+	Status         string   `json:"status"`
+	Profile        string   `json:"profile,omitempty"`
+	Transport      string   `json:"transport,omitempty"`
+	RemoteHost     string   `json:"remote_host,omitempty"`
+	RemoteComputer string   `json:"remote_computer,omitempty"`
+	Session        string   `json:"session,omitempty"`
+	TaskID         string   `json:"task_id,omitempty"`
+	Object         string   `json:"object,omitempty"`
+	ObjectSHA256   string   `json:"object_sha256,omitempty"`
+	Entrypoint     string   `json:"entrypoint,omitempty"`
+	Arguments      []string `json:"argument_types,omitempty"`
+	Output         []string `json:"output,omitempty"`
+	TimeoutMS      int      `json:"timeout_ms,omitempty"`
+	TimedOut       bool     `json:"timed_out,omitempty"`
+	ExitState      string   `json:"exit_state,omitempty"`
+	ExitCode       *int     `json:"exit_code,omitempty"`
+	StartedAt      string   `json:"started_at"`
+	CompletedAt    string   `json:"completed_at"`
+	DurationMS     int64    `json:"duration_ms"`
+	Error          string   `json:"error,omitempty"`
+	ReceiptPath    string   `json:"receipt_path,omitempty"`
 }
 
 // Adapter is the runtime boundary shared by native, lab, Sliver, and Cobalt

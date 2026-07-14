@@ -5,9 +5,9 @@ BOFBench supports export for manual use and opt-in live execution through the li
 ## Export an Aggressor package
 
 ```bash
-bofbench export bofs/fieldcheck --for cobaltstrike \
-  --args z:lsass i:25
-bofbench export verify export/fieldcheck-cobaltstrike.zip
+bofbench export bofs/portable-survey --for cobaltstrike \
+  --args z:lsass i:5
+bofbench export verify export/portable-survey-cobaltstrike.zip
 ```
 
 The package contains the object, generated `.cna`, named argument contract, capability analysis, manifest, operator instructions, and file hashes. The script uses `bof_pack` and `beacon_inline_execute`.
@@ -28,9 +28,9 @@ export BOFBENCH_CS_AGSCRIPT=/opt/cobaltstrike/agscript
 Then run:
 
 ```bash
-bofbench run bofs/fieldcheck --via cobaltstrike \
+bofbench run bofs/portable-survey --via cobaltstrike \
   --arg process_filter=lsass \
-  --arg result_limit=25
+  --arg result_limit=5
 ```
 
 BOFBench creates a mode-0600 ephemeral Aggressor script, waits for the headless client, packs typed values, submits the BOF to the selected Beacon, captures console output, and writes a receipt without the password.

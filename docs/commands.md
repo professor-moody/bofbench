@@ -35,9 +35,8 @@ bofbench pack docs --output docs/pack-reference.md
 ## Create and compose
 
 ```bash
-bofbench new fieldcheck --pack host-discovery,system-discovery
-bofbench add bofs/fieldcheck domain-discovery
-bofbench add bofs/fieldcheck internal/token-impersonation
+bofbench new portable-survey --pack deep-survey
+bofbench add bofs/portable-survey internal/token-impersonation
 ```
 
 Use `--catalog path` for a one-command external catalog. The resolved root is retained in the lockfile for later commands.
@@ -45,15 +44,15 @@ Use `--catalog path` for a one-command external catalog. The resolved root is re
 ## Build
 
 ```bash
-bofbench build bofs/fieldcheck
-bofbench build bofs/fieldcheck --compiler mingw --arch x64
-bofbench build bofs/fieldcheck --compiler msvc --verify-reproducible
+bofbench build bofs/portable-survey
+bofbench build bofs/portable-survey --compiler mingw --arch x64
+bofbench build bofs/portable-survey --compiler msvc --verify-reproducible
 ```
 
 ## Analyze
 
 ```bash
-bofbench analyze bofs/fieldcheck
+bofbench analyze bofs/portable-survey
 bofbench analyze object.x64.o --format text
 bofbench analyze object.x64.o --format json
 bofbench analyze object.x64.o --format md
@@ -65,20 +64,20 @@ Default output leads with `Can do`, `Effects`, `Needs`, `Arguments`, and `Works 
 ## Run
 
 ```bash
-bofbench run bofs/fieldcheck --via native \
+bofbench run bofs/portable-survey --via native \
   --arg process_filter=lsass --arg result_limit=25
-bofbench run bofs/fieldcheck --via lab \
+bofbench run bofs/portable-survey --via lab --lab dedicated \
   --arg process_filter=lsass --arg result_limit=25
-bofbench run bofs/fieldcheck --via sliver \
+bofbench run bofs/portable-survey --via sliver --lab dedicated \
   --arg process_filter=lsass --arg result_limit=25
-bofbench run bofs/fieldcheck --via cobaltstrike \
+bofbench run bofs/portable-survey --via cobaltstrike \
   --arg process_filter=lsass --arg result_limit=25
 ```
 
 Run a stateful pack's isolated cleanup companion:
 
 ```bash
-bofbench run bofs/persist --via lab --cleanup --arg value_name=BOFBenchLab
+bofbench run bofs/persist --via lab --lab disposable --cleanup --arg value_name=BOFBenchLab
 ```
 
 For an external object without named metadata, use compatibility tokens:
@@ -90,10 +89,10 @@ bofbench run object.x64.o --via native --args z:target i:25
 ## Export
 
 ```bash
-bofbench export bofs/fieldcheck --for raw
-bofbench export bofs/fieldcheck --for sliver
-bofbench export bofs/fieldcheck --for cobaltstrike
-bofbench export verify export/fieldcheck-sliver.zip
+bofbench export bofs/portable-survey --for raw
+bofbench export bofs/portable-survey --for sliver
+bofbench export bofs/portable-survey --for cobaltstrike
+bofbench export verify export/portable-survey-sliver.zip
 ```
 
 `stage`, `feature`, `recipe`, `dev`, and `preflight` remain compatibility aliases for one major release and print or document the capability-first equivalent.
@@ -101,15 +100,60 @@ bofbench export verify export/fieldcheck-sliver.zip
 ## Lab
 
 ```bash
-bofbench lab init --provider existing --host bofbench-winvm
-bofbench lab bootstrap
-bofbench lab status
-bofbench lab run bofs/fieldcheck
+bofbench lab add development \
+  --provider existing \
+  --transport ssh \
+  --host windows-development \
+  --user operator
 
-bofbench lab init --provider vagrant --topology standalone
-bofbench lab up
-bofbench lab snapshot clean
-bofbench lab restore clean
+bofbench lab add dedicated \
+  --from development \
+  --host 10.0.0.50 \
+  --identity ~/.ssh/bofbench-dedicated
+
+bofbench lab list
+bofbench lab show dedicated
+bofbench lab use dedicated
+bofbench lab bootstrap --lab dedicated
+bofbench lab status --lab dedicated
+bofbench run bofs/portable-survey --via lab --lab dedicated
+```
+
+Profile selection follows `--lab`, `BOFBENCH_LAB`, project default, active global profile, and the only configured profile. A project default contains only the profile name:
+
+```bash
+bofbench lab use dedicated --project bofs/portable-survey
+```
+
+Prepare a fresh Windows transport or register a Vagrant environment:
+
+```bash
+bofbench lab setup-script --transport ssh
+bofbench lab setup-script --transport winrm
+
+bofbench lab add disposable \
+  --provider vagrant \
+  --vagrantfile lab/Vagrantfile \
+  --machine workstation \
+  --topology standalone
+bofbench lab up --lab disposable
+bofbench lab snapshot clean --lab disposable
+bofbench lab restore clean --lab disposable
+```
+
+Manage the disposable LocalSystem process used for privileged capability proof:
+
+```bash
+bofbench lab target deploy --lab disposable
+bofbench lab target status --lab disposable
+bofbench lab target remove --lab disposable
+```
+
+Check Sliver for the same named target:
+
+```bash
+bofbench sliver setup --lab dedicated
+bofbench sliver sessions --lab dedicated
 ```
 
 ## Arsenal

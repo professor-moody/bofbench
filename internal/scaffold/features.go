@@ -195,31 +195,11 @@ BOOL WINAPI KERNEL32$Process32First(HANDLE, LPPROCESSENTRY32);
 BOOL WINAPI KERNEL32$Process32Next(HANDLE, LPPROCESSENTRY32);
 BOOL WINAPI KERNEL32$CloseHandle(HANDLE);
 
-static char bofbench_ascii_lower(char value) {
-    if (value >= 'A' && value <= 'Z') return (char)(value + ('a' - 'A'));
-    return value;
-}
-
-static BOOL bofbench_process_match(const char *value, const char *filter, int filter_length) {
-    int start = 0;
-    int index = 0;
-    if (filter == NULL || filter_length <= 0 || filter[0] == '\0') return TRUE;
-    while (value[start] != '\0') {
-        index = 0;
-        while (index < filter_length && filter[index] != '\0' && value[start + index] != '\0' &&
-               bofbench_ascii_lower(value[start + index]) == bofbench_ascii_lower(filter[index])) {
-            index++;
-        }
-        if (index == filter_length || filter[index] == '\0') return TRUE;
-        start++;
-    }
-    return FALSE;
-}
-
 static void bofbench_feature_process_search(datap *parser) {
     int filter_length = 0;
     char *filter = BeaconDataExtract(parser, &filter_length);
     int requested_limit = BeaconDataInt(parser);
+    int filter_chars = filter_length > 0 ? filter_length - 1 : 0;
     DWORD limit = requested_limit > 0 ? (DWORD)requested_limit : 25;
     HANDLE snapshot = INVALID_HANDLE_VALUE;
     PROCESSENTRY32 entry;
@@ -238,8 +218,23 @@ static void bofbench_feature_process_search(datap *parser) {
         return;
     }
     do {
+        BOOL selected = filter == NULL || filter_chars <= 0;
+        int start = 0;
         examined++;
-        if (!bofbench_process_match(entry.szExeFile, filter, filter_length)) continue;
+        while (!selected && entry.szExeFile[start] != '\0') {
+            int index = 0;
+            while (index < filter_chars && entry.szExeFile[start + index] != '\0') {
+                char left = entry.szExeFile[start + index];
+                char right = filter[index];
+                if (left >= 'A' && left <= 'Z') left = (char)(left + ('a' - 'A'));
+                if (right >= 'A' && right <= 'Z') right = (char)(right + ('a' - 'A'));
+                if (left != right) break;
+                index++;
+            }
+            if (index == filter_chars) selected = TRUE;
+            start++;
+        }
+        if (!selected) continue;
         BeaconPrintf(CALLBACK_OUTPUT, "[process-discovery] pid=%lu ppid=%lu threads=%lu image=%s",
             entry.th32ProcessID, entry.th32ParentProcessID, entry.cntThreads, entry.szExeFile);
         matched++;

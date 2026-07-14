@@ -6,49 +6,71 @@ Use one command for every execution target:
 bofbench run <project-or-object> --via native|lab|sliver|cobaltstrike
 ```
 
-## Native
+All four paths implement the same runtime-adapter contract: detect, prepare, execute, optional cleanup, and receipt generation.
+
+## Native Windows
 
 On Windows, `native` launches the selected COFF loader in a child process with timeout, output limits, exception reporting, and per-section memory protections. x64 and x86 objects dispatch to separate helpers.
 
 ```bash
-bofbench run bofs/fieldcheck --via native \
-  --arg process_filter=lsass --arg result_limit=25
+bofbench run bofs/portable-survey --via native --arch x64 \
+  --arg process_filter=lsass --arg result_limit=5
 ```
 
-Malformed or unsupported objects stop before the entrypoint. Loader compatibility, process exit, exceptions, memory protections, Beacon output, errors, and duration are written to `runs/<id>/result.json` and `result.md`.
+Malformed or unsupported objects stop before the entrypoint.
 
-## Remote lab
+## Remote Windows lab
 
 ```bash
-bofbench run bofs/fieldcheck --via lab \
-  --arg process_filter=lsass --arg result_limit=25
+bofbench run bofs/portable-survey --via lab --lab dedicated \
+  --arg process_filter=lsass --arg result_limit=5
 ```
 
-The adapter syncs project source and lock data, builds and runs on the Windows host, and collects the object and reports back to the local `runs/` directory.
+The adapter resolves the named profile, automatically bootstraps missing or changed runtime components, chooses local or remote compilation from `build_mode`, executes through the matching loader, and collects output.
+
+Use [Portable Lab Profiles](lab-profiles.md) to register and switch machines without editing the project.
 
 ## Sliver
 
 ```bash
-bofbench run bofs/fieldcheck --via sliver \
-  --session DEVBOX \
-  --arg process_filter=lsass --arg result_limit=25
+bofbench sliver setup --lab dedicated
+bofbench run bofs/portable-survey --via sliver --lab dedicated \
+  --arg process_filter=lsass --arg result_limit=5
 ```
 
-BOFBench prepares a verified extension, selects the live session, converts all typed arguments, executes the extension command, and prints compact BOF output.
+BOFBench discovers the client and configuration, prepares a verified extension, selects the profile's live session, converts the project argument contract into Sliver arguments, executes the extension, and captures the task/session output. Installing `coff-loader` is always explicit:
+
+```bash
+bofbench sliver setup --lab dedicated --install
+```
 
 ## Cobalt Strike
 
 ```bash
-bofbench run bofs/fieldcheck --via cobaltstrike \
-  --arg process_filter=lsass --arg result_limit=25
+bofbench run bofs/portable-survey --via cobaltstrike \
+  --arg process_filter=lsass --arg result_limit=5
 ```
 
-The licensed adapter generates an ephemeral Aggressor script, uses `agscript`, packs values with `bof_pack`, invokes `beacon_inline_execute`, and records a redacted receipt. Connection secrets are read only from environment or an interactive credential source, never the project.
+The licensed adapter generates an ephemeral Aggressor script, uses `agscript`, packs values with `bof_pack`, invokes `beacon_inline_execute`, and records a redacted receipt. Connection secrets come only from environment variables, the operating-system credential source, or interactive input.
+
+## One receipt schema
+
+Every adapter writes `runs/<id>/result.json` using `bofbench.runtime-receipt` version 2. Receipts include:
+
+- selected profile and remote computer identity;
+- runtime, session, and task identifier when present;
+- exact object SHA-256;
+- named values and BOF argument types;
+- captured output, timeout, exit state, duration, and error;
+- cleanup invocation and result when requested.
+
+Runtime output becomes **Observed** analysis evidence only when the receipt object hash exactly matches the analyzed object.
 
 ## Cleanup
 
 ```bash
-bofbench run bofs/persist --via lab --cleanup --arg value_name=BOFBenchLab
+bofbench run bofs/persist --via lab --lab disposable --cleanup \
+  --arg value_name=BOFBench-Lab
 ```
 
 Cleanup companions run from an isolated temporary project. They are convenient runtime actions, not approval gates.

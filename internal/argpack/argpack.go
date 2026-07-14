@@ -46,11 +46,11 @@ func PackTokens(tokens []string) ([]byte, []Item, error) {
 }
 
 func PackItems(items []Item) ([]byte, error) {
-	var buf bytes.Buffer
+	var payload bytes.Buffer
 	for _, item := range items {
 		switch item.Kind {
 		case "z":
-			writeBytes(&buf, append([]byte(item.Value), 0))
+			writeBytes(&payload, append([]byte(item.Value), 0))
 		case "Z":
 			var raw []byte
 			for _, r := range utf16.Encode([]rune(item.Value + "\x00")) {
@@ -58,34 +58,40 @@ func PackItems(items []Item) ([]byte, error) {
 				binary.LittleEndian.PutUint16(tmp, r)
 				raw = append(raw, tmp...)
 			}
-			writeBytes(&buf, raw)
+			writeBytes(&payload, raw)
 		case "i":
 			n, err := strconv.ParseInt(item.Value, 0, 32)
 			if err != nil {
 				return nil, fmt.Errorf("i:%s: %w", item.Value, err)
 			}
-			_ = binary.Write(&buf, binary.LittleEndian, int32(n))
+			_ = binary.Write(&payload, binary.LittleEndian, int32(n))
 		case "s":
 			n, err := strconv.ParseInt(item.Value, 0, 16)
 			if err != nil {
 				return nil, fmt.Errorf("s:%s: %w", item.Value, err)
 			}
-			_ = binary.Write(&buf, binary.LittleEndian, int16(n))
+			_ = binary.Write(&payload, binary.LittleEndian, int16(n))
 		case "b":
 			raw, err := base64.StdEncoding.DecodeString(item.Value)
 			if err != nil {
 				return nil, fmt.Errorf("b: invalid base64: %w", err)
 			}
-			writeBytes(&buf, raw)
+			writeBytes(&payload, raw)
 		case "x":
 			raw, err := hex.DecodeString(strings.TrimPrefix(item.Value, "0x"))
 			if err != nil {
 				return nil, fmt.Errorf("x: invalid hex: %w", err)
 			}
-			writeBytes(&buf, raw)
+			writeBytes(&payload, raw)
 		}
 	}
-	return buf.Bytes(), nil
+	// Beacon's parser contract starts with the size of the remaining argument
+	// buffer. Cobalt Strike and Sliver both emit this header before the typed
+	// values; keeping it here makes locally packed arguments byte-compatible.
+	var packed bytes.Buffer
+	_ = binary.Write(&packed, binary.LittleEndian, int32(payload.Len()))
+	_, _ = packed.Write(payload.Bytes())
+	return packed.Bytes(), nil
 }
 
 func Hex(raw []byte) string {

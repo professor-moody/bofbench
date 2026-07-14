@@ -12,10 +12,10 @@ func TestRegistryAndFunctionalAdapterContract(t *testing.T) {
 			return Availability{Available: true, Version: "1.7.3"}, nil
 		},
 		Execute: func(_ context.Context, prepared Prepared) (Receipt, error) {
-			return Receipt{Schema: ReceiptSchema, SchemaVersion: 1, Runtime: prepared.Runtime, Status: "pass", Session: prepared.Request.Session}, nil
+			return Receipt{Schema: ReceiptSchema, SchemaVersion: ReceiptSchemaVersion, Runtime: prepared.Runtime, Status: "pass", Session: prepared.Request.Session}, nil
 		},
 		Cleanup: func(_ context.Context, prepared Prepared) (Receipt, error) {
-			return Receipt{Schema: ReceiptSchema, SchemaVersion: 1, Runtime: prepared.Runtime, Status: "clean", Session: prepared.Request.Session}, nil
+			return Receipt{Schema: ReceiptSchema, SchemaVersion: ReceiptSchemaVersion, Runtime: prepared.Runtime, Status: "clean", Session: prepared.Request.Session}, nil
 		},
 	})
 	if err != nil {
@@ -36,12 +36,12 @@ func TestRegistryAndFunctionalAdapterContract(t *testing.T) {
 	if _, err := selected.ConvertArguments([]Argument{{Name: "pid", Type: "int", Required: true}}); err == nil || !strings.Contains(err.Error(), "pid") {
 		t.Fatalf("missing argument error = %v", err)
 	}
-	prepared, err := selected.Prepare(context.Background(), Request{Input: "bofs/demo", Session: "DEVBOX"})
+	prepared, err := selected.Prepare(context.Background(), Request{Input: "bofs/example", Session: "WINDOWS-SESSION"})
 	if err != nil || prepared.Runtime != "sliver" || prepared.PreparedAt == "" {
 		t.Fatalf("prepared=%+v err=%v", prepared, err)
 	}
 	receipt, err := selected.Execute(context.Background(), prepared)
-	if err != nil || receipt.Runtime != "sliver" || receipt.Session != "DEVBOX" {
+	if err != nil || receipt.Runtime != "sliver" || receipt.Session != "WINDOWS-SESSION" {
 		t.Fatalf("receipt=%+v err=%v", receipt, err)
 	}
 }

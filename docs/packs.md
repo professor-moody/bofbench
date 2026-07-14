@@ -5,9 +5,8 @@ A **pack** is the only operator-facing composition concept. It combines implemen
 ```bash
 bofbench pack list
 bofbench pack search process
-bofbench pack show system-discovery
-bofbench new survey --pack host-discovery,system-discovery
-bofbench add bofs/survey domain-discovery
+bofbench pack show deep-survey
+bofbench new portable-survey --pack deep-survey
 ```
 
 ## Parameterized behavior
@@ -15,7 +14,7 @@ bofbench add bofs/survey domain-discovery
 Pack arguments are runtime values. This changes the target without recompiling the object:
 
 ```bash
-bofbench run bofs/survey --via lab \
+bofbench run bofs/portable-survey --via lab --lab dedicated \
   --arg process_filter=lsass \
   --arg result_limit=25
 ```
@@ -40,7 +39,7 @@ Stateful packs name an exact cleanup pack:
 
 ```bash
 bofbench pack show internal/scheduled-task --cleanup
-bofbench run bofs/task-access --via lab --cleanup \
+bofbench run bofs/task-access --via lab --lab disposable --cleanup \
   --arg task_name=BOFBenchLab
 ```
 

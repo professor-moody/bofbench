@@ -97,9 +97,10 @@ typedef struct {
 #pragma pack(pop)
 
 typedef struct {
+    char *original;
     char *buffer;
     int length;
-    int offset;
+    int size;
 } datap;
 
 typedef struct {
@@ -176,36 +177,45 @@ static void add_output(const char *fmt, ...) {
 }
 
 static int parser_has(datap *parser, int amount) {
-    if (!parser || !parser->buffer || amount < 0 || parser->length < 0 || parser->offset < 0 || parser->offset > parser->length) return 0;
-    return amount <= parser->length - parser->offset;
+    return parser && parser->buffer && amount >= 0 && parser->length >= amount;
 }
 
 void BeaconDataParse(datap *parser, char *buffer, int size) {
+    int declared = 0;
     if (!parser) return;
-    parser->buffer = size >= 0 ? buffer : NULL;
-    parser->length = size >= 0 ? size : 0;
-    parser->offset = 0;
+    parser->original = buffer;
+    parser->buffer = NULL;
+    parser->length = 0;
+    parser->size = 0;
+    if (!buffer || size < 4) return;
+    memcpy(&declared, buffer, 4);
+    if (declared < 0 || declared > size - 4) return;
+    parser->buffer = buffer + 4;
+    parser->length = declared;
+    parser->size = declared;
 }
 
 int BeaconDataInt(datap *parser) {
     int out = 0;
     if (!parser_has(parser, 4)) return 0;
-    memcpy(&out, parser->buffer + parser->offset, 4);
-    parser->offset += 4;
+    memcpy(&out, parser->buffer, 4);
+    parser->buffer += 4;
+    parser->length -= 4;
     return out;
 }
 
 short BeaconDataShort(datap *parser) {
     short out = 0;
     if (!parser_has(parser, 2)) return 0;
-    memcpy(&out, parser->buffer + parser->offset, 2);
-    parser->offset += 2;
+    memcpy(&out, parser->buffer, 2);
+    parser->buffer += 2;
+    parser->length -= 2;
     return out;
 }
 
 int BeaconDataLength(datap *parser) {
-    if (!parser || parser->length < 0 || parser->offset < 0 || parser->offset > parser->length) return 0;
-    return parser->length - parser->offset;
+    if (!parser || parser->length < 0) return 0;
+    return parser->length;
 }
 
 char *BeaconDataExtract(datap *parser, int *size) {
@@ -213,11 +223,13 @@ char *BeaconDataExtract(datap *parser, int *size) {
     char *out;
     if (size) *size = 0;
     if (!parser_has(parser, 4)) return NULL;
-    memcpy(&len, parser->buffer + parser->offset, 4);
-    parser->offset += 4;
+    memcpy(&len, parser->buffer, 4);
+    parser->buffer += 4;
+    parser->length -= 4;
     if (len < 0 || !parser_has(parser, len)) return NULL;
-    out = parser->buffer + parser->offset;
-    parser->offset += len;
+    out = parser->buffer;
+    parser->buffer += len;
+    parser->length -= len;
     if (size) *size = len;
     return out;
 }
@@ -759,7 +771,22 @@ static uintptr_t resolve_external(const char *name, resolved_symbol *resolved, i
     uintptr_t target = 0;
     const char *normalized = bofbench_normalize_import(name);
 #ifdef BOFBENCH_X86
-    if (normalized[0] == '_') normalized++;
+    char decorated[MAX_SYMBOL_NAME + 1];
+    char *suffix;
+    size_t suffix_index;
+    snprintf(decorated, sizeof(decorated), "%s", normalized[0] == '_' ? normalized + 1 : normalized);
+    suffix = strrchr(decorated, '@');
+    if (suffix && suffix[1] != 0) {
+        int numeric = 1;
+        for (suffix_index = 1; suffix[suffix_index] != 0; suffix_index++) {
+            if (suffix[suffix_index] < '0' || suffix[suffix_index] > '9') {
+                numeric = 0;
+                break;
+            }
+        }
+        if (numeric) *suffix = 0;
+    }
+    normalized = decorated;
 #endif
     for (index = 0; index < *resolved_count; index++) {
         if (strcmp(resolved[index].name, name) == 0) return resolved[index].value;

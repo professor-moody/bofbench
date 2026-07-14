@@ -1,9 +1,10 @@
 #pragma once
 #define CALLBACK_OUTPUT 0
 typedef struct {
+    char *original;
     char *buffer;
     int length;
-    int offset;
+    int size;
 } datap;
 void BeaconDataParse(datap *parser, char *buffer, int size);
 int BeaconDataInt(datap *parser);

@@ -22,7 +22,7 @@ func recipeListCommand(stdout io.Writer) *cobra.Command {
 		Use: "list", Short: "List built-in offensive development recipes", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			for _, document := range recipe.Builtins() {
-				fmt.Fprintf(stdout, "%-18s %-20s privilege=%-6s network=%-8s impact=%-10s features=%s\n", document.Name, document.Category, document.Privilege, document.Network, document.Impact, strings.Join(document.Features, ","))
+				fmt.Fprintf(stdout, "%-18s %-20s privilege=%-6s network=%-8s effects=%-10s features=%s\n", document.Name, document.Category, document.Privilege, document.Network, document.Impact, strings.Join(document.Features, ","))
 			}
 			return nil
 		},

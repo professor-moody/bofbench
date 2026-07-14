@@ -22,7 +22,6 @@ const (
 	SchemaArsenalRegression = "bofbench.arsenal-regression"
 	SchemaBuild             = "bofbench.build"
 	SchemaCompilerMatrix    = "bofbench.compiler-matrix"
-	SchemaDemo              = "bofbench.demo"
 	SchemaDev               = "bofbench.dev"
 	SchemaDoctor            = "bofbench.doctor"
 	SchemaLabSmoke          = "bofbench.lab-smoke"

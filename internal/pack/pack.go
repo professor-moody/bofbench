@@ -575,6 +575,16 @@ func builtins() []Resolved {
 	processDiscovery.OutputFields = []string{"pid", "ppid", "threads", "image", "matched", "examined", "limit", "filter", "status"}
 	processDiscovery.ExpectedAnalysis = []string{"process enumeration", "Beacon argument parsing"}
 	byID["process-discovery"] = processDiscovery
+	deepSurvey := byID["deep-survey"]
+	for index, feature := range deepSurvey.Source.Features {
+		if feature == "process-list" {
+			deepSurvey.Source.Features[index] = "process-search"
+		}
+	}
+	deepSurvey.Arguments = append([]Argument(nil), processArguments...)
+	deepSurvey.OutputFields = []string{"pid", "image", "matched", "examined", "limit", "filter", "elevated", "integrity", "service", "tcp", "domain", "status"}
+	deepSurvey.ExpectedAnalysis = append(deepSurvey.ExpectedAnalysis, "Beacon argument parsing")
+	byID["deep-survey"] = deepSurvey
 	systemDiscovery := byID["system-discovery"]
 	systemDiscovery.Source.Features = []string{"process-search", "token-context", "service-list"}
 	systemDiscovery.Capabilities = []string{"filtered process discovery", "token context discovery", "service discovery"}

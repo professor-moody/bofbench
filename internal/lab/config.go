@@ -106,5 +106,5 @@ func ValidateConfig(config Config) error {
 }
 
 func (config Config) RemoteOptions() RemoteOptions {
-	return RemoteOptions{Host: config.Host, RemoteRoot: config.RemoteRoot, Executable: config.Executable, SSH: "ssh", SCP: "scp"}
+	return RemoteOptions{Transport: config.Transport, Host: config.Host, RemoteRoot: config.RemoteRoot, Executable: config.Executable, SSH: "ssh", SCP: "scp"}
 }
