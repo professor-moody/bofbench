@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -47,6 +48,7 @@ type targetState struct {
 	PID                 int    `json:"pid"`
 	AlertableTID        uint32 `json:"alertable_tid"`
 	NamedPipe           string `json:"named_pipe,omitempty"`
+	KnownHandle         string `json:"known_handle,omitempty"`
 	User                string `json:"user"`
 	CanaryFile          string `json:"canary_file"`
 	CanaryFileSHA256    string `json:"canary_file_sha256"`
@@ -58,18 +60,26 @@ type targetState struct {
 }
 
 type fixtureState struct {
-	Schema             string `json:"schema"`
-	SchemaVersion      int    `json:"schema_version"`
-	User               string `json:"user"`
-	CredentialTarget   string `json:"credential_target"`
-	CredentialSHA256   string `json:"credential_sha256"`
-	CredentialSize     int    `json:"credential_size"`
-	DPAPIUserPath      string `json:"dpapi_user_path"`
-	DPAPIUserSHA256    string `json:"dpapi_user_sha256"`
-	DPAPIMachinePath   string `json:"dpapi_machine_path"`
-	DPAPIMachineSHA256 string `json:"dpapi_machine_sha256"`
-	WMIMarkerPath      string `json:"wmi_marker_path"`
-	CreatedAt          string `json:"created_at"`
+	Schema                string `json:"schema"`
+	SchemaVersion         int    `json:"schema_version"`
+	User                  string `json:"user"`
+	CredentialTarget      string `json:"credential_target"`
+	CredentialSHA256      string `json:"credential_sha256"`
+	CredentialSize        int    `json:"credential_size"`
+	DPAPIUserPath         string `json:"dpapi_user_path"`
+	DPAPIUserSHA256       string `json:"dpapi_user_sha256"`
+	DPAPIMachinePath      string `json:"dpapi_machine_path"`
+	DPAPIMachineSHA256    string `json:"dpapi_machine_sha256"`
+	WMIMarkerPath         string `json:"wmi_marker_path"`
+	VaultGUID             string `json:"vault_guid,omitempty"`
+	VaultResource         string `json:"vault_resource,omitempty"`
+	VaultIdentity         string `json:"vault_identity,omitempty"`
+	VaultSHA256           string `json:"vault_sha256,omitempty"`
+	VaultSize             int    `json:"vault_size,omitempty"`
+	CertificateStore      string `json:"certificate_store,omitempty"`
+	CertificateSubject    string `json:"certificate_subject,omitempty"`
+	CertificateThumbprint string `json:"certificate_thumbprint,omitempty"`
+	CreatedAt             string `json:"created_at"`
 }
 
 type credential struct {
@@ -109,6 +119,11 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	if err := os.WriteFile(canaryPath, fileCanary, 0o600); err != nil {
 		return true, 2
 	}
+	knownFile, err := os.Open(canaryPath)
+	if err != nil {
+		return true, 2
+	}
+	defer knownFile.Close()
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
@@ -117,9 +132,10 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	pipe := <-pipeReady
 	fixtureErr := launchFixtureInConsoleSession(service.root, "deploy")
 	state := targetState{
-		Schema: "bofbench.target", SchemaVersion: 2, Service: service.name,
+		Schema: "bofbench.target", SchemaVersion: 3, Service: service.name,
 		PID: os.Getpid(), AlertableTID: <-threadID, NamedPipe: pipe.Name, User: `NT AUTHORITY\SYSTEM`,
-		CanaryFile: canaryPath, CanaryFileSHA256: hashBytes(fileCanary),
+		KnownHandle: fmt.Sprintf("0x%X", knownFile.Fd()),
+		CanaryFile:  canaryPath, CanaryFileSHA256: hashBytes(fileCanary),
 		MemoryCanaryAddress: fmt.Sprintf("0x%X", uintptr(unsafe.Pointer(&memoryCanary[0]))),
 		MemoryCanarySize:    len(canary), MemoryCanarySHA256: hashBytes(canary),
 		StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
@@ -275,6 +291,12 @@ func deployFixtures(root string) (fixtureState, error) {
 	credentialCanary := randomBytes(48)
 	userCanary := randomBytes(48)
 	machineCanary := randomBytes(48)
+	vaultSecret := hex.EncodeToString(randomBytes(24))
+	runID := fmt.Sprintf("%d", time.Now().UTC().UnixNano())
+	vaultResource := "BOFBench-Vault-" + runID
+	vaultIdentity := "operator-" + runID
+	certificateName := "BOFBench-Auth-" + runID
+	certificateSubject := "CN=" + certificateName
 	if err := writeCredential(credentialName, credentialCanary); err != nil {
 		return fixtureState{}, err
 	}
@@ -288,12 +310,19 @@ func deployFixtures(root string) (fixtureState, error) {
 		deleteCredential(credentialName)
 		return fixtureState{}, err
 	}
+	vaultGUID, thumbprint, err := deployVaultAndCertificate(vaultResource, vaultIdentity, vaultSecret, certificateSubject)
+	if err != nil {
+		deleteCredential(credentialName)
+		return fixtureState{}, err
+	}
 	state := fixtureState{
-		Schema: "bofbench.target-fixtures", SchemaVersion: 1, User: currentUser(),
+		Schema: "bofbench.target-fixtures", SchemaVersion: 2, User: currentUser(),
 		CredentialTarget: credentialName, CredentialSHA256: hashBytes(credentialCanary), CredentialSize: len(credentialCanary),
 		DPAPIUserPath: userPath, DPAPIUserSHA256: hashBytes(userCanary),
 		DPAPIMachinePath: machinePath, DPAPIMachineSHA256: hashBytes(machineCanary),
 		WMIMarkerPath: filepath.Join(fixtureRoot, "wmi-marker.txt"), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		VaultGUID: vaultGUID, VaultResource: vaultResource, VaultIdentity: vaultIdentity, VaultSHA256: hashBytes([]byte(vaultSecret)), VaultSize: len(vaultSecret),
+		CertificateStore: "MY", CertificateSubject: certificateName, CertificateThumbprint: thumbprint,
 	}
 	if err := writeJSON(filepath.Join(fixtureRoot, "fixture.json"), state); err != nil {
 		deleteCredential(credentialName)
@@ -315,8 +344,49 @@ func readFixtures(root string) (fixtureState, error) {
 }
 
 func removeFixtures(root string) error {
+	if state, err := readFixtures(root); err == nil {
+		_ = removeVaultAndCertificate(state)
+	}
 	deleteCredential(credentialName)
 	return os.RemoveAll(filepath.Join(root, "fixtures"))
+}
+
+func deployVaultAndCertificate(resource, identity, secret, subject string) (string, string, error) {
+	script := fmt.Sprintf(`$ErrorActionPreference='Stop'; [Windows.Security.Credentials.PasswordVault,Windows.Security.Credentials,ContentType=WindowsRuntime] | Out-Null; $vault=New-Object Windows.Security.Credentials.PasswordVault; $credential=New-Object Windows.Security.Credentials.PasswordCredential(%s,%s,%s); $vault.Add($credential); $cert=New-SelfSignedCertificate -Subject %s -CertStoreLocation 'Cert:\CurrentUser\My' -KeyExportPolicy Exportable -KeyAlgorithm RSA -KeyLength 2048 -NotAfter (Get-Date).AddDays(7); [ordered]@{vault_guid='4BF4C442-9B8A-41A0-B380-DD4A704DDB28';thumbprint=$cert.Thumbprint} | ConvertTo-Json -Compress`, psQuote(resource), psQuote(identity), psQuote(secret), psQuote(subject))
+	output, err := runPowerShell(script)
+	if err != nil {
+		return "", "", err
+	}
+	var result struct {
+		VaultGUID  string `json:"vault_guid"`
+		Thumbprint string `json:"thumbprint"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		return "", "", fmt.Errorf("decode Vault/certificate fixture: %w", err)
+	}
+	if result.VaultGUID == "" || result.Thumbprint == "" {
+		return "", "", fmt.Errorf("Vault/certificate fixture returned incomplete identifiers")
+	}
+	return result.VaultGUID, result.Thumbprint, nil
+}
+
+func removeVaultAndCertificate(state fixtureState) error {
+	script := fmt.Sprintf(`$ErrorActionPreference='Continue'; [Windows.Security.Credentials.PasswordVault,Windows.Security.Credentials,ContentType=WindowsRuntime] | Out-Null; $vault=New-Object Windows.Security.Credentials.PasswordVault; try{$item=$vault.Retrieve(%s,%s); if($item){$vault.Remove($item)}}catch{}; Remove-Item -LiteralPath (%s + %s) -Force -ErrorAction SilentlyContinue`, psQuote(state.VaultResource), psQuote(state.VaultIdentity), psQuote(`Cert:\CurrentUser\My\`), psQuote(state.CertificateThumbprint))
+	_, err := runPowerShell(script)
+	return err
+}
+
+func runPowerShell(script string) ([]byte, error) {
+	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("PowerShell fixture: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return output, nil
+}
+
+func psQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func writeCredential(name string, payload []byte) error {

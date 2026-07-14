@@ -23,7 +23,7 @@ import (
 
 const (
 	Schema               = "bofbench.pack"
-	SchemaVersion        = 2
+	SchemaVersion        = 3
 	MinimumSchemaVersion = 1
 	LockSchema           = "bofbench.pack-lock"
 	LockSchemaVersion    = 1
@@ -39,6 +39,7 @@ type Argument struct {
 	Description string `json:"description,omitempty"`
 	Required    bool   `json:"required,omitempty"`
 	Default     string `json:"default,omitempty"`
+	Sensitive   bool   `json:"sensitive,omitempty"`
 }
 
 type Source struct {
@@ -63,41 +64,65 @@ type AnalysisSignature struct {
 }
 
 type ProofExpectation struct {
-	Tag    string            `json:"tag"`
-	Fields map[string]string `json:"fields,omitempty"`
+	Tag     string                   `json:"tag"`
+	Fields  map[string]string        `json:"fields,omitempty"`
+	Payload *ProofPayloadExpectation `json:"payload,omitempty"`
+}
+
+type ProofPayloadExpectation struct {
+	Tag      string `json:"tag"`
+	Field    string `json:"field"`
+	Encoding string `json:"encoding"`
+	SHA256   string `json:"sha256"`
+}
+
+type ProofStateCheck struct {
+	Phase      string            `json:"phase"`
+	Kind       string            `json:"kind"`
+	Expect     string            `json:"expect"`
+	Parameters map[string]string `json:"parameters"`
+}
+
+type ProofCleanupStep struct {
+	Pack      string            `json:"pack"`
+	Arguments map[string]string `json:"arguments,omitempty"`
 }
 
 type ProofCase struct {
-	ID        string            `json:"id"`
-	Via       []string          `json:"via"`
-	Arguments map[string]string `json:"arguments,omitempty"`
-	Expect    ProofExpectation  `json:"expect"`
-	Cleanup   bool              `json:"cleanup,omitempty"`
+	ID           string             `json:"id"`
+	Via          []string           `json:"via"`
+	Arguments    map[string]string  `json:"arguments,omitempty"`
+	Expect       ProofExpectation   `json:"expect"`
+	Cleanup      bool               `json:"cleanup,omitempty"`
+	CleanupSteps []ProofCleanupStep `json:"cleanup_steps,omitempty"`
+	StateChecks  []ProofStateCheck  `json:"state_checks,omitempty"`
 }
 
 type Document struct {
-	Schema             string              `json:"schema"`
-	SchemaVersion      int                 `json:"schema_version"`
-	ID                 string              `json:"id"`
-	Version            string              `json:"version"`
-	Title              string              `json:"title"`
-	Summary            string              `json:"summary"`
-	Tier               string              `json:"tier"`
-	Capabilities       []string            `json:"capabilities"`
-	Effects            []string            `json:"effects"`
-	Platforms          []string            `json:"platforms"`
-	Architecture       []string            `json:"architecture"`
-	Privilege          string              `json:"privilege"`
-	Network            string              `json:"network"`
-	Arguments          []Argument          `json:"arguments,omitempty"`
-	Dependencies       []string            `json:"dependencies,omitempty"`
-	Source             Source              `json:"source"`
-	ExpectedAnalysis   []string            `json:"expected_analysis,omitempty"`
-	AnalysisSignatures []AnalysisSignature `json:"analysis_signatures,omitempty"`
-	ProofCases         []ProofCase         `json:"proof_cases,omitempty"`
-	OutputFields       []string            `json:"output_fields,omitempty"`
-	CleanupPack        string              `json:"cleanup_pack,omitempty"`
-	TargetSupport      []string            `json:"target_support"`
+	Schema                string              `json:"schema"`
+	SchemaVersion         int                 `json:"schema_version"`
+	ID                    string              `json:"id"`
+	Version               string              `json:"version"`
+	Title                 string              `json:"title"`
+	Summary               string              `json:"summary"`
+	Tier                  string              `json:"tier"`
+	Capabilities          []string            `json:"capabilities"`
+	Effects               []string            `json:"effects"`
+	Platforms             []string            `json:"platforms"`
+	Architecture          []string            `json:"architecture"`
+	Privilege             string              `json:"privilege"`
+	Network               string              `json:"network"`
+	Arguments             []Argument          `json:"arguments,omitempty"`
+	Dependencies          []string            `json:"dependencies,omitempty"`
+	Source                Source              `json:"source"`
+	ExpectedAnalysis      []string            `json:"expected_analysis,omitempty"`
+	AnalysisSignatures    []AnalysisSignature `json:"analysis_signatures,omitempty"`
+	ProofCases            []ProofCase         `json:"proof_cases,omitempty"`
+	OutputFields          []string            `json:"output_fields,omitempty"`
+	SensitiveOutputFields []string            `json:"sensitive_output_fields,omitempty"`
+	CleanupPack           string              `json:"cleanup_pack,omitempty"`
+	CleanupArguments      map[string]string   `json:"cleanup_arguments,omitempty"`
+	TargetSupport         []string            `json:"target_support"`
 }
 
 type Resolved struct {
@@ -121,14 +146,16 @@ type LoadOptions struct {
 }
 
 type LockRecord struct {
-	ID          string     `json:"id"`
-	Qualified   string     `json:"qualified"`
-	Catalog     string     `json:"catalog"`
-	CatalogRoot string     `json:"catalog_root,omitempty"`
-	Version     string     `json:"version"`
-	SHA256      string     `json:"sha256"`
-	Arguments   []Argument `json:"arguments,omitempty"`
-	Cleanup     string     `json:"cleanup_pack,omitempty"`
+	ID                    string            `json:"id"`
+	Qualified             string            `json:"qualified"`
+	Catalog               string            `json:"catalog"`
+	CatalogRoot           string            `json:"catalog_root,omitempty"`
+	Version               string            `json:"version"`
+	SHA256                string            `json:"sha256"`
+	Arguments             []Argument        `json:"arguments,omitempty"`
+	Cleanup               string            `json:"cleanup_pack,omitempty"`
+	CleanupArguments      map[string]string `json:"cleanup_arguments,omitempty"`
+	SensitiveOutputFields []string          `json:"sensitive_output_fields,omitempty"`
 }
 
 type Lock struct {
@@ -290,6 +317,13 @@ func (r *Registry) validateReferences() error {
 		if item.Document.CleanupPack != "" {
 			if _, err := r.ResolveRelated(item, item.Document.CleanupPack); err != nil {
 				return fmt.Errorf("pack %s cleanup %s: %w", item.Qualified, item.Document.CleanupPack, err)
+			}
+		}
+		for _, proof := range item.Document.ProofCases {
+			for _, step := range proof.CleanupSteps {
+				if _, err := r.ResolveRelated(item, step.Pack); err != nil {
+					return fmt.Errorf("pack %s proof %s cleanup %s: %w", item.Qualified, proof.ID, step.Pack, err)
+				}
 			}
 		}
 	}
@@ -708,6 +742,24 @@ func builtins() []Resolved {
 	ldapQuery.OutputFields = []string{"row", "dn", "attribute", "value", "shown", "limit", "server", "base", "filter", "status"}
 	ldapQuery.AnalysisSignatures = []AnalysisSignature{{ID: "ldap_directory_query", Name: "LDAP directory query", Summary: "Discover a domain controller, authenticate with the current context, and issue a bounded LDAP search.", Steps: []AnalysisStep{{Action: "discover domain controller", APIs: []string{"DsGetDcNameA", "DsGetDcNameW"}}, {Action: "connect to LDAP", APIs: []string{"ldap_connect"}}, {Action: "bind current context", APIs: []string{"ldap_bind_sA", "ldap_bind_sW"}}, {Action: "search directory", APIs: []string{"ldap_search_sA", "ldap_search_sW", "ldap_search_ext_sA", "ldap_search_ext_sW"}}}, Effects: []string{"reaches a domain controller", "reads directory data"}, Requirements: []string{"domain connectivity", "directory read access"}}}
 	byID["ldap-query"] = ldapQuery
+	securityPackages := byID["security-package-inventory"]
+	securityPackages.Title = "Security Package Inventory"
+	securityPackages.Capabilities = []string{"Windows authentication package discovery", "SSPI capability inventory"}
+	securityPackages.Arguments = []Argument{{Name: "name_filter", Type: "string", Description: "case-insensitive package-name substring; empty matches all", Default: ""}, {Name: "result_limit", Type: "int", Description: "maximum package rows (1-128)", Default: "25"}}
+	securityPackages.ExpectedAnalysis = []string{"security_package_inventory"}
+	securityPackages.OutputFields = []string{"name", "capabilities", "max_token", "comment", "shown", "total", "limit", "filter", "status"}
+	securityPackages.AnalysisSignatures = []AnalysisSignature{{ID: "security_package_inventory", Name: "Windows authentication-package inventory", Summary: "Enumerate installed SSPI authentication and security-support packages with their declared capabilities.", Steps: []AnalysisStep{{Action: "enumerate security packages", APIs: []string{"EnumerateSecurityPackagesW", "EnumerateSecurityPackagesA"}}, {Action: "release package metadata", APIs: []string{"FreeContextBuffer"}}}, Effects: []string{"reads authentication package metadata"}, Requirements: []string{"local SSPI availability", "a result limit"}}}
+	securityPackages.ProofCases = []ProofCase{{ID: "bounded", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"name_filter": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "security-package-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["security-package-inventory"] = securityPackages
+	certificates := byID["certificate-store-inventory"]
+	certificates.Title = "Certificate Store Inventory"
+	certificates.Capabilities = []string{"certificate metadata discovery", "private-key availability discovery"}
+	certificates.Arguments = []Argument{{Name: "scope", Type: "string", Description: "current_user or local_machine", Default: "current_user"}, {Name: "store", Type: "wstring", Description: "certificate store name", Default: "MY"}, {Name: "subject_filter", Type: "wstring", Description: "case-insensitive subject substring; empty matches all", Default: ""}, {Name: "result_limit", Type: "int", Description: "maximum certificate rows (1-256)", Default: "25"}}
+	certificates.ExpectedAnalysis = []string{"certificate_store_inventory"}
+	certificates.OutputFields = []string{"thumbprint", "subject", "issuer", "not_before", "not_after", "has_private_key", "shown", "limit", "scope", "status"}
+	certificates.AnalysisSignatures = []AnalysisSignature{{ID: "certificate_store_inventory", Name: "Certificate-store inventory", Summary: "Open an explicit Windows certificate store and enumerate bounded identity, validity, thumbprint, and private-key metadata.", Steps: []AnalysisStep{{Action: "open certificate store", APIs: []string{"CertOpenStore", "CertOpenSystemStoreW", "CertOpenSystemStoreA"}}, {Action: "enumerate certificates", APIs: []string{"CertEnumCertificatesInStore"}}, {Action: "inspect certificate properties", APIs: []string{"CertGetCertificateContextProperty", "CertGetNameStringW", "CertGetNameStringA"}}}, Effects: []string{"reads certificate metadata", "reads private-key availability metadata"}, Requirements: []string{"read access to the selected certificate store", "an explicit store scope and name"}}}
+	certificates.ProofCases = []ProofCase{{ID: "fixture-certificate", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"scope": "current_user", "store": "$CERT_STORE", "subject_filter": "$CERT_SUBJECT", "result_limit": "10"}, Expect: ProofExpectation{Tag: "certificate-store-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["certificate-store-inventory"] = certificates
 	for id, document := range byID {
 		for _, feature := range document.Source.Features {
 			if signature, ok := builtinContextSignature(feature); ok && !hasAnalysisSignature(document.AnalysisSignatures, signature.ID) {
@@ -824,6 +876,16 @@ func validate(document Document, root string) error {
 	if document.SchemaVersion == 1 && (len(document.AnalysisSignatures) > 0 || len(document.ProofCases) > 0) {
 		problems = append(problems, "analysis_signatures and proof_cases require schema version 2")
 	}
+	usesV3 := len(document.SensitiveOutputFields) > 0 || len(document.CleanupArguments) > 0
+	for _, argument := range document.Arguments {
+		usesV3 = usesV3 || argument.Sensitive
+	}
+	for _, proof := range document.ProofCases {
+		usesV3 = usesV3 || proof.Expect.Payload != nil || len(proof.StateChecks) > 0 || len(proof.CleanupSteps) > 0
+	}
+	if document.SchemaVersion < 3 && usesV3 {
+		problems = append(problems, "sensitive fields, cleanup mappings, payload expectations, state checks, and cleanup steps require schema version 3")
+	}
 	if !idPattern.MatchString(document.ID) {
 		problems = append(problems, "id must contain lowercase letters, numbers, dot, underscore, or hyphen")
 	}
@@ -857,6 +919,27 @@ func validate(document Document, root string) error {
 			problems = append(problems, err.Error())
 		}
 	}
+	outputFields := map[string]bool{}
+	for _, field := range document.OutputFields {
+		outputFields[field] = true
+	}
+	for _, field := range document.SensitiveOutputFields {
+		if !outputFields[field] {
+			problems = append(problems, fmt.Sprintf("sensitive output field %q is not declared in output_fields", field))
+		}
+	}
+	if len(document.CleanupArguments) > 0 && document.CleanupPack == "" {
+		problems = append(problems, "cleanup_arguments requires cleanup_pack")
+	}
+	for target, expression := range document.CleanupArguments {
+		if !idPattern.MatchString(target) {
+			problems = append(problems, fmt.Sprintf("invalid cleanup argument %q", target))
+			continue
+		}
+		if !strings.HasPrefix(expression, "$arg.") || !seenArgs[strings.TrimPrefix(expression, "$arg.")] {
+			problems = append(problems, fmt.Sprintf("cleanup argument %s must reference a declared argument as $arg.<name>", target))
+		}
+	}
 	seenSignatures := map[string]bool{}
 	for _, signature := range document.AnalysisSignatures {
 		if !idPattern.MatchString(signature.ID) {
@@ -875,7 +958,23 @@ func validate(document Document, root string) error {
 			}
 		}
 	}
-	allowedPlaceholders := map[string]bool{"$TARGET_PID": true, "$TARGET_TID": true, "$MEMORY_ADDRESS": true, "$MEMORY_SIZE": true, "$CANARY_PATH": true, "$DPAPI_USER_PATH": true, "$DPAPI_MACHINE_PATH": true, "$LAB_HOST": true, "$TEMP": true, "$RUN_ID": true}
+	allowedPlaceholders := map[string]bool{
+		"$TARGET_PID": true, "$TARGET_TID": true, "$TARGET_HANDLE": true,
+		"$MEMORY_ADDRESS": true, "$MEMORY_SIZE": true, "$MEMORY_SHA256": true, "$CANARY_PATH": true, "$CANARY_SHA256": true,
+		"$CREDENTIAL_TARGET": true, "$CREDENTIAL_SHA256": true, "$CREDENTIAL_SIZE": true,
+		"$DPAPI_USER_PATH": true, "$DPAPI_USER_SHA256": true, "$DPAPI_MACHINE_PATH": true, "$DPAPI_MACHINE_SHA256": true,
+		"$VAULT_GUID": true, "$VAULT_RESOURCE": true, "$VAULT_IDENTITY": true, "$VAULT_SHA256": true, "$VAULT_SIZE": true,
+		"$CERT_THUMBPRINT": true, "$CERT_STORE": true, "$CERT_SUBJECT": true,
+		"$LAB_HOST": true, "$SERVICE_BINARY": true, "$WMI_MARKER_PATH": true, "$TEMP": true, "$RUN_ID": true, "$PROOF_SECRET": true,
+		"$PAYLOAD_RET_PATH": true,
+	}
+	validatePlaceholders := func(proofID, value string) {
+		for _, placeholder := range placeholderPattern.FindAllString(value, -1) {
+			if !allowedPlaceholders[placeholder] {
+				problems = append(problems, fmt.Sprintf("proof case %s uses unsupported placeholder %q", proofID, placeholder))
+			}
+		}
+	}
 	seenProofs := map[string]bool{}
 	for _, proof := range document.ProofCases {
 		if !idPattern.MatchString(proof.ID) || seenProofs[proof.ID] {
@@ -894,14 +993,47 @@ func validate(document Document, root string) error {
 			if !seenArgs[name] {
 				problems = append(problems, fmt.Sprintf("proof case %s uses unknown argument %q", proof.ID, name))
 			}
-			for _, placeholder := range placeholderPattern.FindAllString(value, -1) {
-				if !allowedPlaceholders[placeholder] {
-					problems = append(problems, fmt.Sprintf("proof case %s uses unsupported placeholder %q", proof.ID, placeholder))
-				}
-			}
+			validatePlaceholders(proof.ID, value)
 		}
 		if proof.Cleanup && document.CleanupPack == "" {
 			problems = append(problems, fmt.Sprintf("proof case %s requests cleanup but the pack has no cleanup companion", proof.ID))
+		}
+		if proof.Cleanup && len(proof.CleanupSteps) > 0 {
+			problems = append(problems, fmt.Sprintf("proof case %s cannot use cleanup and cleanup_steps together", proof.ID))
+		}
+		if payload := proof.Expect.Payload; payload != nil {
+			if !idPattern.MatchString(payload.Tag) || !idPattern.MatchString(payload.Field) || !contains([]string{"hex", "base64"}, payload.Encoding) || strings.TrimSpace(payload.SHA256) == "" {
+				problems = append(problems, fmt.Sprintf("proof case %s has an invalid payload expectation", proof.ID))
+			}
+			validatePlaceholders(proof.ID, payload.SHA256)
+		}
+		for _, step := range proof.CleanupSteps {
+			if strings.TrimSpace(step.Pack) == "" {
+				problems = append(problems, fmt.Sprintf("proof case %s cleanup step requires pack", proof.ID))
+			}
+			for _, value := range step.Arguments {
+				validatePlaceholders(proof.ID, value)
+			}
+		}
+		stateParameters := map[string][]string{
+			"file": {"path"}, "startup_file": {"name"}, "registry_value": {"hive", "path", "name"}, "service": {"name"},
+			"scheduled_task": {"name"}, "credential": {"target"}, "certificate": {"scope", "store", "thumbprint"},
+			"dpapi_file": {"path", "sha256"}, "pfx": {"path", "password", "thumbprint"},
+		}
+		for _, check := range proof.StateChecks {
+			required, ok := stateParameters[check.Kind]
+			if !contains([]string{"after_run", "after_cleanup"}, check.Phase) || !ok || !contains([]string{"present", "absent", "matches"}, check.Expect) {
+				problems = append(problems, fmt.Sprintf("proof case %s has an invalid state check", proof.ID))
+				continue
+			}
+			for _, key := range required {
+				if strings.TrimSpace(check.Parameters[key]) == "" {
+					problems = append(problems, fmt.Sprintf("proof case %s state check %s requires %s", proof.ID, check.Kind, key))
+				}
+			}
+			for _, value := range check.Parameters {
+				validatePlaceholders(proof.ID, value)
+			}
 		}
 	}
 	if len(problems) > 0 {
@@ -1008,7 +1140,18 @@ func (r *Registry) recipeRecord(project string) (string, LockRecord, error) {
 }
 
 func lockRecord(item Resolved) LockRecord {
-	return LockRecord{ID: item.Document.ID, Qualified: item.Qualified, Catalog: item.Catalog, CatalogRoot: item.CatalogRoot, Version: item.Document.Version, SHA256: item.SHA256, Arguments: append([]Argument(nil), item.Document.Arguments...), Cleanup: item.Document.CleanupPack}
+	return LockRecord{ID: item.Document.ID, Qualified: item.Qualified, Catalog: item.Catalog, CatalogRoot: item.CatalogRoot, Version: item.Document.Version, SHA256: item.SHA256, Arguments: append([]Argument(nil), item.Document.Arguments...), Cleanup: item.Document.CleanupPack, CleanupArguments: cloneStringMap(item.Document.CleanupArguments), SensitiveOutputFields: append([]string(nil), item.Document.SensitiveOutputFields...)}
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(input))
+	for key, value := range input {
+		result[key] = value
+	}
+	return result
 }
 
 func loadLock(root string) (Lock, error) {

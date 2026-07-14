@@ -987,6 +987,7 @@ func runCommand(stdout io.Writer) *cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cleanup {
+				sourceProject := args[0]
 				if !sourceaudit.IsSourceInput(args[0]) {
 					return fmt.Errorf("--cleanup requires a BOF project with a pack lock")
 				}
@@ -996,7 +997,7 @@ func runCommand(stdout io.Writer) *cobra.Command {
 				}
 				defer remove()
 				args[0] = cleanupProject
-				namedArgs = cleanupNamedArguments(cleanupProject, namedArgs)
+				namedArgs = cleanupNamedArguments(sourceProject, cleanupProject, namedArgs)
 				fmt.Fprintf(stdout, "cleanup   %s\n", strings.Join(cleanupPacks, ", "))
 			}
 			argTokens := args[1:]
@@ -1024,7 +1025,9 @@ func runCommand(stdout io.Writer) *cobra.Command {
 				runtimeName: runtimeName, compiler: compiler, arch: arch, resolved: resolved, packed: packed, items: items,
 				labName: labName, labProfiles: labProfiles, labHost: labHost, labRoot: labRoot, labExecutable: labExecutable,
 				transportTimeout: transportTimeout, bootstrapMode: bootstrapMode, sliverClient: sliverClient, sliverSession: sliverSession,
+				interactiveLab: requiresInteractiveLabSession(args[0]),
 			}
+			run.sensitiveOutputFields, run.sensitiveArgumentNames, run.sensitiveValues = runtimeSensitivity(args[0], resolved)
 			registry, err := runtimeAdapterRegistry(run)
 			if err != nil {
 				return err
@@ -1046,7 +1049,8 @@ func runCommand(stdout io.Writer) *cobra.Command {
 				if index < len(resolved.Names) {
 					name = resolved.Names[index]
 				}
-				request.Arguments = append(request.Arguments, runtimeadapter.Argument{Name: name, Type: item.Kind, Value: item.Value})
+				sensitive := index < len(resolved.Sensitive) && resolved.Sensitive[index]
+				request.Arguments = append(request.Arguments, runtimeadapter.Argument{Name: name, Type: item.Kind, Value: item.Value, Sensitive: sensitive})
 			}
 			if _, err := adapter.ConvertArguments(request.Arguments); err != nil {
 				return fmt.Errorf("convert %s arguments: %w", adapter.Name(), err)
@@ -1082,6 +1086,19 @@ func runCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&bootstrapMode, "bootstrap", "auto", "lab runtime bootstrap: auto, always, or never")
 	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "run the cleanup companion packs instead of the project's action packs")
 	return cmd
+}
+
+func requiresInteractiveLabSession(project string) bool {
+	lock, _, err := packsvc.LoadLock(project)
+	if err != nil {
+		return false
+	}
+	for _, record := range lock.Packs {
+		if record.ID == "credential-list" || record.ID == "credential-read" {
+			return true
+		}
+	}
+	return false
 }
 
 func testCommand(stdout io.Writer) *cobra.Command {

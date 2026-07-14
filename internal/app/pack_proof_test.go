@@ -1,9 +1,12 @@
 package app
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"bofbench/internal/lab"
@@ -45,5 +48,19 @@ func TestMatchesProofOutputRequiresTagAndFields(t *testing.T) {
 	}
 	if matchesProofOutput([]string{"[other] status=complete count=4"}, expect) || matchesProofOutput([]string{"[process-tree] status=failed count=0"}, expect) {
 		t.Fatal("unexpected structured output match")
+	}
+}
+
+func TestProofPayloadVerifiesBeforeSensitiveOutputRedaction(t *testing.T) {
+	payload := []byte("known-proof-secret")
+	sum := sha256.Sum256(payload)
+	lines := []string{"[secret-data] offset=0 hex=" + hex.EncodeToString(payload)}
+	expectation := packsvc.ProofPayloadExpectation{Tag: "secret-data", Field: "hex", Encoding: "hex", SHA256: hex.EncodeToString(sum[:])}
+	if err := verifyProofPayload(lines, expectation, map[string]string{}); err != nil {
+		t.Fatal(err)
+	}
+	redacted := redactRuntimeLines(lines, []string{"hex"}, nil)
+	if !strings.Contains(redacted[0], "hex=<redacted>") || strings.Contains(redacted[0], hex.EncodeToString(payload)) {
+		t.Fatalf("redacted output = %q", redacted[0])
 	}
 }

@@ -117,6 +117,36 @@ func TestPackSchemaV1CompatibilityAndV2Contracts(t *testing.T) {
 	}
 }
 
+func TestPackSchemaV3SensitiveCleanupAndProofContracts(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "pack.h"), []byte("static void pack(void) {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	document := Document{
+		Schema: Schema, SchemaVersion: 2, ID: "sensitive", Version: "1.0.0", Title: "Sensitive", Summary: "Schema v3 contract", Tier: "internal",
+		Capabilities: []string{"exact secret read"}, Effects: []string{"accesses credential material"}, Platforms: []string{"windows"}, Architecture: []string{"x64"}, Privilege: "user", Network: "none",
+		Arguments: []Argument{{Name: "password", Type: "wstring", Required: true, Sensitive: true}, {Name: "output_path", Type: "wstring", Required: true}},
+		Source:    Source{HeaderFragments: []string{"pack.h"}}, OutputFields: []string{"hex", "status"}, SensitiveOutputFields: []string{"hex"},
+		CleanupPack: "file-remove", CleanupArguments: map[string]string{"path": "$arg.output_path"}, TargetSupport: []string{"lab"},
+		ProofCases: []ProofCase{{ID: "exact", Via: []string{"lab"}, Arguments: map[string]string{"password": "$PROOF_SECRET", "output_path": "$TEMP\\proof.pfx"}, Expect: ProofExpectation{Tag: "sensitive", Fields: map[string]string{"status": "complete"}, Payload: &ProofPayloadExpectation{Tag: "sensitive-data", Field: "hex", Encoding: "hex", SHA256: "$CANARY_SHA256"}}, Cleanup: true, StateChecks: []ProofStateCheck{{Phase: "after_cleanup", Kind: "pfx", Expect: "absent", Parameters: map[string]string{"path": "$TEMP\\proof.pfx", "password": "$PROOF_SECRET", "thumbprint": "$CERT_THUMBPRINT"}}}}},
+	}
+	path := filepath.Join(root, "pack.json")
+	writeTestJSON(t, path, document)
+	if _, err := ValidateFile(path); err == nil || !strings.Contains(err.Error(), "require schema version 3") {
+		t.Fatalf("schema v2 accepted v3 fields: %v", err)
+	}
+	document.SchemaVersion = 3
+	writeTestJSON(t, path, document)
+	if _, err := ValidateFile(path); err != nil {
+		t.Fatalf("schema v3 contract rejected: %v", err)
+	}
+	document.SensitiveOutputFields = []string{"undeclared"}
+	writeTestJSON(t, path, document)
+	if _, err := ValidateFile(path); err == nil || !strings.Contains(err.Error(), "not declared") {
+		t.Fatalf("undeclared sensitive output accepted: %v", err)
+	}
+}
+
 func TestConfiguredCatalogLifecycle(t *testing.T) {
 	configRoot := t.TempDir()
 	t.Setenv("BOFBENCH_CONFIG_HOME", configRoot)

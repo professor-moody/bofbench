@@ -23,26 +23,30 @@ import (
 )
 
 type runtimeRunContext struct {
-	stdout           io.Writer
-	input            string
-	projectInput     bool
-	entry            string
-	timeout          int
-	runtimeName      string
-	compiler         string
-	arch             string
-	resolved         resolvedRunArguments
-	packed           []byte
-	items            []argpack.Item
-	labName          string
-	labProfiles      string
-	labHost          string
-	labRoot          string
-	labExecutable    string
-	transportTimeout time.Duration
-	bootstrapMode    string
-	sliverClient     string
-	sliverSession    string
+	stdout                 io.Writer
+	input                  string
+	projectInput           bool
+	entry                  string
+	timeout                int
+	runtimeName            string
+	compiler               string
+	arch                   string
+	resolved               resolvedRunArguments
+	packed                 []byte
+	items                  []argpack.Item
+	labName                string
+	labProfiles            string
+	labHost                string
+	labRoot                string
+	labExecutable          string
+	transportTimeout       time.Duration
+	bootstrapMode          string
+	sliverClient           string
+	sliverSession          string
+	sensitiveOutputFields  []string
+	sensitiveArgumentNames []string
+	sensitiveValues        []string
+	interactiveLab         bool
 }
 
 func runtimeAdapterRegistry(run *runtimeRunContext) (*runtimeadapter.Registry, error) {
@@ -223,6 +227,9 @@ func (run *runtimeRunContext) executeLab(ctx context.Context, _ runtimeadapter.P
 	report, runErr := lab.RemoteRun(ctx, run.input, lab.RemoteRunOptions{
 		RemoteOptions: remoteOptions, Compiler: run.compiler, Arch: run.arch,
 		Runtime: "windows-coff", Args: run.resolved.Tokens, TimeoutMS: run.timeout,
+		SensitiveArguments: run.resolved.Sensitive, SensitiveArgumentNames: run.sensitiveArgumentNames,
+		SensitiveOutputFields: run.sensitiveOutputFields, SensitiveValues: run.sensitiveValues,
+		Interactive: run.interactiveLab,
 	})
 	fmt.Fprint(run.stdout, lab.RemoteRunText(report))
 	receipt := runtimeadapter.Receipt{}
@@ -279,7 +286,7 @@ func (run *runtimeRunContext) executeSliver(ctx context.Context, _ runtimeadapte
 	if err != nil {
 		return runtimeadapter.Receipt{}, err
 	}
-	return executeSliverExtension(run.stdout, sliverOptions{Client: client, SessionFilter: selector, ProfileName: profileName, RemoteHost: remoteHost}, result.Output, "", run.resolved.CLIValues)
+	return executeSliverExtension(run.stdout, sliverOptions{Client: client, SessionFilter: selector, ProfileName: profileName, RemoteHost: remoteHost, SensitiveOutputFields: run.sensitiveOutputFields, SensitiveArgumentNames: run.sensitiveArgumentNames, SensitiveValues: run.sensitiveValues}, result.Output, "", run.resolved.CLIValues)
 }
 
 func (run *runtimeRunContext) executeCobaltStrike(ctx context.Context, _ runtimeadapter.Prepared) (runtimeadapter.Receipt, error) {
@@ -287,6 +294,7 @@ func (run *runtimeRunContext) executeCobaltStrike(ctx context.Context, _ runtime
 		Input: run.input, Entrypoint: run.entry, Compiler: run.compiler, Runtime: run.runtimeName,
 		ArgumentTokens: run.resolved.Tokens, ArgumentNames: run.resolved.Names,
 		ArgumentOptional: run.resolved.Optional, CLIValues: run.resolved.CLIValues,
+		SensitiveOutputFields: run.sensitiveOutputFields, SensitiveArgumentNames: run.sensitiveArgumentNames, SensitiveValues: run.sensitiveValues,
 	})
 }
 
@@ -318,9 +326,10 @@ func (run *runtimeRunContext) executeNative(_ context.Context, _ runtimeadapter.
 		TimeoutMS: run.timeout, Runtime: run.runtimeName,
 	})
 	result.Header = evidence.New(evidence.SchemaRun, runlog.ID(runDir), "")
-	_ = os.WriteFile(filepath.Join(runDir, "result.md"), []byte(runMarkdown(result, run.items)), 0o644)
-	_ = writeJSON(filepath.Join(runDir, "runtime.json"), result)
-	receipt := persistNativeRuntimeReceipt(runDir, started, result, run.items, runErr)
+	persisted := run.redactResult(result)
+	_ = os.WriteFile(filepath.Join(runDir, "result.md"), []byte(runMarkdown(persisted, run.redactItems(run.items))), 0o644)
+	_ = writeJSON(filepath.Join(runDir, "runtime.json"), persisted)
+	receipt := persistNativeRuntimeReceipt(runDir, started, persisted, run.items, runErr, run)
 	_ = printJSON(run.stdout, result)
 	if runErr != nil {
 		return receipt, codedError{code: 1, err: runErr}
@@ -331,7 +340,7 @@ func (run *runtimeRunContext) executeNative(_ context.Context, _ runtimeadapter.
 	return receipt, nil
 }
 
-func persistNativeRuntimeReceipt(runDir string, started time.Time, result runtimesvc.Result, arguments []argpack.Item, operationErr error) runtimeadapter.Receipt {
+func persistNativeRuntimeReceipt(runDir string, started time.Time, result runtimesvc.Result, arguments []argpack.Item, operationErr error, run *runtimeRunContext) runtimeadapter.Receipt {
 	receipt := runtimeadapter.Receipt{
 		Schema: runtimeadapter.ReceiptSchema, SchemaVersion: runtimeadapter.ReceiptSchemaVersion,
 		Runtime: "native", Status: "fail", Object: result.Object, Entrypoint: result.Entry,
@@ -356,6 +365,7 @@ func persistNativeRuntimeReceipt(runDir string, started time.Time, result runtim
 	} else if len(result.Errors) > 0 {
 		receipt.Error = strings.Join(result.Errors, "; ")
 	}
+	receipt = run.redactReceipt(receipt)
 	_ = writeJSON(receipt.ReceiptPath, receipt)
 	return receipt
 }

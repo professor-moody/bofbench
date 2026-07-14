@@ -55,7 +55,7 @@ The licensed adapter generates an ephemeral Aggressor script, uses `agscript`, p
 
 ## One receipt schema
 
-Every adapter writes `runs/<id>/result.json` using `bofbench.runtime-receipt` version 2. Receipts include:
+Every adapter writes `runs/<id>/result.json` using `bofbench.runtime-receipt` version 3. Receipts include:
 
 - selected profile and remote computer identity;
 - runtime, session, and task identifier when present;
@@ -63,6 +63,8 @@ Every adapter writes `runs/<id>/result.json` using `bofbench.runtime-receipt` ve
 - named values and BOF argument types;
 - captured output, timeout, exit state, duration, and error;
 - cleanup invocation and result when requested.
+
+Version 3 records the names of sensitive arguments and redacted output fields, never their values. Remote-lab runs apply that policy to the remote developer report, collected lab report, event stream, final receipt, and proof report. Credential Manager packs automatically use the existing interactive Windows session because the SSH transport has a different logon-session credential context.
 
 Runtime output becomes **Observed** analysis evidence only when the receipt object hash exactly matches the analyzed object.
 

@@ -73,6 +73,8 @@ type devLoopOptions struct {
 	VerifyReproducible bool
 	Suppressions       []string
 	ArgumentTokens     []string
+	SensitiveArgIndex  []int
+	SensitiveFields    []string
 }
 
 func devCommand(stdout io.Writer) *cobra.Command {
@@ -112,6 +114,10 @@ func devCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.VerifyReproducible, "verify-reproducible", false, "build twice and require identical object bytes")
 	cmd.Flags().StringSliceVar(&opts.Suppressions, "suppress", nil, "analysis finding suppression; repeatable")
 	cmd.Flags().StringArrayVar(&opts.ArgumentTokens, "arg-token", nil, "packed BOF argument token used by runtime adapters; repeatable")
+	cmd.Flags().IntSliceVar(&opts.SensitiveArgIndex, "sensitive-arg-index", nil, "argument indexes to redact from persisted evidence")
+	cmd.Flags().StringSliceVar(&opts.SensitiveFields, "sensitive-output-field", nil, "structured output fields to redact from persisted evidence")
+	_ = cmd.Flags().MarkHidden("sensitive-arg-index")
+	_ = cmd.Flags().MarkHidden("sensitive-output-field")
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, or md")
 	return cmd
 }
@@ -140,10 +146,11 @@ func executeDevLoop(opts devLoopOptions) (devLoopReport, error) {
 			report.Status = "fail"
 			report.Error = loopErr.Error()
 		}
-		if writeErr := writeJSON(report.EvidencePath, report); writeErr != nil && loopErr == nil {
+		persisted := redactDevLoopReport(report, opts)
+		if writeErr := writeJSON(report.EvidencePath, persisted); writeErr != nil && loopErr == nil {
 			loopErr = writeErr
 		}
-		if writeErr := os.WriteFile(report.MarkdownPath, []byte(devLoopMarkdown(report)), 0o644); writeErr != nil && loopErr == nil {
+		if writeErr := os.WriteFile(report.MarkdownPath, []byte(devLoopMarkdown(persisted)), 0o644); writeErr != nil && loopErr == nil {
 			loopErr = writeErr
 		}
 		return report, loopErr
@@ -296,6 +303,27 @@ func executeDevLoop(opts devLoopOptions) (devLoopReport, error) {
 	}
 	report.Next = fmt.Sprintf("bofbench export %s --for raw", shellQuote(build.Object))
 	return finish(nil)
+}
+
+func redactDevLoopReport(report devLoopReport, opts devLoopOptions) devLoopReport {
+	persisted := report
+	persisted.Args = append([]argpack.Item(nil), report.Args...)
+	var secrets []string
+	for _, index := range opts.SensitiveArgIndex {
+		if index < 0 || index >= len(persisted.Args) {
+			continue
+		}
+		if persisted.Args[index].Value != "" {
+			secrets = append(secrets, persisted.Args[index].Value)
+		}
+		persisted.Args[index].Value = "<redacted>"
+	}
+	if report.Run != nil {
+		redacted := (&runtimeRunContext{sensitiveOutputFields: opts.SensitiveFields, sensitiveValues: secrets}).redactResult(*report.Run)
+		persisted.Run = &redacted
+	}
+	persisted.Error = redactRuntimeLines([]string{persisted.Error}, nil, secrets)[0]
+	return persisted
 }
 
 func effectiveRuntime(requested string, analysis artifact.Analysis) string {

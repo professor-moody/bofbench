@@ -51,6 +51,43 @@ func TestPackFileArgumentReadsBytesForNativeAndKeepsPathForC2(t *testing.T) {
 	}
 }
 
+func TestSensitivePackArgumentsResolveEnvironmentAndFileWithoutLosingMetadata(t *testing.T) {
+	project := t.TempDir()
+	lock := packsvc.Lock{Schema: packsvc.LockSchema, SchemaVersion: packsvc.LockSchemaVersion, Packs: []packsvc.LockRecord{{
+		ID: "pfx", Qualified: "internal/pfx", Catalog: "internal", Version: "1", SHA256: "sha",
+		Arguments: []packsvc.Argument{{Name: "password", Type: "wstring", Required: true, Sensitive: true}},
+	}}}
+	data, _ := json.Marshal(lock)
+	if err := os.WriteFile(filepath.Join(project, packsvc.LockName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BOFBENCH_TEST_SECRET", "environment-secret")
+	resolved, err := resolveRunArguments(project, []string{"password=@env:BOFBENCH_TEST_SECRET"}, nil)
+	if err != nil || !reflect.DeepEqual(resolved.CLIValues, []string{"environment-secret"}) || !reflect.DeepEqual(resolved.Sensitive, []bool{true}) {
+		t.Fatalf("environment resolution = %+v err=%v", resolved, err)
+	}
+	secretPath := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secretPath, []byte("file-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err = resolveRunArguments(project, []string{"password=@file:" + secretPath}, nil)
+	if err != nil || resolved.CLIValues[0] != "file-secret" || resolved.Tokens[0] != "Z:file-secret" {
+		t.Fatalf("file resolution = %+v err=%v", resolved, err)
+	}
+}
+
+func TestCredentialProjectsSelectInteractiveLabContext(t *testing.T) {
+	project := t.TempDir()
+	lock := packsvc.Lock{Schema: packsvc.LockSchema, SchemaVersion: packsvc.LockSchemaVersion, Packs: []packsvc.LockRecord{{ID: "credential-read", Qualified: "internal/credential-read"}}}
+	data, _ := json.Marshal(lock)
+	if err := os.WriteFile(filepath.Join(project, packsvc.LockName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !requiresInteractiveLabSession(project) {
+		t.Fatal("credential project did not select the interactive Windows session")
+	}
+}
+
 func TestCobaltAutomationUsesTypedArgumentsWithoutCredentials(t *testing.T) {
 	script, types, err := cobaltAutomationScript("beacon-1", `C:\work\demo.o`, "go", []string{"z:hello", "i:7"}, []string{"hello", "7"})
 	if err != nil {

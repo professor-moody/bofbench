@@ -262,6 +262,46 @@ var behaviorRules = []chainRule{
 		effects: []string{"writes system state"}, needs: []string{"an exact task name", "task deletion rights"}, requiredStrings: []string{"[scheduled-task-cleanup]"},
 		steps: []chainRuleStep{{action: "launch scheduled-task removal", apis: []string{"createprocessa", "createprocessw"}}},
 	},
+	{
+		id: "security_package_inventory", name: "Windows authentication-package inventory", summary: "Enumerate installed SSPI authentication and security-support packages.",
+		confidence: "confirmed primitive", effects: []string{"reads authentication package metadata"}, needs: []string{"local SSPI availability", "a result limit"},
+		steps: []chainRuleStep{{action: "enumerate security packages", apis: []string{"enumeratesecuritypackagesa", "enumeratesecuritypackagesw"}}},
+	},
+	{
+		id: "certificate_store_inventory", name: "Certificate-store inventory", summary: "Open a Windows certificate store and enumerate identity, validity, thumbprint, and private-key metadata.",
+		effects: []string{"reads certificate metadata", "reads private-key availability metadata"}, needs: []string{"a certificate store scope and name", "store read access"},
+		steps: []chainRuleStep{{action: "open certificate store", apis: []string{"certopenstore", "certopensystemstorea", "certopensystemstorew"}}, {action: "enumerate certificates", apis: []string{"certenumcertificatesinstore"}}, {action: "inspect certificate properties", apis: []string{"certgetcertificatecontextproperty", "certgetnamestringa", "certgetnamestringw"}}},
+	},
+	{
+		id: "logon_session_details", name: "Logon-session context inventory", summary: "Enumerate logon identifiers and resolve account, session, logon type, and authentication-package context.",
+		effects: []string{"reads security context metadata"}, needs: []string{"visibility of the selected logon session", "a result limit"},
+		steps: []chainRuleStep{{action: "enumerate logon identifiers", apis: []string{"lsaenumeratelogonsessions"}}, {action: "read logon-session data", apis: []string{"lsagetlogonsessiondata"}}},
+	},
+	{
+		id: "kerberos_cache_inventory", name: "Kerberos ticket-cache inventory", summary: "Connect to LSA, resolve the Kerberos package, and request ticket-cache metadata.",
+		effects: []string{"reads authentication cache metadata"}, needs: []string{"a visible logon context", "Kerberos package availability"},
+		steps: []chainRuleStep{{action: "connect to LSA", apis: []string{"lsaconnectuntrusted", "lsaregisterlogonprocess"}}, {action: "resolve Kerberos package", apis: []string{"lsalookupauthenticationpackage"}}, {action: "query ticket cache", apis: []string{"lsacallauthenticationpackage"}}},
+	},
+	{
+		id: "vault_inventory", name: "Windows Vault metadata inventory", summary: "Enumerate available Vaults and list bounded stored-item metadata.",
+		effects: []string{"reads credential metadata"}, needs: []string{"current-user Vault access", "a result limit"},
+		steps: []chainRuleStep{{action: "enumerate Vaults", apis: []string{"vaultenumeratevaults"}}, {action: "open selected Vault", apis: []string{"vaultopenvault"}}, {action: "enumerate Vault items", apis: []string{"vaultenumerateitems"}}},
+	},
+	{
+		id: "vault_exact_read", name: "Exact Windows Vault secret read", summary: "Open one Vault, identify an exact resource and identity, and request its stored authenticator.",
+		effects: []string{"accesses credential material"}, needs: []string{"an exact Vault GUID", "an exact resource and identity", "current-user Vault access", "an output byte limit"},
+		steps: []chainRuleStep{{action: "open selected Vault", apis: []string{"vaultopenvault"}}, {action: "locate exact item", apis: []string{"vaultenumerateitems"}}, {action: "read item authenticator", apis: []string{"vaultgetitem"}}},
+	},
+	{
+		id: "dpapi_file_reprotect", name: "DPAPI material re-protection", summary: "Recover one protected blob, protect it under a selected DPAPI scope, and write the new blob.",
+		effects: []string{"reads protected material", "writes a protected file"}, needs: []string{"matching source DPAPI context", "an output path", "a target DPAPI scope"},
+		steps: []chainRuleStep{{action: "read protected blob", apis: []string{"readfile", "ntreadfile"}}, {action: "recover protected material", apis: []string{"cryptunprotectdata"}}, {action: "protect for selected scope", apis: []string{"cryptprotectdata"}}, {action: "write protected output", apis: []string{"writefile", "ntwritefile"}}},
+	},
+	{
+		id: "certificate_pfx_export", name: "Selected certificate and private-key PFX export", summary: "Select an exact certificate, export its available private key into a PFX blob, and write one exact file.",
+		effects: []string{"accesses private-key material", "writes a PFX file"}, needs: []string{"an exact certificate thumbprint", "an exportable private key", "a PFX password", "an output path"},
+		steps: []chainRuleStep{{action: "open certificate store", apis: []string{"certopenstore", "certopensystemstorea", "certopensystemstorew"}}, {action: "select certificate", apis: []string{"certfindcertificateinstore"}}, {action: "export certificate and key", apis: []string{"pfxexportcertstoreex"}}, {action: "write PFX file", apis: []string{"writefile", "ntwritefile"}}},
+	},
 }
 
 func enrichAnalysis(path string, analysis *Analysis) {

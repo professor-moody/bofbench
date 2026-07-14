@@ -9,6 +9,7 @@ import (
 
 	"bofbench/internal/argpack"
 	packsvc "bofbench/internal/pack"
+	"golang.org/x/term"
 )
 
 type resolvedRunArguments struct {
@@ -16,6 +17,7 @@ type resolvedRunArguments struct {
 	CLIValues []string
 	Names     []string
 	Optional  []bool
+	Sensitive []bool
 }
 
 func resolveRunArguments(project string, named, legacy []string) (resolvedRunArguments, error) {
@@ -83,6 +85,12 @@ func resolveRunArguments(project string, named, legacy []string) (resolvedRunArg
 			}
 			continue
 		}
+		if definition.Sensitive {
+			value, err = resolveSensitiveArgument(definition.Name, value)
+			if err != nil {
+				return resolvedRunArguments{}, err
+			}
+		}
 		token, cliValue, err := packArgumentToken(definition.Type, value)
 		if err != nil {
 			return resolvedRunArguments{}, fmt.Errorf("argument %s: %w", definition.Name, err)
@@ -91,8 +99,47 @@ func resolveRunArguments(project string, named, legacy []string) (resolvedRunArg
 		result.CLIValues = append(result.CLIValues, cliValue)
 		result.Names = append(result.Names, definition.Name)
 		result.Optional = append(result.Optional, !definition.Required || definition.Default != "")
+		result.Sensitive = append(result.Sensitive, definition.Sensitive)
 	}
 	return result, nil
+}
+
+func resolveSensitiveArgument(name, value string) (string, error) {
+	switch {
+	case value == "@prompt":
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			return "", fmt.Errorf("sensitive argument %s requires a terminal for @prompt", name)
+		}
+		fmt.Fprintf(os.Stderr, "%s: ", name)
+		data, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
+		if err != nil {
+			return "", fmt.Errorf("read sensitive argument %s: %w", name, err)
+		}
+		return string(data), nil
+	case strings.HasPrefix(value, "@env:"):
+		key := strings.TrimPrefix(value, "@env:")
+		if key == "" {
+			return "", fmt.Errorf("sensitive argument %s has an empty environment variable name", name)
+		}
+		resolved, ok := os.LookupEnv(key)
+		if !ok {
+			return "", fmt.Errorf("sensitive argument %s environment variable %s is not set", name, key)
+		}
+		return resolved, nil
+	case strings.HasPrefix(value, "@file:"):
+		path := strings.TrimPrefix(value, "@file:")
+		if path == "" {
+			return "", fmt.Errorf("sensitive argument %s has an empty file path", name)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read sensitive argument %s: %w", name, err)
+		}
+		return strings.TrimSuffix(strings.TrimSuffix(string(data), "\n"), "\r"), nil
+	default:
+		return value, nil
+	}
 }
 
 func packArgumentToken(argumentType, value string) (string, string, error) {

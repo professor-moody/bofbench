@@ -29,7 +29,7 @@ bofbench pack prove internal/section-map-inject --via lab --lab devbox
 bofbench pack prove --all --catalog internal --via sliver --lab dedicated
 ```
 
-Proof cases that declare cleanup run the cleanup companion. BOFBench independently verifies the named Startup-folder artifact is absent after that proof.
+Proof cases that declare cleanup run the cleanup companion. Declarative state checks independently verify exact files, registry values, services, tasks, credentials, certificates, DPAPI blobs, and PFX files after action and cleanup.
 
 ## Parameterized behavior
 
@@ -42,6 +42,21 @@ bofbench run bofs/portable-survey --via lab --lab dedicated \
 ```
 
 Supported BOF types are `string`, `wstring`, `int`, `short`, `bytes`, and `file`. A bytes value accepts base64 or `@path`; a file value reads the selected file for native BOF packing while preserving the path for C2 clients.
+
+Sensitive inputs can come from a hidden prompt, an environment variable, or a protected file:
+
+```bash
+bofbench run bofs/pfx-export --via lab --lab devbox \
+  --arg password=@prompt
+
+bofbench run bofs/pfx-export --via lab --lab devbox \
+  --arg password=@env:BOFBENCH_PFX_PASSWORD
+
+bofbench run bofs/pfx-export --via lab --lab devbox \
+  --arg password=@file:/secure/pfx-password.txt
+```
+
+Plain inline values remain compatible. Sensitive inputs are never printed. Sensitive structured output remains visible in the live terminal, but its declared fields are replaced with `<redacted>` in developer reports, lab reports, runtime receipts, and proof reports.
 
 ## Public and private catalogs
 
@@ -74,7 +89,7 @@ Every external pack uses strict `pack.json` metadata and source files that canno
 ```json
 {
   "schema": "bofbench.pack",
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "example",
   "version": "1.0.0",
   "title": "Example",
@@ -86,7 +101,11 @@ Every external pack uses strict `pack.json` metadata and source files that canno
   "architecture": ["x64", "x86"],
   "privilege": "operator rights",
   "network": "none",
-  "arguments": [{"name": "target_pid", "type": "int", "required": true}],
+  "arguments": [
+    {"name": "target_pid", "type": "int", "required": true},
+    {"name": "password", "type": "wstring", "required": true, "sensitive": true},
+    {"name": "output_path", "type": "wstring", "required": true}
+  ],
   "source": {"header_fragments": ["example.h"], "calls": ["example($PARSER)"]},
   "expected_analysis": ["selected_process_access"],
   "analysis_signatures": [{
@@ -103,12 +122,15 @@ Every external pack uses strict `pack.json` metadata and source files that canno
     "arguments": {"target_pid": "$TARGET_PID"},
     "expect": {"tag": "example", "fields": {"status": "complete"}}
   }],
-  "output_fields": ["target_pid", "status"],
+  "output_fields": ["target_pid", "hex", "status"],
+  "sensitive_output_fields": ["hex"],
+  "cleanup_pack": "file-remove",
+  "cleanup_arguments": {"path": "$arg.output_path"},
   "target_support": ["native", "lab", "sliver", "cobaltstrike"]
 }
 ```
 
-Schema version 1 remains readable. Version 2 adds optional `analysis_signatures` and `proof_cases`; manifests are not silently rewritten. Supported proof placeholders include target PID/thread, memory canary, exact canary/DPAPI paths, lab host, temporary run root, and run ID.
+Schema versions 1 and 2 remain readable and are not silently rewritten. Version 2 adds declarative analyzer signatures and proof cases. Version 3 adds sensitive arguments/output, cleanup argument mapping, payload hash verification, independent state checks, and proof-specific cleanup steps. Supported proof placeholders cover the disposable target PID/thread/handle, memory and file canaries, Credential Manager, Vault, DPAPI and certificate fixtures, lab host, temporary run root, generated proof secret, and run ID.
 
 Validate and generate reference documentation directly from the contracts:
 

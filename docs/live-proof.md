@@ -109,7 +109,7 @@ bofbench lab target deploy --lab dedicated
 bofbench lab target status --lab dedicated
 ```
 
-The status output provides the `BOFBenchTarget` PID, alertable thread ID, memory-canary address/size/hash, file canary, Credential Manager fixture, DPAPI paths, and WMI marker path. Use those exact values rather than a critical process or real credential material.
+The status output provides the `BOFBenchTarget` PID, alertable thread ID, known handle, memory-canary address/size/hash, file canary, Credential Manager fixture, DPAPI paths, Vault item identifiers/hash, generated certificate thumbprint, service fixture, and WMI marker path. Use those exact values rather than a critical process or real credential material.
 
 Continue with [Deep Capability Workflows](deep-capabilities.md) for bounded memory, handle, token, Credential Manager, DPAPI, WMI, and Sliver examples.
 

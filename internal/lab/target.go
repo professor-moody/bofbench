@@ -19,6 +19,7 @@ type TargetState struct {
 	PID                 int    `json:"pid"`
 	AlertableTID        uint32 `json:"alertable_tid"`
 	NamedPipe           string `json:"named_pipe,omitempty"`
+	KnownHandle         string `json:"known_handle,omitempty"`
 	User                string `json:"user"`
 	CanaryFile          string `json:"canary_file"`
 	CanaryFileSHA256    string `json:"canary_file_sha256,omitempty"`
@@ -30,29 +31,38 @@ type TargetState struct {
 }
 
 type TargetFixtureState struct {
-	Schema             string `json:"schema"`
-	SchemaVersion      int    `json:"schema_version"`
-	User               string `json:"user"`
-	CredentialTarget   string `json:"credential_target"`
-	CredentialSHA256   string `json:"credential_sha256"`
-	CredentialSize     int    `json:"credential_size"`
-	DPAPIUserPath      string `json:"dpapi_user_path"`
-	DPAPIUserSHA256    string `json:"dpapi_user_sha256"`
-	DPAPIMachinePath   string `json:"dpapi_machine_path"`
-	DPAPIMachineSHA256 string `json:"dpapi_machine_sha256"`
-	WMIMarkerPath      string `json:"wmi_marker_path"`
-	CreatedAt          string `json:"created_at"`
+	Schema                string `json:"schema"`
+	SchemaVersion         int    `json:"schema_version"`
+	User                  string `json:"user"`
+	CredentialTarget      string `json:"credential_target"`
+	CredentialSHA256      string `json:"credential_sha256"`
+	CredentialSize        int    `json:"credential_size"`
+	DPAPIUserPath         string `json:"dpapi_user_path"`
+	DPAPIUserSHA256       string `json:"dpapi_user_sha256"`
+	DPAPIMachinePath      string `json:"dpapi_machine_path"`
+	DPAPIMachineSHA256    string `json:"dpapi_machine_sha256"`
+	WMIMarkerPath         string `json:"wmi_marker_path"`
+	VaultGUID             string `json:"vault_guid,omitempty"`
+	VaultResource         string `json:"vault_resource,omitempty"`
+	VaultIdentity         string `json:"vault_identity,omitempty"`
+	VaultSHA256           string `json:"vault_sha256,omitempty"`
+	VaultSize             int    `json:"vault_size,omitempty"`
+	CertificateStore      string `json:"certificate_store,omitempty"`
+	CertificateSubject    string `json:"certificate_subject,omitempty"`
+	CertificateThumbprint string `json:"certificate_thumbprint,omitempty"`
+	CreatedAt             string `json:"created_at"`
 }
 
 type TargetReport struct {
-	Operation string             `json:"operation"`
-	Status    string             `json:"status"`
-	Profile   string             `json:"profile"`
-	Host      string             `json:"host"`
-	Service   string             `json:"service"`
-	State     TargetState        `json:"state,omitempty"`
-	Fixtures  TargetFixtureState `json:"fixtures,omitempty"`
-	Error     string             `json:"error,omitempty"`
+	Operation     string             `json:"operation"`
+	Status        string             `json:"status"`
+	Profile       string             `json:"profile"`
+	Host          string             `json:"host"`
+	Service       string             `json:"service"`
+	ServiceBinary string             `json:"service_binary,omitempty"`
+	State         TargetState        `json:"state,omitempty"`
+	Fixtures      TargetFixtureState `json:"fixtures,omitempty"`
+	Error         string             `json:"error,omitempty"`
 }
 
 func DeployTarget(ctx context.Context, name string, profile Profile, repository string) (TargetReport, error) {
@@ -75,13 +85,18 @@ func DeployTarget(ctx context.Context, name string, profile Profile, repository 
 	}
 	defer os.RemoveAll(directory)
 	executable := filepath.Join(directory, "bofbench-target.exe")
-	build := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", executable, "./cmd/bofbench-target")
-	build.Dir = repository
-	build.Env = append(os.Environ(), "GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0")
-	if output, err := build.CombinedOutput(); err != nil {
-		return report, fmt.Errorf("build disposable Windows target: %w: %s", err, strings.TrimSpace(string(output)))
+	serviceFixture := filepath.Join(directory, "bofbench-service-fixture.exe")
+	for outputPath, source := range map[string]string{executable: "./cmd/bofbench-target", serviceFixture: "./cmd/bofbench-service-fixture"} {
+		build := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", outputPath, source)
+		build.Dir = repository
+		build.Env = append(os.Environ(), "GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0")
+		if output, err := build.CombinedOutput(); err != nil {
+			return report, fmt.Errorf("build disposable Windows target %s: %w: %s", source, err, strings.TrimSpace(string(output)))
+		}
 	}
 	remoteExecutable := windowsJoin(profile.RemoteRoot, "target", "bofbench-target.exe")
+	remoteServiceFixture := windowsJoin(profile.RemoteRoot, "target", "bofbench-service-fixture.exe")
+	report.ServiceBinary = remoteServiceFixture
 	if _, stderr, err := remoteExecute(ctx, opts, fmt.Sprintf(`New-Item -ItemType Directory -Force -Path %s | Out-Null`, powerShellQuote(windowsDir(remoteExecutable)))); err != nil {
 		return report, fmt.Errorf("prepare disposable target directory: %w: %s", err, boundedText(string(stderr), 2048))
 	}
@@ -91,6 +106,9 @@ func DeployTarget(ctx context.Context, name string, profile Profile, repository 
 	}
 	if _, stderr, err := remoteUploadFile(ctx, opts, executable, remoteExecutable); err != nil {
 		return report, fmt.Errorf("deploy disposable target: %w: %s", err, boundedText(string(stderr), 2048))
+	}
+	if _, stderr, err := remoteUploadFile(ctx, opts, serviceFixture, remoteServiceFixture); err != nil {
+		return report, fmt.Errorf("deploy disposable service fixture: %w: %s", err, boundedText(string(stderr), 2048))
 	}
 	statePath := windowsJoin(profile.RemoteRoot, "target", "target.json")
 	script := fmt.Sprintf(`$ErrorActionPreference='Stop'; Remove-Item -LiteralPath %s -Force -ErrorAction SilentlyContinue; New-Service -Name %s -BinaryPathName %s -DisplayName 'BOFBench disposable capability target' -StartupType Manual | Out-Null; Start-Service -Name %s; $deadline=(Get-Date).AddSeconds(15); do { Start-Sleep -Milliseconds 250 } until ((Test-Path %s) -or (Get-Date) -gt $deadline); if(-not (Test-Path %s)){throw 'target state file was not created'}; Get-Content -LiteralPath %s -Raw`, powerShellQuote(statePath), powerShellQuote(TargetServiceName), powerShellQuote(remoteExecutable), powerShellQuote(TargetServiceName), powerShellQuote(statePath), powerShellQuote(statePath), powerShellQuote(statePath))
@@ -119,6 +137,7 @@ func TargetStatus(ctx context.Context, name string, profile Profile) (TargetRepo
 	profile = NormalizeProfile(profile)
 	opts, resolveErr := ResolveRemoteOptions(ctx, name, profile)
 	report := TargetReport{Operation: "status", Status: "fail", Profile: name, Host: opts.Host, Service: TargetServiceName}
+	report.ServiceBinary = windowsJoin(profile.RemoteRoot, "target", "bofbench-service-fixture.exe")
 	if resolveErr != nil {
 		return report, resolveErr
 	}
@@ -166,7 +185,7 @@ func RemoveTarget(ctx context.Context, name string, profile Profile) (TargetRepo
 
 func TargetReportText(report TargetReport) string {
 	if report.Status == "pass" && report.Operation != "remove" {
-		text := fmt.Sprintf("BOFBench target %s\nprofile     %s\ncomputer    %s\nservice     %s\npid         %d\nalertable   tid=%d\nnamed pipe  %s\nmemory      address=%s bytes=%d sha256=%s\nfile        %s\ncredential  %s user=%s bytes=%d\ndpapi user  %s\ndpapi host  %s\nwmi marker  %s\n", strings.ToUpper(report.Status), report.Profile, report.Host, report.Service, report.State.PID, report.State.AlertableTID, report.State.NamedPipe, report.State.MemoryCanaryAddress, report.State.MemoryCanarySize, report.State.MemoryCanarySHA256, report.State.CanaryFile, report.Fixtures.CredentialTarget, report.Fixtures.User, report.Fixtures.CredentialSize, report.Fixtures.DPAPIUserPath, report.Fixtures.DPAPIMachinePath, report.Fixtures.WMIMarkerPath)
+		text := fmt.Sprintf("BOFBench target %s\nprofile     %s\ncomputer    %s\nservice     %s\npid         %d\nalertable   tid=%d\nknown handle %s\nnamed pipe  %s\nmemory      address=%s bytes=%d sha256=%s\nfile        %s\ncredential  %s user=%s bytes=%d\ndpapi user  %s\ndpapi host  %s\nvault       %s resource=%s identity=%s bytes=%d\ncertificate store=%s thumbprint=%s subject=%s\nwmi marker  %s\n", strings.ToUpper(report.Status), report.Profile, report.Host, report.Service, report.State.PID, report.State.AlertableTID, report.State.KnownHandle, report.State.NamedPipe, report.State.MemoryCanaryAddress, report.State.MemoryCanarySize, report.State.MemoryCanarySHA256, report.State.CanaryFile, report.Fixtures.CredentialTarget, report.Fixtures.User, report.Fixtures.CredentialSize, report.Fixtures.DPAPIUserPath, report.Fixtures.DPAPIMachinePath, report.Fixtures.VaultGUID, report.Fixtures.VaultResource, report.Fixtures.VaultIdentity, report.Fixtures.VaultSize, report.Fixtures.CertificateStore, report.Fixtures.CertificateThumbprint, report.Fixtures.CertificateSubject, report.Fixtures.WMIMarkerPath)
 		if report.State.FixtureError != "" {
 			text += fmt.Sprintf("fixtures    unavailable: %s\n", report.State.FixtureError)
 		}

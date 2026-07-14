@@ -178,6 +178,17 @@ func packReferenceMarkdown(items []packsvc.Resolved) string {
 		fmt.Fprintf(&b, "- Version: `%s`\n", document.Version)
 		if document.CleanupPack != "" {
 			fmt.Fprintf(&b, "- Cleanup: `%s`\n", document.CleanupPack)
+			if len(document.CleanupArguments) > 0 {
+				var mappings []string
+				for target, source := range document.CleanupArguments {
+					mappings = append(mappings, target+" ← "+strings.TrimPrefix(source, "$arg."))
+				}
+				sort.Strings(mappings)
+				fmt.Fprintf(&b, "- Cleanup arguments: `%s`\n", strings.Join(mappings, "`, `"))
+			}
+		}
+		if len(document.SensitiveOutputFields) > 0 {
+			fmt.Fprintf(&b, "- Stored-output redaction: `%s`\n", strings.Join(document.SensitiveOutputFields, "`, `"))
 		}
 		if len(document.AnalysisSignatures) > 0 {
 			var signatures []string
@@ -188,19 +199,30 @@ func packReferenceMarkdown(items []packsvc.Resolved) string {
 		}
 		if len(document.ProofCases) > 0 {
 			var proofs []string
+			var checks []string
 			for _, proof := range document.ProofCases {
 				proofs = append(proofs, proof.ID+" ("+strings.Join(proof.Via, ", ")+")")
+				for _, check := range proof.StateChecks {
+					checks = append(checks, check.Phase+":"+check.Kind+"="+check.Expect)
+				}
 			}
 			fmt.Fprintf(&b, "- Live proofs: %s\n", strings.Join(proofs, "; "))
+			if len(checks) > 0 {
+				fmt.Fprintf(&b, "- Independent state checks: `%s`\n", strings.Join(checks, "`, `"))
+			}
 		}
 		if len(document.Arguments) > 0 {
-			b.WriteString("\n| Argument | Type | Required | Default | Description |\n| --- | --- | --- | --- | --- |\n")
+			b.WriteString("\n| Argument | Type | Required | Sensitive | Default | Description |\n| --- | --- | --- | --- | --- | --- |\n")
 			for _, argument := range document.Arguments {
 				required := "no"
 				if argument.Required && argument.Default == "" {
 					required = "yes"
 				}
-				fmt.Fprintf(&b, "| `%s` | `%s` | %s | `%s` | %s |\n", argument.Name, argument.Type, required, argument.Default, strings.ReplaceAll(argument.Description, "|", "\\|"))
+				sensitive := "no"
+				if argument.Sensitive {
+					sensitive = "yes"
+				}
+				fmt.Fprintf(&b, "| `%s` | `%s` | %s | %s | `%s` | %s |\n", argument.Name, argument.Type, required, sensitive, argument.Default, strings.ReplaceAll(argument.Description, "|", "\\|"))
 			}
 		}
 		b.WriteString("\n")

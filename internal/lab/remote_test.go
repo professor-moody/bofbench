@@ -7,7 +7,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	runtimesvc "bofbench/internal/runtime"
 )
+
+func TestRemoteEvidenceRedactsSensitiveFieldsAndEventMessages(t *testing.T) {
+	report := RemoteRunReport{Arguments: []string{"Z:fixture-password"}, RemoteDev: &RemoteDevReport{Run: &runtimesvc.Result{
+		Output: []string{"[vault-read-data] hex=736563726574"},
+		Events: []runtimesvc.Event{{Type: "beacon_output", Message: "[vault-read-data] hex=736563726574"}},
+	}}}
+	persisted := redactRemoteRunReport(report, RemoteRunOptions{SensitiveArguments: []bool{true}, SensitiveOutputFields: []string{"hex"}, SensitiveValues: []string{"fixture-password"}})
+	if persisted.Arguments[0] != "Z:<redacted>" || persisted.RemoteDev.Run.Output[0] != "[vault-read-data] hex=<redacted>" || persisted.RemoteDev.Run.Events[0].Message != "[vault-read-data] hex=<redacted>" {
+		t.Fatalf("persisted report was not fully redacted: %+v", persisted)
+	}
+}
 
 func TestRemoteStatusPersistsDoctorAndLoaderState(t *testing.T) {
 	withRemoteTestWorkspace(t)

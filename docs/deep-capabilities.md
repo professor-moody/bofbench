@@ -20,6 +20,8 @@ Status prints the exact values used by later commands:
 - exact file-canary path and SHA-256;
 - Credential Manager target name, owner, size, and expected SHA-256;
 - user- and machine-scoped DPAPI blob paths and expected plaintext hashes;
+- exact Windows Vault GUID, resource, identity, secret size, and expected SHA-256;
+- generated exportable certificate store, subject, and thumbprint;
 - a unique WMI marker path.
 
 The generated manifest contains identifiers, paths, limits, and hashes—not plaintext fixture values.
@@ -51,6 +53,73 @@ bofbench pack prove internal/startup-folder --via lab --lab devbox
 ```
 
 The section-map proof uses a one-byte `RET` fixture against `BOFBenchTarget`. The Startup-folder proof uses a unique `BOFBench-<run-id>.cmd`, invokes its declared cleanup companion, and verifies the exact leaf is absent through the lab transport.
+
+## Authentication inventory and exact recovery
+
+The public catalog exposes bounded authentication metadata without returning secrets:
+
+```bash
+bofbench new auth-survey \
+  --pack security-package-inventory,certificate-store-inventory
+bofbench build bofs/auth-survey
+bofbench analyze bofs/auth-survey
+bofbench run bofs/auth-survey --via lab --lab devbox \
+  --arg name_filter=Negotiate --arg result_limit=16 \
+  --arg scope=current_user --arg store=MY \
+  --arg subject_filter=BOFBench --arg result_limit=16
+```
+
+For focused use, compose the two packs into separate projects when their shared argument names need different values. `security-package-inventory` reports SSPI package names, flags, comments, and maximum token sizes. `certificate-store-inventory` reports the selected store's subjects, issuers, validity, thumbprints, and private-key availability.
+
+The private catalog separates metadata from exact recovery:
+
+```bash
+bofbench pack prove internal/logon-session-details --via lab --lab devbox
+bofbench pack prove internal/kerberos-cache-inventory --via lab --lab devbox
+bofbench pack prove internal/vault-inventory --via lab --lab devbox
+bofbench pack prove internal/vault-read --via lab --lab devbox
+```
+
+A standalone machine may return zero Kerberos tickets; that is a successful bounded query. `vault-read` requires the exact GUID, resource, identity, and byte limit. BOFBench verifies recovered chunks in memory against the fixture SHA-256, then redacts the `hex` field from every stored report.
+
+Direct Vault usage remains the ordinary workflow:
+
+```bash
+bofbench new vault-read --pack internal/vault-read
+bofbench analyze bofs/vault-read
+bofbench run bofs/vault-read --via lab --lab devbox \
+  --arg vault_guid='<VAULT_GUID>' \
+  --arg resource='<VAULT_RESOURCE>' \
+  --arg identity='<VAULT_IDENTITY>' \
+  --arg max_bytes=128
+```
+
+The recovered bytes are visible during the command and absent from the resulting receipt.
+
+## Re-protect DPAPI material and export one PFX
+
+Both stateful authentication packs name `internal/file-remove` as their cleanup companion. Their action arguments map `output_path` to the cleanup pack's `path` automatically:
+
+```bash
+bofbench new dpapi-reprotect --pack internal/dpapi-reprotect-file
+bofbench run bofs/dpapi-reprotect --via lab --lab devbox \
+  --arg input_path='<DPAPI_USER_PATH>' \
+  --arg output_path='C:\bofbench\proof\reprotected.bin' \
+  --arg scope=current_user
+bofbench run bofs/dpapi-reprotect --via lab --lab devbox --cleanup \
+  --arg output_path='C:\bofbench\proof\reprotected.bin'
+
+bofbench new pfx-export --pack internal/certificate-pfx-export
+bofbench run bofs/pfx-export --via lab --lab devbox \
+  --arg scope=current_user --arg store=MY \
+  --arg thumbprint='<CERT_THUMBPRINT>' \
+  --arg output_path='C:\bofbench\proof\fixture.pfx' \
+  --arg password=@prompt --arg include_chain=0
+bofbench run bofs/pfx-export --via lab --lab devbox --cleanup \
+  --arg output_path='C:\bofbench\proof\fixture.pfx'
+```
+
+`pack prove` independently decrypts the generated DPAPI blob and compares its plaintext hash, or opens the PFX and confirms the expected certificate and private key, before invoking exact-file cleanup and checking absence.
 
 ## Read an exact memory canary
 
@@ -106,7 +175,7 @@ bofbench run bofs/credential-read --via lab --lab devbox \
   --arg target_name=BOFBench-LiveProof --arg max_bytes=128
 ```
 
-The first operation returns names, usernames, types, persistence, and sizes. The second requires one exact name and a byte limit. Compare the recovered bytes with the hash from `lab target status`; do not substitute a real credential entry.
+The first operation returns names, usernames, types, persistence, and sizes. The second requires one exact name and a byte limit. On SSH labs BOFBench quietly dispatches these two packs through the existing interactive Windows session so Credential Manager uses the correct logon context. Compare recovered bytes with the hash from `lab target status`; do not substitute a real credential entry.
 
 ## Recover a DPAPI fixture
 

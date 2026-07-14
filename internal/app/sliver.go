@@ -23,12 +23,15 @@ import (
 )
 
 type sliverOptions struct {
-	Client        string
-	SessionFilter string
-	Lab           string
-	Profiles      string
-	ProfileName   string
-	RemoteHost    string
+	Client                 string
+	SessionFilter          string
+	Lab                    string
+	Profiles               string
+	ProfileName            string
+	RemoteHost             string
+	SensitiveOutputFields  []string
+	SensitiveArgumentNames []string
+	SensitiveValues        []string
 }
 
 type sliverExtension struct {
@@ -226,6 +229,7 @@ func executeSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath,
 		receipt.ExitState = "error"
 		receipt.TimedOut = strings.Contains(strings.ToLower(receipt.Error), "timed out")
 	}
+	receipt = redactReceiptValues(receipt, opts.SensitiveOutputFields, opts.SensitiveArgumentNames, opts.SensitiveValues)
 	if err := writeJSON(receipt.ReceiptPath, receipt); err != nil {
 		return receipt, err
 	}

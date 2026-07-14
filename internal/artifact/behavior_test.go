@@ -1,9 +1,11 @@
 package artifact
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"bofbench/internal/coff"
@@ -203,6 +205,92 @@ func TestCredentialReadIsReportedAsConfirmedPrimitive(t *testing.T) {
 	chain := requireBehavior(t, chains, "credential_manager_read")
 	if chain.Confidence != "confirmed primitive" || len(chain.Steps) != 1 {
 		t.Fatalf("chain = %+v", chain)
+	}
+}
+
+func TestAuthenticationBehaviorRulesRequireCompleteFunctionLocalChains(t *testing.T) {
+	cases := []struct {
+		id   string
+		apis []string
+	}{
+		{"certificate_store_inventory", []string{"CRYPT32$CertOpenStore", "CRYPT32$CertEnumCertificatesInStore", "CRYPT32$CertGetCertificateContextProperty"}},
+		{"logon_session_details", []string{"SECUR32$LsaEnumerateLogonSessions", "SECUR32$LsaGetLogonSessionData"}},
+		{"kerberos_cache_inventory", []string{"SECUR32$LsaConnectUntrusted", "SECUR32$LsaLookupAuthenticationPackage", "SECUR32$LsaCallAuthenticationPackage"}},
+		{"vault_inventory", []string{"VAULTCLI$VaultEnumerateVaults", "VAULTCLI$VaultOpenVault", "VAULTCLI$VaultEnumerateItems"}},
+		{"vault_exact_read", []string{"VAULTCLI$VaultOpenVault", "VAULTCLI$VaultEnumerateItems", "VAULTCLI$VaultGetItem"}},
+		{"dpapi_file_reprotect", []string{"KERNEL32$ReadFile", "CRYPT32$CryptUnprotectData", "CRYPT32$CryptProtectData", "KERNEL32$WriteFile"}},
+		{"certificate_pfx_export", []string{"CRYPT32$CertOpenStore", "CRYPT32$CertFindCertificateInStore", "CRYPT32$PFXExportCertStoreEx", "KERNEL32$WriteFile"}},
+	}
+	for _, test := range cases {
+		t.Run(test.id, func(t *testing.T) {
+			var relocations []Relocation
+			for _, api := range test.apis {
+				relocations = append(relocations, Relocation{Function: "go", Symbol: api})
+			}
+			chain := requireBehavior(t, inferBehaviorChains(relocations, nil), test.id)
+			if chain.Confidence != "strong chain" || len(chain.Steps) != len(test.apis) {
+				t.Fatalf("chain = %+v", chain)
+			}
+			missingFinal := inferBehaviorChains(relocations[:len(relocations)-1], nil)
+			for _, candidate := range missingFinal {
+				if candidate.ID == test.id {
+					t.Fatalf("incomplete API sequence produced %s: %+v", test.id, candidate)
+				}
+			}
+		})
+	}
+	primitive := requireBehavior(t, inferBehaviorChains([]Relocation{{Function: "go", Symbol: "SECUR32$EnumerateSecurityPackagesW"}}, nil), "security_package_inventory")
+	if primitive.Confidence != "confirmed primitive" {
+		t.Fatalf("SSPI primitive = %+v", primitive)
+	}
+}
+
+func TestTrustedSecAuthenticationCorpusMatchesX64X86Golden(t *testing.T) {
+	type expectedAnalysis struct {
+		Loader       string   `json:"loader"`
+		Capabilities []string `json:"capabilities"`
+		Chains       []string `json:"chains"`
+	}
+	type goldenCase struct {
+		Name string           `json:"name"`
+		X64  expectedAnalysis `json:"x64"`
+		X86  expectedAnalysis `json:"x86"`
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", "auth_corpus_golden.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []goldenCase
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	corpus := filepath.Join("..", "..", "arsenal", "trustedsec-sa-smoke", "SA")
+	if _, err := os.Stat(corpus); os.IsNotExist(err) {
+		t.Skip("local TrustedSec compatibility corpus is not installed")
+	}
+	for _, test := range cases {
+		t.Run(test.Name, func(t *testing.T) {
+			for arch, expected := range map[string]expectedAnalysis{"x64": test.X64, "x86": test.X86} {
+				analysis, err := Analyze(filepath.Join(corpus, test.Name, test.Name+"."+arch+".o"), "go")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var capabilities, chains []string
+				for _, capability := range analysis.Capabilities {
+					capabilities = append(capabilities, capability.ID)
+				}
+				for _, chain := range analysis.BehaviorChains {
+					chains = append(chains, chain.ID)
+				}
+				loader := ""
+				if analysis.LoaderCompatibility != nil {
+					loader = analysis.LoaderCompatibility.Status
+				}
+				if loader != expected.Loader || !slices.Equal(capabilities, expected.Capabilities) || !slices.Equal(chains, expected.Chains) {
+					t.Fatalf("%s analysis loader=%s capabilities=%v chains=%v; expected %+v", arch, loader, capabilities, chains, expected)
+				}
+			}
+		})
 	}
 }
 

@@ -1,0 +1,32 @@
+[
+  {
+    "name": "whoami",
+    "x64": {"loader": "compatible", "capabilities": ["identity_account_sid", "token_context"], "chains": []},
+    "x86": {"loader": "compatible", "capabilities": ["identity_account_sid", "token_context"], "chains": []}
+  },
+  {
+    "name": "get_dpapi_system",
+    "x64": {"loader": "compatible", "capabilities": ["registry_read", "token_context"], "chains": []},
+    "x86": {"loader": "compatible", "capabilities": ["registry_read", "token_context"], "chains": []}
+  },
+  {
+    "name": "adcs_enum",
+    "x64": {"loader": "compatible", "capabilities": ["dynamic_loading", "identity_account_sid"], "chains": []},
+    "x86": {"loader": "compatible_runtime_lookup", "capabilities": ["dynamic_loading", "identity_account_sid"], "chains": []}
+  },
+  {
+    "name": "get_session_info",
+    "x64": {"loader": "compatible", "capabilities": ["token_context"], "chains": []},
+    "x86": {"loader": "compatible", "capabilities": ["token_context"], "chains": []}
+  },
+  {
+    "name": "netloggedon2",
+    "x64": {"loader": "compatible", "capabilities": ["domain_context"], "chains": []},
+    "x86": {"loader": "compatible", "capabilities": ["domain_context"], "chains": []}
+  },
+  {
+    "name": "ldapsecuritycheck",
+    "x64": {"loader": "compatible", "capabilities": ["domain_context"], "chains": []},
+    "x86": {"loader": "compatible", "capabilities": ["domain_context"], "chains": []}
+  }
+]

@@ -3,6 +3,7 @@ package lab
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,8 +12,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"bofbench/internal/buildsys"
 	"bofbench/internal/evidence"
@@ -84,14 +87,19 @@ type RemoteSyncReport struct {
 
 type RemoteRunOptions struct {
 	RemoteOptions
-	Compiler  string
-	Arch      string
-	Runtime   string
-	Profile   string
-	NoSync    bool
-	Args      []string
-	BuildMode string
-	TimeoutMS int
+	Compiler               string
+	Arch                   string
+	Runtime                string
+	Profile                string
+	NoSync                 bool
+	Args                   []string
+	BuildMode              string
+	TimeoutMS              int
+	SensitiveArguments     []bool
+	SensitiveArgumentNames []string
+	SensitiveOutputFields  []string
+	SensitiveValues        []string
+	Interactive            bool
 }
 
 type RemoteRunReport struct {
@@ -373,6 +381,7 @@ func RemoteRun(ctx context.Context, project string, opts RemoteRunOptions) (Remo
 		LabProfile: opts.ProfileName, Host: opts.Host, RemoteRoot: opts.RemoteRoot, Project: project, Compiler: opts.Compiler, Arch: opts.Arch, Runtime: opts.Runtime, Profile: opts.Profile, BuildMode: opts.BuildMode, TimeoutMS: opts.TimeoutMS, Arguments: append([]string(nil), opts.Args...),
 		StartedAt: start.UTC().Format(time.RFC3339Nano), EvidencePath: filepath.Join(runDir, "lab-run.json"), MarkdownPath: filepath.Join(runDir, "lab-run.md"),
 	}
+	report.Arguments = redactRemoteArgumentTokens(report.Arguments, opts.SensitiveArguments)
 	identityStart := time.Now()
 	if computer, identityErr := detectRemoteComputer(ctx, opts.RemoteOptions); identityErr == nil {
 		report.RemoteComputer = computer
@@ -406,11 +415,13 @@ func RemoteRun(ctx context.Context, project string, opts RemoteRunOptions) (Remo
 			report.Error = runErr.Error()
 		}
 		finishRemoteRun(&report, start)
-		persistRemoteRuntimeReceipt(&report, runDir, runErr)
-		if persistErr := writeRemoteJSON(report.EvidencePath, report); persistErr != nil && runErr == nil {
+		persisted := redactRemoteRunReport(report, opts)
+		persistRemoteRuntimeReceipt(&persisted, runDir, runErr, opts.SensitiveArgumentNames, opts.SensitiveOutputFields)
+		report.Receipt = persisted.Receipt
+		if persistErr := writeRemoteJSON(report.EvidencePath, persisted); persistErr != nil && runErr == nil {
 			runErr = persistErr
 		}
-		if persistErr := os.WriteFile(report.MarkdownPath, []byte(RemoteRunMarkdown(report)), 0o644); persistErr != nil && runErr == nil {
+		if persistErr := os.WriteFile(report.MarkdownPath, []byte(RemoteRunMarkdown(persisted)), 0o644); persistErr != nil && runErr == nil {
 			runErr = persistErr
 		}
 		return report, runErr
@@ -448,6 +459,14 @@ func RemoteRun(ctx context.Context, project string, opts RemoteRunOptions) (Remo
 		for _, token := range opts.Args {
 			args = append(args, "--arg-token", token)
 		}
+		for index, sensitive := range opts.SensitiveArguments {
+			if sensitive {
+				args = append(args, "--sensitive-arg-index", strconv.Itoa(index))
+			}
+		}
+		for _, field := range opts.SensitiveOutputFields {
+			args = append(args, "--sensitive-output-field", field)
+		}
 		quotedArgs := make([]string, 0, len(args))
 		for _, arg := range args {
 			quotedArgs = append(quotedArgs, powerShellQuote(arg))
@@ -455,6 +474,9 @@ func RemoteRun(ctx context.Context, project string, opts RemoteRunOptions) (Remo
 		loaderX64 := windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader.exe")
 		loaderX86 := windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader-x86.exe")
 		script := fmt.Sprintf(`$ErrorActionPreference='Continue'; Set-Location %s; $env:BOFBENCH_LOADER=%s; $env:BOFBENCH_LOADER_X86=%s; & %s %s`, powerShellQuote(report.RemoteRunPath), powerShellQuote(loaderX64), powerShellQuote(loaderX86), powerShellQuote(opts.Executable), strings.Join(quotedArgs, " "))
+		if opts.Interactive {
+			script = interactiveExecutionScript(report, opts, quotedArgs, loaderX64, loaderX86)
+		}
 		eventStart := time.Now()
 		stdout, stderr, devErr := remoteExecute(ctx, opts.RemoteOptions, script)
 		report.TransportEvents = append(report.TransportEvents, transportEvent(opts.Transport+"-dev", eventStart, devErr, string(stderr)))
@@ -485,14 +507,35 @@ func RemoteRun(ctx context.Context, project string, opts RemoteRunOptions) (Remo
 		report.Error = runErr.Error()
 	}
 	finishRemoteRun(&report, start)
-	persistRemoteRuntimeReceipt(&report, runDir, runErr)
-	if persistErr := writeRemoteJSON(report.EvidencePath, report); persistErr != nil && runErr == nil {
+	persisted := redactRemoteRunReport(report, opts)
+	persistRemoteRuntimeReceipt(&persisted, runDir, runErr, opts.SensitiveArgumentNames, opts.SensitiveOutputFields)
+	report.Receipt = persisted.Receipt
+	if persistErr := writeRemoteJSON(report.EvidencePath, persisted); persistErr != nil && runErr == nil {
 		runErr = persistErr
 	}
-	if persistErr := os.WriteFile(report.MarkdownPath, []byte(RemoteRunMarkdown(report)), 0o644); persistErr != nil && runErr == nil {
+	if persistErr := os.WriteFile(report.MarkdownPath, []byte(RemoteRunMarkdown(persisted)), 0o644); persistErr != nil && runErr == nil {
 		runErr = persistErr
 	}
 	return report, runErr
+}
+
+func interactiveExecutionScript(report RemoteRunReport, opts RemoteRunOptions, quotedArgs []string, loaderX64, loaderX86 string) string {
+	outputPath := windowsJoin(report.RemoteRunPath, "interactive-session-output.json")
+	exitPath := windowsJoin(report.RemoteRunPath, "interactive-session-exit.txt")
+	inner := fmt.Sprintf(`$ErrorActionPreference='Continue'; Set-Location %s; $env:BOFBENCH_LOADER=%s; $env:BOFBENCH_LOADER_X86=%s; $text=(& %s %s 2>&1 | Out-String); $code=$LASTEXITCODE; [IO.File]::WriteAllText(%s,$text,(New-Object Text.UTF8Encoding($false))); [IO.File]::WriteAllText(%s,[string]$code,(New-Object Text.UTF8Encoding($false)))`, powerShellQuote(report.RemoteRunPath), powerShellQuote(loaderX64), powerShellQuote(loaderX86), powerShellQuote(opts.Executable), strings.Join(quotedArgs, " "), powerShellQuote(outputPath), powerShellQuote(exitPath))
+	encoded := encodePowerShellCommand(inner)
+	taskName := "BOFBench-Interactive-" + report.RunID
+	return fmt.Sprintf(`$ErrorActionPreference='Stop'; $task=%s; $output=%s; $exitFile=%s; $exitCode=1; $action=New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument %s -WorkingDirectory %s; $principal=New-ScheduledTaskPrincipal -UserId ($env:COMPUTERNAME+'\'+$env:USERNAME) -LogonType Interactive -RunLevel Highest; try { Register-ScheduledTask -TaskName $task -Action $action -Principal $principal -Force | Out-Null; Start-ScheduledTask -TaskName $task; $deadline=(Get-Date).AddSeconds(90); do { Start-Sleep -Milliseconds 250; $state=(Get-ScheduledTask -TaskName $task).State } while($state -eq 'Running' -and (Get-Date) -lt $deadline); if($state -eq 'Running'){ Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue; throw 'interactive execution timed out' }; if(-not (Test-Path -LiteralPath $output)){ throw 'interactive execution produced no output' }; [Console]::Out.Write([IO.File]::ReadAllText($output)); if(Test-Path -LiteralPath $exitFile){ $exitCode=[int]([IO.File]::ReadAllText($exitFile).Trim()) } } finally { Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $output,$exitFile -Force -ErrorAction SilentlyContinue }; exit $exitCode`, powerShellQuote(taskName), powerShellQuote(outputPath), powerShellQuote(exitPath), powerShellQuote("-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand "+encoded), powerShellQuote(report.RemoteRunPath))
+}
+
+func encodePowerShellCommand(script string) string {
+	units := utf16.Encode([]rune(script))
+	data := make([]byte, len(units)*2)
+	for index, unit := range units {
+		data[index*2] = byte(unit)
+		data[index*2+1] = byte(unit >> 8)
+	}
+	return base64.StdEncoding.EncodeToString(data)
 }
 
 func detectRemoteComputer(ctx context.Context, opts RemoteOptions) (string, error) {
@@ -507,7 +550,7 @@ func detectRemoteComputer(ctx context.Context, opts RemoteOptions) (string, erro
 	return computer, nil
 }
 
-func persistRemoteRuntimeReceipt(report *RemoteRunReport, runDir string, operationErr error) {
+func persistRemoteRuntimeReceipt(report *RemoteRunReport, runDir string, operationErr error, sensitiveArguments, sensitiveFields []string) {
 	result := report.RemoteResult
 	if result == nil && report.RemoteDev != nil {
 		result = report.RemoteDev.Run
@@ -518,6 +561,7 @@ func persistRemoteRuntimeReceipt(report *RemoteRunReport, runDir string, operati
 		Transport: reportTransport(report), RemoteHost: report.Host, RemoteComputer: report.RemoteComputer,
 		StartedAt: report.StartedAt, CompletedAt: report.CompletedAt, DurationMS: report.DurationMS,
 		ReceiptPath: filepath.Join(runDir, "result.json"), Arguments: runtimeArgumentTypes(report.Arguments), TimeoutMS: report.TimeoutMS,
+		SensitiveArguments: append([]string(nil), sensitiveArguments...), RedactedOutputFields: append([]string(nil), sensitiveFields...),
 	}
 	if result != nil {
 		receipt.Object = result.Object
@@ -548,6 +592,87 @@ func persistRemoteRuntimeReceipt(report *RemoteRunReport, runDir string, operati
 	if err == nil {
 		report.Receipt = &receipt
 	}
+}
+
+func redactRemoteArgumentTokens(tokens []string, sensitive []bool) []string {
+	result := append([]string(nil), tokens...)
+	for index := range result {
+		if index >= len(sensitive) || !sensitive[index] {
+			continue
+		}
+		if kind, _, ok := strings.Cut(result[index], ":"); ok {
+			result[index] = kind + ":<redacted>"
+		} else {
+			result[index] = "<redacted>"
+		}
+	}
+	return result
+}
+
+func redactRemoteRunReport(report RemoteRunReport, opts RemoteRunOptions) RemoteRunReport {
+	persisted := report
+	persisted.Arguments = redactRemoteArgumentTokens(report.Arguments, opts.SensitiveArguments)
+	persisted.Error = redactRemoteLines([]string{report.Error}, nil, opts.SensitiveValues)[0]
+	persisted.RemoteStderr = redactRemoteLines([]string{report.RemoteStderr}, nil, opts.SensitiveValues)[0]
+	if report.RemoteResult != nil {
+		result := redactRemoteRuntimeResult(*report.RemoteResult, opts.SensitiveOutputFields, opts.SensitiveValues)
+		persisted.RemoteResult = &result
+	}
+	if report.RemoteDev != nil {
+		dev := *report.RemoteDev
+		dev.Error = redactRemoteLines([]string{dev.Error}, nil, opts.SensitiveValues)[0]
+		if report.RemoteDev.Run != nil {
+			result := redactRemoteRuntimeResult(*report.RemoteDev.Run, opts.SensitiveOutputFields, opts.SensitiveValues)
+			dev.Run = &result
+		}
+		persisted.RemoteDev = &dev
+	}
+	return persisted
+}
+
+func redactRemoteRuntimeResult(result runtimesvc.Result, fields, secrets []string) runtimesvc.Result {
+	result.Output = redactRemoteLines(result.Output, fields, secrets)
+	result.Errors = redactRemoteLines(result.Errors, nil, secrets)
+	result.Events = append([]runtimesvc.Event(nil), result.Events...)
+	for index := range result.Events {
+		result.Events[index].Message = redactRemoteLines([]string{result.Events[index].Message}, fields, secrets)[0]
+	}
+	if result.LoaderProcess != nil {
+		process := *result.LoaderProcess
+		process.Stdout = redactRemoteLines(process.Stdout, fields, secrets)
+		process.Stderr = redactRemoteLines(process.Stderr, nil, secrets)
+		result.LoaderProcess = &process
+	}
+	return result
+}
+
+func redactRemoteLines(lines, fields, secrets []string) []string {
+	result := make([]string, len(lines))
+	for index, line := range lines {
+		for _, secret := range secrets {
+			if secret != "" {
+				line = strings.ReplaceAll(line, secret, "<redacted>")
+			}
+		}
+		for _, field := range fields {
+			needle := field + "="
+			for start := 0; start < len(line); {
+				position := strings.Index(line[start:], needle)
+				if position < 0 {
+					break
+				}
+				position += start
+				end := position + len(needle)
+				for end < len(line) && !strings.ContainsRune(" \t\r\n", rune(line[end])) {
+					end++
+				}
+				line = line[:position+len(needle)] + "<redacted>" + line[end:]
+				start = position + len(needle) + len("<redacted>")
+			}
+		}
+		result[index] = line
+	}
+	return result
 }
 
 func cleanReceiptOutput(lines []string) []string {

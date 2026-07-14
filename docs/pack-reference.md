@@ -36,6 +36,25 @@ observable file, registry, inert Run-key persistence, and child-process state ch
 - Cleanup: `active-cleanup`
 - Analyzer signatures: `run_key_persistence`
 
+## `builtin/certificate-store-inventory`
+
+enumerate bounded certificate metadata from one explicit Windows certificate store
+
+- Can do: certificate metadata discovery; private-key availability discovery
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `certificate_store_inventory`
+- Live proofs: fixture-certificate (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `scope` | `string` | no | no | `current_user` | current_user or local_machine |
+| `store` | `wstring` | no | no | `MY` | certificate store name |
+| `subject_filter` | `wstring` | no | no | `` | case-insensitive subject substring; empty matches all |
+| `result_limit` | `int` | no | no | `25` | maximum certificate rows (1-256) |
+
 ## `builtin/deep-discovery`
 
 all built-in read-only discovery techniques
@@ -58,10 +77,10 @@ Combine bounded process, token, service, TCP endpoint, domain, host, identity, f
 - Version: `1.0.0`
 - Analyzer signatures: `current_process_context`, `host_identity`, `filesystem_context`
 
-| Argument | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `process_filter` | `string` | no | `` | case-insensitive process image substring; empty matches all |
-| `result_limit` | `int` | no | `25` | maximum matching process rows (1-256) |
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `process_filter` | `string` | no | no | `` | case-insensitive process image substring; empty matches all |
+| `result_limit` | `int` | no | no | `25` | maximum matching process rows (1-256) |
 
 ## `builtin/domain-context`
 
@@ -220,13 +239,13 @@ run a bounded LDAP query with an explicit base, filter, and attribute list
 - Version: `1.0.0`
 - Analyzer signatures: `ldap_directory_query`
 
-| Argument | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `server` | `string` | no | `` | domain controller; empty discovers the current domain |
-| `base_dn` | `string` | no | `` | LDAP base DN; empty derives the current domain |
-| `filter` | `string` | no | `(objectClass=*)` | LDAP filter |
-| `attributes` | `string` | no | `distinguishedName` | comma-separated attributes (maximum eight) |
-| `result_limit` | `int` | no | `25` | maximum directory entries (1-100) |
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `server` | `string` | no | no | `` | domain controller; empty discovers the current domain |
+| `base_dn` | `string` | no | no | `` | LDAP base DN; empty derives the current domain |
+| `filter` | `string` | no | no | `(objectClass=*)` | LDAP filter |
+| `attributes` | `string` | no | no | `distinguishedName` | comma-separated attributes (maximum eight) |
+| `result_limit` | `int` | no | no | `25` | maximum directory entries (1-100) |
 
 ## `builtin/named-pipe-inventory`
 
@@ -240,10 +259,10 @@ enumerate bounded named-pipe entries with an optional prefix filter
 - Analyzer signatures: `named_pipe_inventory`
 - Live proofs: bounded (lab, sliver)
 
-| Argument | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `prefix` | `string` | no | `` | case-insensitive pipe-name prefix; empty matches all |
-| `result_limit` | `int` | no | `64` | maximum rows (1-512) |
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `prefix` | `string` | no | no | `` | case-insensitive pipe-name prefix; empty matches all |
+| `result_limit` | `int` | no | no | `64` | maximum rows (1-512) |
 
 ## `builtin/network`
 
@@ -332,10 +351,10 @@ Enumerate a bounded local process snapshot
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
 
-| Argument | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `process_filter` | `string` | no | `` | case-insensitive process image substring; empty matches all |
-| `result_limit` | `int` | no | `25` | maximum matching process rows (1-256) |
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `process_filter` | `string` | no | no | `` | case-insensitive process image substring; empty matches all |
+| `result_limit` | `int` | no | no | `25` | maximum matching process rows (1-256) |
 
 ## `builtin/process-list`
 
@@ -369,10 +388,10 @@ enumerate a bounded process tree with session and architecture context
 - Analyzer signatures: `process_tree_inventory`
 - Live proofs: bounded (lab, sliver)
 
-| Argument | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `process_filter` | `string` | no | `` | case-insensitive image substring; empty matches all |
-| `result_limit` | `int` | no | `25` | maximum rows (1-256) |
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `process_filter` | `string` | no | no | `` | case-insensitive image substring; empty matches all |
+| `result_limit` | `int` | no | no | `25` | maximum rows (1-256) |
 
 ## `builtin/registry`
 
@@ -403,6 +422,23 @@ Read Windows product context from HKLM and report the current user.
 - Needs: privilege=user; network=none; platform=windows/x64,x86
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
+
+## `builtin/security-package-inventory`
+
+enumerate bounded Windows authentication and security-support packages
+
+- Can do: Windows authentication package discovery; SSPI capability inventory
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `security_package_inventory`
+- Live proofs: bounded (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `name_filter` | `string` | no | no | `` | case-insensitive package-name substring; empty matches all |
+| `result_limit` | `int` | no | no | `25` | maximum package rows (1-128) |
 
 ## `builtin/service-discovery`
 
@@ -445,10 +481,10 @@ process, token, and service enumeration
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
 
-| Argument | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `process_filter` | `string` | no | `` | case-insensitive process image substring; empty matches all |
-| `result_limit` | `int` | no | `25` | maximum matching process rows (1-256) |
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `process_filter` | `string` | no | no | `` | case-insensitive process image substring; empty matches all |
+| `result_limit` | `int` | no | no | `25` | maximum matching process rows (1-256) |
 
 ## `builtin/tcp-connections`
 
@@ -472,10 +508,10 @@ enumerate bounded thread identifiers and priorities for one process
 - Analyzer signatures: `thread_inventory`
 - Live proofs: target-threads (lab, sliver)
 
-| Argument | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `target_pid` | `int` | yes | `` | exact process identifier |
-| `result_limit` | `int` | no | `64` | maximum rows (1-512) |
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` | exact process identifier |
+| `result_limit` | `int` | no | no | `64` | maximum rows (1-512) |
 
 ## `builtin/token-context`
 

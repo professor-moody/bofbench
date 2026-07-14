@@ -19,14 +19,17 @@ import (
 )
 
 type cobaltStrikeRunOptions struct {
-	Input            string
-	Entrypoint       string
-	Compiler         string
-	Runtime          string
-	ArgumentTokens   []string
-	ArgumentNames    []string
-	ArgumentOptional []bool
-	CLIValues        []string
+	Input                  string
+	Entrypoint             string
+	Compiler               string
+	Runtime                string
+	ArgumentTokens         []string
+	ArgumentNames          []string
+	ArgumentOptional       []bool
+	CLIValues              []string
+	SensitiveOutputFields  []string
+	SensitiveArgumentNames []string
+	SensitiveValues        []string
 }
 
 func runCobaltStrike(stdout io.Writer, opts cobaltStrikeRunOptions) error {
@@ -127,6 +130,7 @@ func executeCobaltStrike(parent context.Context, stdout io.Writer, opts cobaltSt
 	}
 	receipt.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	receipt.DurationMS = time.Since(started).Milliseconds()
+	receipt = redactReceiptValues(receipt, opts.SensitiveOutputFields, opts.SensitiveArgumentNames, opts.SensitiveValues)
 	_ = writeJSON(receipt.ReceiptPath, receipt)
 	if printErr := printJSON(stdout, receipt); printErr != nil {
 		return receipt, printErr

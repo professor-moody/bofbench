@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	packsvc "bofbench/internal/pack"
@@ -70,23 +71,48 @@ func prepareCleanupProject(project string) (string, []string, func(), error) {
 	return root, cleanupPacks, remove, nil
 }
 
-func cleanupNamedArguments(project string, values []string) []string {
-	lock, _, err := packsvc.LoadLock(project)
+func cleanupNamedArguments(sourceProject, cleanupProject string, values []string) []string {
+	cleanupLock, _, err := packsvc.LoadLock(cleanupProject)
 	if err != nil {
 		return values
 	}
 	allowed := map[string]bool{}
-	for _, record := range lock.Packs {
+	for _, record := range cleanupLock.Packs {
 		for _, argument := range record.Arguments {
 			allowed[strings.ToLower(argument.Name)] = true
 		}
 	}
-	var filtered []string
+	provided := map[string]string{}
 	for _, value := range values {
-		name, _, ok := strings.Cut(value, "=")
-		if ok && allowed[strings.ToLower(strings.TrimSpace(name))] {
-			filtered = append(filtered, value)
+		name, raw, ok := strings.Cut(value, "=")
+		if ok {
+			provided[strings.ToLower(strings.TrimSpace(name))] = raw
 		}
+	}
+	mapped := map[string]string{}
+	if sourceLock, _, lockErr := packsvc.LoadLock(sourceProject); lockErr == nil {
+		for _, record := range sourceLock.Packs {
+			for target, expression := range record.CleanupArguments {
+				source := strings.ToLower(strings.TrimPrefix(expression, "$arg."))
+				if raw, ok := provided[source]; ok && allowed[strings.ToLower(target)] {
+					mapped[strings.ToLower(target)] = raw
+				}
+			}
+		}
+	}
+	for name, raw := range provided {
+		if allowed[name] {
+			mapped[name] = raw
+		}
+	}
+	keys := make([]string, 0, len(mapped))
+	for name := range mapped {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	filtered := make([]string, 0, len(keys))
+	for _, name := range keys {
+		filtered = append(filtered, name+"="+mapped[name])
 	}
 	return filtered
 }

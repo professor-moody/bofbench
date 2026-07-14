@@ -705,6 +705,165 @@ static void bofbench_feature_ldap_query(datap *parser) {
 		Call: "bofbench_feature_ldap_query($PARSER);",
 	},
 	{
+		Name:        "security-package-inventory",
+		Description: "enumerate bounded Windows authentication and security-support packages",
+		Declaration: `#ifndef SECURITY_WIN32
+#define SECURITY_WIN32
+#endif
+#include <sspi.h>
+SECURITY_STATUS WINAPI SECUR32$EnumerateSecurityPackagesW(PULONG, PSecPkgInfoW *);
+SECURITY_STATUS WINAPI SECUR32$FreeContextBuffer(PVOID);
+
+static void bofbench_security_wide_text(const WCHAR *source, char *target, DWORD capacity) {
+    DWORD index = 0;
+    if (capacity == 0) return;
+    while (source != NULL && source[index] != L'\0' && index + 1 < capacity) {
+        target[index] = source[index] < 128 ? (char)source[index] : '?';
+        index++;
+    }
+    target[index] = '\0';
+}
+
+static BOOL bofbench_security_match(const char *value, const char *filter, int length) {
+    int start = 0;
+    if (filter == NULL || length <= 0) return TRUE;
+    while (value[start] != '\0') {
+        int index = 0;
+        while (index < length && value[start + index] != '\0') {
+            char left = value[start + index], right = filter[index];
+            if (left >= 'A' && left <= 'Z') left = (char)(left + 32);
+            if (right >= 'A' && right <= 'Z') right = (char)(right + 32);
+            if (left != right) break;
+            index++;
+        }
+        if (index == length) return TRUE;
+        start++;
+    }
+    return FALSE;
+}
+
+static void bofbench_feature_security_package_inventory(datap *parser) {
+    int filter_length = 0;
+    char *filter = BeaconDataExtract(parser, &filter_length);
+    int requested = BeaconDataInt(parser);
+    ULONG count = 0, index, shown = 0;
+    DWORD limit = requested > 0 ? (DWORD)requested : 25;
+    PSecPkgInfoW packages = NULL;
+    SECURITY_STATUS status;
+    if (limit > 128) limit = 128;
+    status = SECUR32$EnumerateSecurityPackagesW(&count, &packages);
+    if (status != SEC_E_OK || packages == NULL) {
+        BeaconPrintf(CALLBACK_ERROR, "[security-package-inventory] status=error security_status=0x%08lx", status);
+        return;
+    }
+    for (index = 0; index < count && shown < limit; index++) {
+        char name[128], comment[256];
+        bofbench_security_wide_text(packages[index].Name, name, sizeof(name));
+        if (!bofbench_security_match(name, filter, filter_length > 0 ? filter_length - 1 : 0)) continue;
+        bofbench_security_wide_text(packages[index].Comment, comment, sizeof(comment));
+        BeaconPrintf(CALLBACK_OUTPUT, "[security-package-inventory] name=%s capabilities=0x%08lx max_token=%lu comment=%s",
+            name, packages[index].fCapabilities, packages[index].cbMaxToken, comment);
+        shown++;
+    }
+    BeaconPrintf(CALLBACK_OUTPUT, "[security-package-inventory] status=complete shown=%lu total=%lu limit=%lu filter=%s",
+        shown, count, limit, filter_length > 1 ? filter : "*");
+    SECUR32$FreeContextBuffer(packages);
+}`,
+		Call: "bofbench_feature_security_package_inventory($PARSER);",
+	},
+	{
+		Name:        "certificate-store-inventory",
+		Description: "enumerate bounded certificate metadata from one explicit Windows certificate store",
+		Declaration: `#include <wincrypt.h>
+HCERTSTORE WINAPI CRYPT32$CertOpenStore(LPCSTR, DWORD, HCRYPTPROV_LEGACY, DWORD, const void *);
+PCCERT_CONTEXT WINAPI CRYPT32$CertEnumCertificatesInStore(HCERTSTORE, PCCERT_CONTEXT);
+BOOL WINAPI CRYPT32$CertCloseStore(HCERTSTORE, DWORD);
+DWORD WINAPI CRYPT32$CertGetNameStringW(PCCERT_CONTEXT, DWORD, DWORD, void *, LPWSTR, DWORD);
+BOOL WINAPI CRYPT32$CertGetCertificateContextProperty(PCCERT_CONTEXT, DWORD, void *, DWORD *);
+BOOL WINAPI CRYPT32$CryptHashCertificate(HCRYPTPROV_LEGACY, ALG_ID, DWORD, const BYTE *, DWORD, BYTE *, DWORD *);
+BOOL WINAPI KERNEL32$FileTimeToSystemTime(const FILETIME *, LPSYSTEMTIME);
+
+static void bofbench_certificate_text(const WCHAR *source, char *target, DWORD capacity) {
+    DWORD index = 0;
+    if (capacity == 0) return;
+    while (source != NULL && source[index] != L'\0' && index + 1 < capacity) {
+        target[index] = source[index] < 128 ? (char)source[index] : '?';
+        index++;
+    }
+    target[index] = '\0';
+}
+
+static BOOL bofbench_certificate_match(const WCHAR *value, const WCHAR *filter, int bytes) {
+    int length = bytes > 1 ? (bytes / (int)sizeof(WCHAR)) - 1 : 0;
+    int start = 0;
+    if (filter == NULL || length <= 0) return TRUE;
+    while (value[start] != L'\0') {
+        int index = 0;
+        while (index < length && value[start + index] != L'\0') {
+            WCHAR left = value[start + index], right = filter[index];
+            if (left >= L'A' && left <= L'Z') left = (WCHAR)(left + 32);
+            if (right >= L'A' && right <= L'Z') right = (WCHAR)(right + 32);
+            if (left != right) break;
+            index++;
+        }
+        if (index == length) return TRUE;
+        start++;
+    }
+    return FALSE;
+}
+
+static void bofbench_feature_certificate_store_inventory(datap *parser) {
+    int scope_length = 0, store_length = 0, filter_length = 0;
+    char *scope = BeaconDataExtract(parser, &scope_length);
+    WCHAR *store_name = (WCHAR *)BeaconDataExtract(parser, &store_length);
+    WCHAR *filter = (WCHAR *)BeaconDataExtract(parser, &filter_length);
+    int requested = BeaconDataInt(parser);
+    DWORD limit = requested > 0 ? (DWORD)requested : 25;
+    DWORD flags = CERT_SYSTEM_STORE_CURRENT_USER | CERT_STORE_OPEN_EXISTING_FLAG | CERT_STORE_READONLY_FLAG;
+    HCERTSTORE store;
+    PCCERT_CONTEXT certificate = NULL;
+    DWORD shown = 0;
+    WCHAR default_store[] = L"MY";
+    if (limit > 256) limit = 256;
+    if (scope_length > 1 && (scope[0] == 'l' || scope[0] == 'L')) flags = CERT_SYSTEM_STORE_LOCAL_MACHINE | CERT_STORE_OPEN_EXISTING_FLAG | CERT_STORE_READONLY_FLAG;
+    if (store_length <= (int)sizeof(WCHAR)) store_name = default_store;
+    store = CRYPT32$CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, flags, store_name);
+    if (store == NULL) {
+        BeaconPrintf(CALLBACK_ERROR, "[certificate-store-inventory] status=error api=CertOpenStore");
+        return;
+    }
+    while (shown < limit && (certificate = CRYPT32$CertEnumCertificatesInStore(store, certificate)) != NULL) {
+        WCHAR subject_wide[256], issuer_wide[256];
+        char subject[256], issuer[256], thumbprint[65];
+        BYTE hash[32];
+        DWORD hash_size = sizeof(hash), property_size = 0, index;
+        SYSTEMTIME before, after;
+        BOOL has_private_key;
+        CRYPT32$CertGetNameStringW(certificate, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL, subject_wide, 256);
+        if (!bofbench_certificate_match(subject_wide, filter, filter_length)) continue;
+        CRYPT32$CertGetNameStringW(certificate, CERT_NAME_SIMPLE_DISPLAY_TYPE, CERT_NAME_ISSUER_FLAG, NULL, issuer_wide, 256);
+        bofbench_certificate_text(subject_wide, subject, sizeof(subject));
+        bofbench_certificate_text(issuer_wide, issuer, sizeof(issuer));
+        if (!CRYPT32$CryptHashCertificate(0, CALG_SHA1, 0, certificate->pbCertEncoded, certificate->cbCertEncoded, hash, &hash_size)) hash_size = 0;
+        for (index = 0; index < hash_size && index < 32; index++) {
+            const char digits[] = "0123456789ABCDEF";
+            thumbprint[index * 2] = digits[(hash[index] >> 4) & 0x0f];
+            thumbprint[index * 2 + 1] = digits[hash[index] & 0x0f];
+        }
+        thumbprint[hash_size * 2] = '\0';
+        has_private_key = CRYPT32$CertGetCertificateContextProperty(certificate, CERT_KEY_PROV_INFO_PROP_ID, NULL, &property_size);
+        KERNEL32$FileTimeToSystemTime(&certificate->pCertInfo->NotBefore, &before);
+        KERNEL32$FileTimeToSystemTime(&certificate->pCertInfo->NotAfter, &after);
+        BeaconPrintf(CALLBACK_OUTPUT, "[certificate-store-inventory] thumbprint=%s subject=%s issuer=%s not_before=%04u-%02u-%02u not_after=%04u-%02u-%02u has_private_key=%lu",
+            thumbprint, subject, issuer, before.wYear, before.wMonth, before.wDay, after.wYear, after.wMonth, after.wDay, has_private_key ? 1 : 0);
+        shown++;
+    }
+    CRYPT32$CertCloseStore(store, 0);
+    BeaconPrintf(CALLBACK_OUTPUT, "[certificate-store-inventory] status=complete shown=%lu limit=%lu scope=%s", shown, limit, (flags & CERT_SYSTEM_STORE_LOCAL_MACHINE) ? "local_machine" : "current_user");
+}`,
+		Call: "bofbench_feature_certificate_store_inventory($PARSER);",
+	},
+	{
 		Name:        "lab-file-write",
 		Description: "create a known BOFBench marker file in the Windows temporary directory",
 		Declaration: `DWORD WINAPI KERNEL32$GetTempPathA(DWORD, LPSTR);
