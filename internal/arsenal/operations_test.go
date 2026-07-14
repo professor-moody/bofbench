@@ -33,6 +33,9 @@ func TestInventorySearchLockAndDiff(t *testing.T) {
 	if inventory.Status != "pass" || inventory.Summary.Entries != 3 || inventory.Summary.X64Objects != 3 || inventory.Summary.Compatible != 3 || inventory.Summary.NeedsArguments != 1 {
 		t.Fatalf("inventory = %+v entries=%+v", inventory.Summary, inventory.Entries)
 	}
+	if inventory.Summary.Refreshed != 3 || inventory.Summary.CacheHits != 0 || inventory.IndexPath == "" || inventory.SignatureSet == "" {
+		t.Fatalf("initial cache summary = %+v index=%q signatures=%q", inventory.Summary, inventory.IndexPath, inventory.SignatureSet)
+	}
 	searched, err := BuildInventory(root, "BeaconDataParse")
 	if err != nil {
 		t.Fatal(err)
@@ -40,12 +43,30 @@ func TestInventorySearchLockAndDiff(t *testing.T) {
 	if len(searched.Entries) != 1 || searched.Entries[0].Name != "argparse" {
 		t.Fatalf("search entries = %+v", searched.Entries)
 	}
+	if searched.Summary.CacheHits != 1 || searched.Summary.Refreshed != 0 {
+		t.Fatalf("cached search summary = %+v", searched.Summary)
+	}
 	capabilitySearch, err := BuildInventoryWithFilters(root, InventoryFilters{Can: "token", Effect: "reads data", WorksWith: "sliver", Requires: "current user"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(capabilitySearch.Entries) != 1 || capabilitySearch.Entries[0].Name != "tokencheck" || len(capabilitySearch.Entries[0].Capabilities) == 0 {
 		t.Fatalf("capability filters = %+v", capabilitySearch.Entries)
+	}
+	hasArgs := true
+	argumentSearch, err := BuildInventoryWithFilters(root, InventoryFilters{Arch: "x64", HasArgs: &hasArgs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(argumentSearch.Entries) != 1 || argumentSearch.Entries[0].Name != "argparse" {
+		t.Fatalf("architecture/arguments filters = %+v", argumentSearch.Entries)
+	}
+	confidenceSearch, err := BuildInventoryWithFilters(root, InventoryFilters{Can: "token", Confidence: "confirmed primitive"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(confidenceSearch.Entries) != 1 || confidenceSearch.Entries[0].Name != "tokencheck" {
+		t.Fatalf("confidence filter = %+v", confidenceSearch.Entries)
 	}
 	persisted, err := PersistInventory(searched)
 	if err != nil {

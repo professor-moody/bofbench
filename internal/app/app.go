@@ -599,6 +599,9 @@ func inspectCommand(stdout io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := applyConfiguredSignatures(&a, args[0]); err != nil {
+				return err
+			}
 			printAnalysis(stdout, a)
 			return nil
 		},
@@ -710,12 +713,14 @@ func analyzeCommand(stdout io.Writer) *cobra.Command {
 				if err := applyProjectPackMetadata(&persisted.Analysis, projectInput); err != nil {
 					return err
 				}
-				if err := writeJSON(persisted.JSONPath, persisted.Analysis); err != nil {
-					return err
-				}
-				if err := os.WriteFile(persisted.MDPath, []byte(artifact.Markdown(persisted.Analysis)), 0o644); err != nil {
-					return err
-				}
+			} else if err := applyConfiguredSignatures(&persisted.Analysis, analysisInput); err != nil {
+				return err
+			}
+			if err := writeJSON(persisted.JSONPath, persisted.Analysis); err != nil {
+				return err
+			}
+			if err := os.WriteFile(persisted.MDPath, []byte(artifact.Markdown(persisted.Analysis)), 0o644); err != nil {
+				return err
 			}
 			var diff *artifact.DiffReport
 			var diffJSONPath string

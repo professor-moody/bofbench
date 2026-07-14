@@ -112,7 +112,9 @@ func packCommand(stdout io.Writer) *cobra.Command {
 			},
 		},
 		packShowCommand(stdout, load),
-		packDocsCommand(stdout, load),
+		packDocsCommand(stdout, load, func() []string { return append([]string(nil), catalogs...) }),
+		packTestCommand(stdout, load, func() []string { return append([]string(nil), catalogs...) }),
+		packProveCommand(stdout, load, func() []string { return append([]string(nil), catalogs...) }),
 		&cobra.Command{
 			Use: "validate <pack.json>", Short: "Validate a pack manifest and its source paths", Args: cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
@@ -128,7 +130,7 @@ func packCommand(stdout io.Writer) *cobra.Command {
 	return cmd
 }
 
-func packDocsCommand(stdout io.Writer, load func() (*packsvc.Registry, error)) *cobra.Command {
+func packDocsCommand(stdout io.Writer, load func() (*packsvc.Registry, error), catalogSelectors func() []string) *cobra.Command {
 	var output string
 	cmd := &cobra.Command{
 		Use: "docs", Short: "Generate Markdown reference from resolved pack manifests", Args: cobra.NoArgs,
@@ -137,7 +139,11 @@ func packDocsCommand(stdout io.Writer, load func() (*packsvc.Registry, error)) *
 			if err != nil {
 				return err
 			}
-			body := packReferenceMarkdown(registry.List())
+			items, err := selectedPacks(registry, nil, true, catalogSelectors())
+			if err != nil {
+				return err
+			}
+			body := packReferenceMarkdown(items)
 			if output == "" || output == "-" {
 				fmt.Fprint(stdout, body)
 				return nil
@@ -173,6 +179,20 @@ func packReferenceMarkdown(items []packsvc.Resolved) string {
 		if document.CleanupPack != "" {
 			fmt.Fprintf(&b, "- Cleanup: `%s`\n", document.CleanupPack)
 		}
+		if len(document.AnalysisSignatures) > 0 {
+			var signatures []string
+			for _, signature := range document.AnalysisSignatures {
+				signatures = append(signatures, signature.ID)
+			}
+			fmt.Fprintf(&b, "- Analyzer signatures: `%s`\n", strings.Join(signatures, "`, `"))
+		}
+		if len(document.ProofCases) > 0 {
+			var proofs []string
+			for _, proof := range document.ProofCases {
+				proofs = append(proofs, proof.ID+" ("+strings.Join(proof.Via, ", ")+")")
+			}
+			fmt.Fprintf(&b, "- Live proofs: %s\n", strings.Join(proofs, "; "))
+		}
 		if len(document.Arguments) > 0 {
 			b.WriteString("\n| Argument | Type | Required | Default | Description |\n| --- | --- | --- | --- | --- |\n")
 			for _, argument := range document.Arguments {
@@ -207,7 +227,7 @@ func packShowCommand(stdout io.Writer, load func() (*packsvc.Registry, error)) *
 					fmt.Fprintf(stdout, "%s has no cleanup pack\n", item.Qualified)
 					return nil
 				}
-				item, err = registry.Resolve(item.Document.CleanupPack)
+				item, err = registry.ResolveRelated(item, item.Document.CleanupPack)
 				if err != nil {
 					return err
 				}

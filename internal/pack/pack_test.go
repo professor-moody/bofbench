@@ -84,6 +84,39 @@ func TestPackValidationRejectsTraversalAndUnknownFields(t *testing.T) {
 	}
 }
 
+func TestPackSchemaV1CompatibilityAndV2Contracts(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "pack.h"), []byte("static void pack(void) {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := Document{
+		Schema: Schema, SchemaVersion: 1, ID: "versioned", Version: "1.0.0", Title: "Versioned", Summary: "Schema compatibility", Tier: "public",
+		Capabilities: []string{"inventory"}, Effects: []string{"reads data"}, Platforms: []string{"windows"}, Architecture: []string{"x64"}, Privilege: "user", Network: "none",
+		Arguments: []Argument{{Name: "limit", Type: "int"}}, Source: Source{HeaderFragments: []string{"pack.h"}}, TargetSupport: []string{"native"},
+	}
+	path := filepath.Join(root, "pack.json")
+	writeTestJSON(t, path, base)
+	if _, err := ValidateFile(path); err != nil {
+		t.Fatalf("schema v1 must remain readable: %v", err)
+	}
+	base.AnalysisSignatures = []AnalysisSignature{{ID: "inventory", Name: "Inventory", Summary: "Read inventory", Steps: []AnalysisStep{{Action: "enumerate", APIs: []string{"EnumThings"}}}, Effects: []string{"reads data"}}}
+	writeTestJSON(t, path, base)
+	if _, err := ValidateFile(path); err == nil || !strings.Contains(err.Error(), "require schema version 2") {
+		t.Fatalf("schema v1 accepted v2 fields: %v", err)
+	}
+	base.SchemaVersion = 2
+	base.ProofCases = []ProofCase{{ID: "bounded", Via: []string{"lab"}, Arguments: map[string]string{"limit": "10"}, Expect: ProofExpectation{Tag: "versioned", Fields: map[string]string{"status": "complete"}}}}
+	writeTestJSON(t, path, base)
+	if _, err := ValidateFile(path); err != nil {
+		t.Fatalf("schema v2 contract rejected: %v", err)
+	}
+	base.ProofCases[0].Arguments["limit"] = "prefix-$UNKNOWN"
+	writeTestJSON(t, path, base)
+	if _, err := ValidateFile(path); err == nil || !strings.Contains(err.Error(), "$UNKNOWN") {
+		t.Fatalf("embedded unsupported proof placeholder accepted: %v", err)
+	}
+}
+
 func TestConfiguredCatalogLifecycle(t *testing.T) {
 	configRoot := t.TempDir()
 	t.Setenv("BOFBENCH_CONFIG_HOME", configRoot)
@@ -107,6 +140,23 @@ func TestConfiguredCatalogLifecycle(t *testing.T) {
 	}
 	if err := RemoveCatalog("local"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRegistryRejectsMissingCleanupCompanion(t *testing.T) {
+	t.Setenv("BOFBENCH_CONFIG_HOME", t.TempDir())
+	catalog := t.TempDir()
+	root := filepath.Join(catalog, "stateful")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := Document{Schema: Schema, SchemaVersion: 2, ID: "stateful", Version: "1", Title: "Stateful", Summary: "Stateful test", Tier: "internal", Capabilities: []string{"state"}, Effects: []string{"writes state"}, Platforms: []string{"windows"}, Architecture: []string{"x64"}, Privilege: "user", Network: "none", Source: Source{HeaderFragments: []string{"pack.h"}}, CleanupPack: "missing-cleanup", TargetSupport: []string{"native"}}
+	writeTestJSON(t, filepath.Join(root, "pack.json"), manifest)
+	if err := os.WriteFile(filepath.Join(root, "pack.h"), []byte("static void pack(void) {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(LoadOptions{ExtraCatalogs: []string{catalog}}); err == nil || !strings.Contains(err.Error(), "missing-cleanup") {
+		t.Fatalf("missing cleanup reference accepted: %v", err)
 	}
 }
 

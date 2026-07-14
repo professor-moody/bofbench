@@ -46,6 +46,7 @@ type targetState struct {
 	Service             string `json:"service"`
 	PID                 int    `json:"pid"`
 	AlertableTID        uint32 `json:"alertable_tid"`
+	NamedPipe           string `json:"named_pipe,omitempty"`
 	User                string `json:"user"`
 	CanaryFile          string `json:"canary_file"`
 	CanaryFileSHA256    string `json:"canary_file_sha256"`
@@ -111,10 +112,13 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
+	pipeReady := make(chan namedPipeResult, 1)
+	go namedPipeFixture(stop, pipeReady)
+	pipe := <-pipeReady
 	fixtureErr := launchFixtureInConsoleSession(service.root, "deploy")
 	state := targetState{
 		Schema: "bofbench.target", SchemaVersion: 2, Service: service.name,
-		PID: os.Getpid(), AlertableTID: <-threadID, User: `NT AUTHORITY\SYSTEM`,
+		PID: os.Getpid(), AlertableTID: <-threadID, NamedPipe: pipe.Name, User: `NT AUTHORITY\SYSTEM`,
 		CanaryFile: canaryPath, CanaryFileSHA256: hashBytes(fileCanary),
 		MemoryCanaryAddress: fmt.Sprintf("0x%X", uintptr(unsafe.Pointer(&memoryCanary[0]))),
 		MemoryCanarySize:    len(canary), MemoryCanarySHA256: hashBytes(canary),
@@ -122,6 +126,12 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	}
 	if fixtureErr != nil {
 		state.FixtureError = fixtureErr.Error()
+	}
+	if pipe.Err != nil {
+		if state.FixtureError != "" {
+			state.FixtureError += "; "
+		}
+		state.FixtureError += pipe.Err.Error()
 	}
 	if err := writeJSON(filepath.Join(service.root, "target.json"), state); err != nil {
 		close(stop)
@@ -233,6 +243,28 @@ func alertableThread(stop <-chan struct{}, ready chan<- uint32) {
 			windows.SleepEx(500, true)
 		}
 	}
+}
+
+type namedPipeResult struct {
+	Name string
+	Err  error
+}
+
+func namedPipeFixture(stop <-chan struct{}, ready chan<- namedPipeResult) {
+	name := fmt.Sprintf(`\\.\pipe\BOFBenchTarget-%d`, os.Getpid())
+	namePtr, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		ready <- namedPipeResult{Err: fmt.Errorf("prepare named-pipe fixture: %w", err)}
+		return
+	}
+	handle, err := windows.CreateNamedPipe(namePtr, windows.PIPE_ACCESS_DUPLEX, windows.PIPE_TYPE_BYTE|windows.PIPE_READMODE_BYTE|windows.PIPE_WAIT, 1, 4096, 4096, 0, nil)
+	if err != nil {
+		ready <- namedPipeResult{Err: fmt.Errorf("create named-pipe fixture: %w", err)}
+		return
+	}
+	ready <- namedPipeResult{Name: name}
+	<-stop
+	_ = windows.CloseHandle(handle)
 }
 
 func deployFixtures(root string) (fixtureState, error) {

@@ -193,6 +193,13 @@ func importsFromSymbols(symbols []string) []Import {
 	return out
 }
 
+func TestClassifyImportStripsX86StdcallDecoration(t *testing.T) {
+	imported := classifyImport("__imp__NTDLL$NtQuerySystemInformation@16")
+	if imported.Library != "NTDLL" || imported.API != "NtQuerySystemInformation" {
+		t.Fatalf("import = %+v", imported)
+	}
+}
+
 func requireCapability(t *testing.T, capabilities []Capability, id string) Capability {
 	t.Helper()
 	for _, item := range capabilities {

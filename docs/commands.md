@@ -29,7 +29,10 @@ bofbench pack search token
 bofbench pack show internal/token-impersonation
 bofbench pack show internal/run-key --cleanup
 bofbench pack validate path/to/pack.json
-bofbench pack docs --output docs/pack-reference.md
+bofbench pack test process-tree
+bofbench pack test --all --catalog internal
+bofbench pack prove internal/section-map-inject --via lab --lab devbox
+bofbench pack docs --catalog builtin --output docs/pack-reference.md
 ```
 
 ## Create and compose
@@ -163,5 +166,6 @@ bofbench arsenal acquire <path-or-url> --name team
 bofbench arsenal inventory arsenal/team
 bofbench arsenal search arsenal/team --can token
 bofbench arsenal search arsenal/team --effect writes-state --works-with sliver
+bofbench arsenal search arsenal/team --arch x64 --confidence 'strong chain' --has-args
 bofbench arsenal compare old.x64.o new.x64.o
 ```

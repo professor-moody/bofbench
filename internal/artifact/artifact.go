@@ -685,6 +685,7 @@ func archMatches(required, host string) bool {
 func classifyImport(symbol string) Import {
 	original := symbol
 	symbol, _ = capability.WindowsCOFF().NormalizeImport(symbol)
+	symbol = stripStdcallDecoration(symbol)
 	imp := Import{Symbol: original, Category: "external"}
 	if strings.HasPrefix(symbol, "Beacon") {
 		imp.Category = "beacon_api"
@@ -705,6 +706,19 @@ func classifyImport(symbol string) Import {
 	}
 	imp.API = trimmed
 	return imp
+}
+
+func stripStdcallDecoration(symbol string) string {
+	index := strings.LastIndexByte(symbol, '@')
+	if index <= 0 || index == len(symbol)-1 {
+		return symbol
+	}
+	for _, char := range symbol[index+1:] {
+		if char < '0' || char > '9' {
+			return symbol
+		}
+	}
+	return symbol[:index]
 }
 
 func assessLoaderCompatibility(a Analysis) capability.Compatibility {

@@ -36,6 +36,15 @@ bofbench pack show team/token-impersonation
 - Source paths are relative and cannot leave the pack directory.
 - Resolved versions and content hashes are written to `bofbench.lock.json`.
 - Existing recipe projects migrate on first pack use while retaining the original sidecar.
+- Schema-v2 analyzer signatures are deduplicated by ID and definition. Conflicting definitions are qualified by catalog rather than blocking unrelated analysis.
+- Schema-v2 proof cases use typed pack arguments and bounded fixture placeholders; cleanup can be declared without becoming an approval step.
+
+Run the complete catalog contract without creating projects by hand:
+
+```bash
+bofbench pack test --all --catalog internal
+bofbench pack prove --all --catalog internal --via lab --lab disposable
+```
 
 Use a project-local catalog when a BOF should carry unpublished source alongside the project:
 

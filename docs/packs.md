@@ -9,6 +9,28 @@ bofbench pack show deep-survey
 bofbench new portable-survey --pack deep-survey
 ```
 
+## Test and prove packs at scale
+
+`pack test` is the fast contract loop. It validates the manifest, builds every declared architecture, checks analyzer expectations, and verifies raw, Sliver, and Cobalt Strike exports:
+
+```bash
+bofbench pack test process-tree
+bofbench pack test --all --catalog builtin
+bofbench pack test --all --catalog internal
+```
+
+Missing compilers are shown as unavailable coverage. They do not turn a valid pack into a failed approval gate.
+
+`pack prove` executes manifest-declared cases with typed fixture values and retains the exact runtime receipt and object hash:
+
+```bash
+bofbench pack prove thread-inventory --via lab --lab devbox
+bofbench pack prove internal/section-map-inject --via lab --lab devbox
+bofbench pack prove --all --catalog internal --via sliver --lab dedicated
+```
+
+Proof cases that declare cleanup run the cleanup companion. BOFBench independently verifies the named Startup-folder artifact is absent after that proof.
+
 ## Parameterized behavior
 
 Pack arguments are runtime values. This changes the target without recompiling the object:
@@ -52,7 +74,7 @@ Every external pack uses strict `pack.json` metadata and source files that canno
 ```json
 {
   "schema": "bofbench.pack",
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "example",
   "version": "1.0.0",
   "title": "Example",
@@ -66,17 +88,33 @@ Every external pack uses strict `pack.json` metadata and source files that canno
   "network": "none",
   "arguments": [{"name": "target_pid", "type": "int", "required": true}],
   "source": {"header_fragments": ["example.h"], "calls": ["example($PARSER)"]},
-  "expected_analysis": ["process access"],
+  "expected_analysis": ["selected_process_access"],
+  "analysis_signatures": [{
+    "id": "selected_process_access",
+    "name": "Selected process access",
+    "summary": "Open one selected process for bounded inspection.",
+    "steps": [{"action": "open selected process", "apis": ["OpenProcess"]}],
+    "effects": ["accesses another process"],
+    "requirements": ["an exact target PID"]
+  }],
+  "proof_cases": [{
+    "id": "disposable-target",
+    "via": ["lab", "sliver"],
+    "arguments": {"target_pid": "$TARGET_PID"},
+    "expect": {"tag": "example", "fields": {"status": "complete"}}
+  }],
   "output_fields": ["target_pid", "status"],
   "target_support": ["native", "lab", "sliver", "cobaltstrike"]
 }
 ```
 
+Schema version 1 remains readable. Version 2 adds optional `analysis_signatures` and `proof_cases`; manifests are not silently rewritten. Supported proof placeholders include target PID/thread, memory canary, exact canary/DPAPI paths, lab host, temporary run root, and run ID.
+
 Validate and generate reference documentation directly from the contracts:
 
 ```bash
 bofbench pack validate path/to/pack.json
-bofbench pack docs --output docs/pack-reference.md
+bofbench pack docs --catalog builtin --output docs/pack-reference.md
 ```
 
 See [External Catalogs](external-catalogs.md) for layout and collision rules.

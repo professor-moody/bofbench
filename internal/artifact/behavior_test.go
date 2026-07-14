@@ -135,6 +135,25 @@ func TestBehaviorChainsRequireCoLocatedRelocationEvidence(t *testing.T) {
 	}
 }
 
+func TestDeclarativeSignaturesRequireEveryStepInOneFunction(t *testing.T) {
+	signature := DeclarativeSignature{
+		ID: "section_map_execution", Name: "Section-map execution", Summary: "Map a shared section and start execution",
+		Effects: []string{"writes process memory", "starts execution"},
+		Steps:   []DeclarativeSignatureStep{{Action: "create section", APIs: []string{"NtCreateSection"}}, {Action: "map section", APIs: []string{"NtMapViewOfSection"}}, {Action: "start execution", APIs: []string{"NtCreateThreadEx"}}},
+	}
+	positive := Analysis{RelocationDetails: []Relocation{{Function: "go", Symbol: "NTDLL$NtCreateSection"}, {Function: "go", Symbol: "NTDLL$NtMapViewOfSection"}, {Function: "go", Symbol: "NTDLL$NtCreateThreadEx"}}}
+	ApplyDeclarativeSignatures(&positive, []DeclarativeSignature{signature})
+	chain := requireBehavior(t, positive.BehaviorChains, "section_map_execution")
+	if chain.Confidence != "strong chain" || len(chain.Steps) != 3 {
+		t.Fatalf("chain = %+v", chain)
+	}
+	negative := Analysis{RelocationDetails: []Relocation{{Function: "one", Symbol: "NTDLL$NtCreateSection"}, {Function: "two", Symbol: "NTDLL$NtMapViewOfSection"}, {Function: "three", Symbol: "NTDLL$NtCreateThreadEx"}}}
+	ApplyDeclarativeSignatures(&negative, []DeclarativeSignature{signature})
+	if len(negative.BehaviorChains) != 0 {
+		t.Fatalf("split evidence produced a behavior chain: %+v", negative.BehaviorChains)
+	}
+}
+
 func TestGenericProcessMemoryReadDoesNotClaimCredentialAccess(t *testing.T) {
 	root := t.TempDir()
 	object := filepath.Join(root, "memory-read.x64.o")

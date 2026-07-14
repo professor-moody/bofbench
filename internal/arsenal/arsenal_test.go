@@ -156,6 +156,31 @@ func TestSafeNameRestrictsWorkspacePath(t *testing.T) {
 	}
 }
 
+func TestGenericObjectsGroupArchitecturesAndAssociateExtensionMetadata(t *testing.T) {
+	root := t.TempDir()
+	objectDir := filepath.Join(root, "objects")
+	if err := os.MkdirAll(objectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(objectDir, "survey.x64.o"), filepath.Join(objectDir, "survey.x86.o"), filepath.Join(root, "extension.json"), filepath.Join(root, "survey.cna")} {
+		if err := os.WriteFile(path, []byte("fixture"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := List(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name != "survey" || entries[0].X64 == "" || entries[0].X86 == "" {
+		t.Fatalf("generic entries = %+v", entries)
+	}
+	metadata := sourceFiles(root, entries[0].Path)
+	joined := strings.Join(metadata, "\n")
+	if !strings.Contains(joined, "extension.json") || !strings.Contains(joined, "survey.cna") {
+		t.Fatalf("associated metadata = %v", metadata)
+	}
+}
+
 type zipFixture struct {
 	Name string
 	Body string

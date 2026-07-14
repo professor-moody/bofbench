@@ -18,6 +18,7 @@ type TargetState struct {
 	Service             string `json:"service"`
 	PID                 int    `json:"pid"`
 	AlertableTID        uint32 `json:"alertable_tid"`
+	NamedPipe           string `json:"named_pipe,omitempty"`
 	User                string `json:"user"`
 	CanaryFile          string `json:"canary_file"`
 	CanaryFileSHA256    string `json:"canary_file_sha256,omitempty"`
@@ -165,7 +166,7 @@ func RemoveTarget(ctx context.Context, name string, profile Profile) (TargetRepo
 
 func TargetReportText(report TargetReport) string {
 	if report.Status == "pass" && report.Operation != "remove" {
-		text := fmt.Sprintf("BOFBench target %s\nprofile     %s\ncomputer    %s\nservice     %s\npid         %d\nalertable   tid=%d\nmemory      address=%s bytes=%d sha256=%s\nfile        %s\ncredential  %s user=%s bytes=%d\ndpapi user  %s\ndpapi host  %s\nwmi marker  %s\n", strings.ToUpper(report.Status), report.Profile, report.Host, report.Service, report.State.PID, report.State.AlertableTID, report.State.MemoryCanaryAddress, report.State.MemoryCanarySize, report.State.MemoryCanarySHA256, report.State.CanaryFile, report.Fixtures.CredentialTarget, report.Fixtures.User, report.Fixtures.CredentialSize, report.Fixtures.DPAPIUserPath, report.Fixtures.DPAPIMachinePath, report.Fixtures.WMIMarkerPath)
+		text := fmt.Sprintf("BOFBench target %s\nprofile     %s\ncomputer    %s\nservice     %s\npid         %d\nalertable   tid=%d\nnamed pipe  %s\nmemory      address=%s bytes=%d sha256=%s\nfile        %s\ncredential  %s user=%s bytes=%d\ndpapi user  %s\ndpapi host  %s\nwmi marker  %s\n", strings.ToUpper(report.Status), report.Profile, report.Host, report.Service, report.State.PID, report.State.AlertableTID, report.State.NamedPipe, report.State.MemoryCanaryAddress, report.State.MemoryCanarySize, report.State.MemoryCanarySHA256, report.State.CanaryFile, report.Fixtures.CredentialTarget, report.Fixtures.User, report.Fixtures.CredentialSize, report.Fixtures.DPAPIUserPath, report.Fixtures.DPAPIMachinePath, report.Fixtures.WMIMarkerPath)
 		if report.State.FixtureError != "" {
 			text += fmt.Sprintf("fixtures    unavailable: %s\n", report.State.FixtureError)
 		}

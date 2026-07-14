@@ -1,7 +1,9 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"bofbench/internal/artifact"
@@ -27,6 +29,7 @@ func applyProjectPackMetadata(analysis *artifact.Analysis, project string) error
 		capabilityNames[strings.ToLower(capability.Name)] = true
 	}
 	var targetIntersection []string
+	var lockedItems []packsvc.Resolved
 	for _, record := range lock.Packs {
 		for _, argument := range record.Arguments {
 			key := strings.ToLower(argument.Name)
@@ -45,6 +48,7 @@ func applyProjectPackMetadata(analysis *artifact.Analysis, project string) error
 			}
 			return resolveErr
 		}
+		lockedItems = append(lockedItems, resolved)
 		for _, capability := range resolved.Document.Capabilities {
 			key := strings.ToLower(capability)
 			if capabilityNames[key] {
@@ -69,7 +73,62 @@ func applyProjectPackMetadata(analysis *artifact.Analysis, project string) error
 	if targetIntersection != nil {
 		analysis.WorksWith = intersectStrings(analysis.WorksWith, targetIntersection)
 	}
+	artifact.ApplyDeclarativeSignatures(analysis, declarativeSignatures(lockedItems))
 	return nil
+}
+
+func applyConfiguredSignatures(analysis *artifact.Analysis, project string) error {
+	registry, err := packsvc.Load(packsvc.LoadOptions{Project: project})
+	if err != nil {
+		return err
+	}
+	artifact.ApplyDeclarativeSignatures(analysis, declarativeSignatures(registry.List()))
+	return nil
+}
+
+func declarativeSignatures(items []packsvc.Resolved) []artifact.DeclarativeSignature {
+	type candidate struct {
+		item       packsvc.Resolved
+		signature  packsvc.AnalysisSignature
+		definition string
+	}
+	var candidates []candidate
+	definitions := map[string]map[string]bool{}
+	for _, item := range items {
+		for _, signature := range item.Document.AnalysisSignatures {
+			data, _ := json.Marshal(signature)
+			definition := string(data)
+			if definitions[signature.ID] == nil {
+				definitions[signature.ID] = map[string]bool{}
+			}
+			definitions[signature.ID][definition] = true
+			candidates = append(candidates, candidate{item: item, signature: signature, definition: definition})
+		}
+	}
+	seen := map[string]bool{}
+	var result []artifact.DeclarativeSignature
+	for _, candidate := range candidates {
+		id := candidate.signature.ID
+		if len(definitions[id]) > 1 {
+			id = candidate.item.Catalog + "/" + id
+		}
+		key := id + "\x00" + candidate.definition
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		converted := artifact.DeclarativeSignature{
+			ID: id, Name: candidate.signature.Name, Summary: candidate.signature.Summary, Catalog: candidate.item.Catalog,
+			RequiredStrings: append([]string(nil), candidate.signature.RequiredStrings...),
+			Effects:         append([]string(nil), candidate.signature.Effects...), Requirements: append([]string(nil), candidate.signature.Requirements...),
+		}
+		for _, step := range candidate.signature.Steps {
+			converted.Steps = append(converted.Steps, artifact.DeclarativeSignatureStep{Action: step.Action, APIs: append([]string(nil), step.APIs...)})
+		}
+		result = append(result, converted)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result
 }
 
 func capabilityID(value string) string {

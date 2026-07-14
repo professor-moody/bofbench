@@ -438,6 +438,273 @@ static void bofbench_feature_domain_context(void) {
 		Call: "bofbench_feature_domain_context();",
 	},
 	{
+		Name:        "process-tree",
+		Description: "enumerate a bounded process tree with session and architecture context",
+		Declaration: `HANDLE WINAPI KERNEL32$CreateToolhelp32Snapshot(DWORD, DWORD);
+BOOL WINAPI KERNEL32$Process32First(HANDLE, LPPROCESSENTRY32);
+BOOL WINAPI KERNEL32$Process32Next(HANDLE, LPPROCESSENTRY32);
+BOOL WINAPI KERNEL32$ProcessIdToSessionId(DWORD, DWORD *);
+HANDLE WINAPI KERNEL32$OpenProcess(DWORD, BOOL, DWORD);
+BOOL WINAPI KERNEL32$IsWow64Process(HANDLE, PBOOL);
+BOOL WINAPI KERNEL32$CloseHandle(HANDLE);
+
+static BOOL bofbench_process_tree_match(const char *value, const char *filter, int length) {
+    int start = 0;
+    if (filter == NULL || length <= 0) return TRUE;
+    while (value[start] != '\0') {
+        int index = 0;
+        while (index < length && value[start + index] != '\0') {
+            char left = value[start + index];
+            char right = filter[index];
+            if (left >= 'A' && left <= 'Z') left = (char)(left + 32);
+            if (right >= 'A' && right <= 'Z') right = (char)(right + 32);
+            if (left != right) break;
+            index++;
+        }
+        if (index == length) return TRUE;
+        start++;
+    }
+    return FALSE;
+}
+
+static void bofbench_feature_process_tree(datap *parser) {
+    int filter_length = 0;
+    char *filter = BeaconDataExtract(parser, &filter_length);
+    int requested = BeaconDataInt(parser);
+    DWORD limit = requested > 0 ? (DWORD)requested : 25;
+    DWORD shown = 0;
+    PROCESSENTRY32 entry;
+    HANDLE snapshot;
+    if (limit > 256) limit = 256;
+    snapshot = KERNEL32$CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        BeaconPrintf(CALLBACK_ERROR, "[process-tree] status=error api=CreateToolhelp32Snapshot");
+        return;
+    }
+    entry.dwSize = sizeof(entry);
+    if (!KERNEL32$Process32First(snapshot, &entry)) {
+        KERNEL32$CloseHandle(snapshot);
+        BeaconPrintf(CALLBACK_ERROR, "[process-tree] status=error api=Process32First");
+        return;
+    }
+    do {
+        DWORD session = 0;
+        BOOL wow64 = FALSE;
+        HANDLE process = NULL;
+        if (!bofbench_process_tree_match(entry.szExeFile, filter, filter_length > 0 ? filter_length - 1 : 0)) continue;
+        KERNEL32$ProcessIdToSessionId(entry.th32ProcessID, &session);
+        process = KERNEL32$OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
+        if (process != NULL) {
+            KERNEL32$IsWow64Process(process, &wow64);
+            KERNEL32$CloseHandle(process);
+        }
+        BeaconPrintf(CALLBACK_OUTPUT, "[process-tree] pid=%lu ppid=%lu session=%lu arch=%s image=%s",
+            entry.th32ProcessID, entry.th32ParentProcessID, session, wow64 ? "x86" : "x64", entry.szExeFile);
+        shown++;
+    } while (shown < limit && KERNEL32$Process32Next(snapshot, &entry));
+    KERNEL32$CloseHandle(snapshot);
+    BeaconPrintf(CALLBACK_OUTPUT, "[process-tree] status=complete shown=%lu limit=%lu filter=%s", shown, limit, filter_length > 1 ? filter : "*");
+}`,
+		Call: "bofbench_feature_process_tree($PARSER);",
+	},
+	{
+		Name:        "thread-inventory",
+		Description: "enumerate bounded thread identifiers and priorities for one process",
+		Declaration: `HANDLE WINAPI KERNEL32$CreateToolhelp32Snapshot(DWORD, DWORD);
+BOOL WINAPI KERNEL32$Thread32First(HANDLE, LPTHREADENTRY32);
+BOOL WINAPI KERNEL32$Thread32Next(HANDLE, LPTHREADENTRY32);
+BOOL WINAPI KERNEL32$CloseHandle(HANDLE);
+
+static void bofbench_feature_thread_inventory(datap *parser) {
+    DWORD target_pid = (DWORD)BeaconDataInt(parser);
+    int requested = BeaconDataInt(parser);
+    DWORD limit = requested > 0 ? (DWORD)requested : 64;
+    DWORD shown = 0;
+    THREADENTRY32 entry;
+    HANDLE snapshot;
+    if (limit > 512) limit = 512;
+    snapshot = KERNEL32$CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        BeaconPrintf(CALLBACK_ERROR, "[thread-inventory] status=error api=CreateToolhelp32Snapshot");
+        return;
+    }
+    entry.dwSize = sizeof(entry);
+    if (!KERNEL32$Thread32First(snapshot, &entry)) {
+        KERNEL32$CloseHandle(snapshot);
+        BeaconPrintf(CALLBACK_ERROR, "[thread-inventory] status=error api=Thread32First");
+        return;
+    }
+    do {
+        if (entry.th32OwnerProcessID != target_pid) continue;
+        BeaconPrintf(CALLBACK_OUTPUT, "[thread-inventory] pid=%lu tid=%lu base_priority=%ld delta_priority=%ld",
+            target_pid, entry.th32ThreadID, entry.tpBasePri, entry.tpDeltaPri);
+        shown++;
+    } while (shown < limit && KERNEL32$Thread32Next(snapshot, &entry));
+    KERNEL32$CloseHandle(snapshot);
+    BeaconPrintf(CALLBACK_OUTPUT, "[thread-inventory] status=complete pid=%lu shown=%lu limit=%lu", target_pid, shown, limit);
+}`,
+		Call: "bofbench_feature_thread_inventory($PARSER);",
+	},
+	{
+		Name:        "named-pipe-inventory",
+		Description: "enumerate bounded named-pipe entries with an optional prefix filter",
+		Declaration: `HANDLE WINAPI KERNEL32$FindFirstFileA(LPCSTR, LPWIN32_FIND_DATAA);
+BOOL WINAPI KERNEL32$FindNextFileA(HANDLE, LPWIN32_FIND_DATAA);
+BOOL WINAPI KERNEL32$FindClose(HANDLE);
+
+static BOOL bofbench_pipe_prefix(const char *value, const char *prefix, int length) {
+    int index = 0;
+    if (prefix == NULL || length <= 0) return TRUE;
+    while (index < length && value[index] != '\0') {
+        char left = value[index];
+        char right = prefix[index];
+        if (left >= 'A' && left <= 'Z') left = (char)(left + 32);
+        if (right >= 'A' && right <= 'Z') right = (char)(right + 32);
+        if (left != right) return FALSE;
+        index++;
+    }
+    return index == length;
+}
+
+static void bofbench_feature_named_pipe_inventory(datap *parser) {
+    int prefix_length = 0;
+    char *prefix = BeaconDataExtract(parser, &prefix_length);
+    int requested = BeaconDataInt(parser);
+    DWORD limit = requested > 0 ? (DWORD)requested : 64;
+    DWORD shown = 0;
+    WIN32_FIND_DATAA entry;
+    HANDLE search;
+    if (limit > 512) limit = 512;
+    search = KERNEL32$FindFirstFileA("\\\\.\\pipe\\*", &entry);
+    if (search == INVALID_HANDLE_VALUE) {
+        BeaconPrintf(CALLBACK_ERROR, "[named-pipe-inventory] status=error api=FindFirstFileA");
+        return;
+    }
+    do {
+        if (!bofbench_pipe_prefix(entry.cFileName, prefix, prefix_length > 0 ? prefix_length - 1 : 0)) continue;
+        BeaconPrintf(CALLBACK_OUTPUT, "[named-pipe-inventory] name=%s", entry.cFileName);
+        shown++;
+    } while (shown < limit && KERNEL32$FindNextFileA(search, &entry));
+    KERNEL32$FindClose(search);
+    BeaconPrintf(CALLBACK_OUTPUT, "[named-pipe-inventory] status=complete shown=%lu limit=%lu prefix=%s", shown, limit, prefix_length > 1 ? prefix : "*");
+}`,
+		Call: "bofbench_feature_named_pipe_inventory($PARSER);",
+	},
+	{
+		Name:        "ldap-query",
+		Description: "run a bounded LDAP query with an explicit base, filter, and attribute list",
+		Declaration: `#include <winldap.h>
+#include <dsgetdc.h>
+DWORD WINAPI NETAPI32$DsGetDcNameA(LPCSTR, LPCSTR, GUID *, LPCSTR, ULONG, PDOMAIN_CONTROLLER_INFOA *);
+NET_API_STATUS NET_API_FUNCTION NETAPI32$NetApiBufferFree(LPVOID);
+LDAP * LDAPAPI WLDAP32$ldap_initA(PCHAR, ULONG);
+ULONG LDAPAPI WLDAP32$ldap_set_optionA(LDAP *, int, const void *);
+ULONG LDAPAPI WLDAP32$ldap_connect(LDAP *, struct l_timeval *);
+ULONG LDAPAPI WLDAP32$ldap_bind_sA(LDAP *, PCHAR, PCHAR, ULONG);
+ULONG LDAPAPI WLDAP32$ldap_search_sA(LDAP *, PCHAR, ULONG, PCHAR, PCHAR *, ULONG, LDAPMessage **);
+LDAPMessage * LDAPAPI WLDAP32$ldap_first_entry(LDAP *, LDAPMessage *);
+LDAPMessage * LDAPAPI WLDAP32$ldap_next_entry(LDAP *, LDAPMessage *);
+PCHAR LDAPAPI WLDAP32$ldap_get_dnA(LDAP *, LDAPMessage *);
+PCHAR * LDAPAPI WLDAP32$ldap_get_valuesA(LDAP *, LDAPMessage *, PCHAR);
+ULONG LDAPAPI WLDAP32$ldap_value_freeA(PCHAR *);
+VOID LDAPAPI WLDAP32$ldap_memfreeA(PCHAR);
+ULONG LDAPAPI WLDAP32$ldap_msgfree(LDAPMessage *);
+ULONG LDAPAPI WLDAP32$ldap_unbind_s(LDAP *);
+
+static void bofbench_domain_to_base(const char *domain, char *base, DWORD capacity) {
+    DWORD used = 0;
+    DWORD index = 0;
+    while (domain != NULL && domain[index] != '\0' && used + 4 < capacity) {
+        if (index == 0 || domain[index - 1] == '.') {
+            if (used > 0) base[used++] = ',';
+            base[used++] = 'D'; base[used++] = 'C'; base[used++] = '=';
+        }
+        if (domain[index] != '.') base[used++] = domain[index];
+        index++;
+    }
+    base[used] = '\0';
+}
+
+static void bofbench_feature_ldap_query(datap *parser) {
+    int server_length = 0, base_length = 0, filter_length = 0, attributes_length = 0;
+    char *server = BeaconDataExtract(parser, &server_length);
+    char *base = BeaconDataExtract(parser, &base_length);
+    char *filter = BeaconDataExtract(parser, &filter_length);
+    char *attributes_text = BeaconDataExtract(parser, &attributes_length);
+    int requested = BeaconDataInt(parser);
+    DWORD limit = requested > 0 ? (DWORD)requested : 25;
+    PDOMAIN_CONTROLLER_INFOA dc = NULL;
+    LDAP *ldap = NULL;
+    LDAPMessage *message = NULL;
+    LDAPMessage *entry = NULL;
+    char base_buffer[512];
+    char *attributes[9];
+    DWORD attribute_count = 0;
+    DWORD shown = 0;
+    ULONG version = LDAP_VERSION3;
+    ULONG status;
+    DWORD index;
+    if (limit > 100) limit = 100;
+    if (NETAPI32$DsGetDcNameA(NULL, NULL, NULL, NULL, DS_DIRECTORY_SERVICE_REQUIRED, &dc) != ERROR_SUCCESS || dc == NULL) {
+        BeaconPrintf(CALLBACK_ERROR, "[ldap-query] status=error api=DsGetDcNameA");
+        return;
+    }
+    if (server_length <= 1) server = dc->DomainControllerName + 2;
+    if (base_length <= 1) {
+        bofbench_domain_to_base(dc->DomainName, base_buffer, sizeof(base_buffer));
+        base = base_buffer;
+    }
+    if (filter_length <= 1) filter = "(objectClass=*)";
+    if (attributes_length <= 1) attributes_text = "distinguishedName";
+    attributes[attribute_count++] = attributes_text;
+    for (index = 0; attributes_text[index] != '\0' && attribute_count < 8; index++) {
+        if (attributes_text[index] == ',') {
+            attributes_text[index] = '\0';
+            attributes[attribute_count++] = &attributes_text[index + 1];
+        }
+    }
+    attributes[attribute_count] = NULL;
+    ldap = WLDAP32$ldap_initA(server, LDAP_PORT);
+    if (ldap == NULL) {
+        NETAPI32$NetApiBufferFree(dc);
+        BeaconPrintf(CALLBACK_ERROR, "[ldap-query] status=error api=ldap_initA");
+        return;
+    }
+    WLDAP32$ldap_set_optionA(ldap, LDAP_OPT_PROTOCOL_VERSION, &version);
+    status = WLDAP32$ldap_connect(ldap, NULL);
+    if (status == LDAP_SUCCESS) status = WLDAP32$ldap_bind_sA(ldap, NULL, NULL, LDAP_AUTH_NEGOTIATE);
+    if (status == LDAP_SUCCESS) status = WLDAP32$ldap_search_sA(ldap, base, LDAP_SCOPE_SUBTREE, filter, attributes, 0, &message);
+    if (status != LDAP_SUCCESS) {
+        BeaconPrintf(CALLBACK_ERROR, "[ldap-query] status=error ldap_status=%lu server=%s base=%s", status, server, base);
+        if (message != NULL) WLDAP32$ldap_msgfree(message);
+        WLDAP32$ldap_unbind_s(ldap);
+        NETAPI32$NetApiBufferFree(dc);
+        return;
+    }
+    entry = WLDAP32$ldap_first_entry(ldap, message);
+    while (entry != NULL && shown < limit) {
+        PCHAR dn = WLDAP32$ldap_get_dnA(ldap, entry);
+        DWORD attribute_index;
+        BeaconPrintf(CALLBACK_OUTPUT, "[ldap-query] row=%lu dn=%s", shown + 1, dn != NULL ? dn : "");
+        for (attribute_index = 0; attribute_index < attribute_count; attribute_index++) {
+            PCHAR *values = WLDAP32$ldap_get_valuesA(ldap, entry, attributes[attribute_index]);
+            if (values != NULL && values[0] != NULL) {
+                BeaconPrintf(CALLBACK_OUTPUT, "[ldap-query] row=%lu attribute=%s value=%s", shown + 1, attributes[attribute_index], values[0]);
+                WLDAP32$ldap_value_freeA(values);
+            }
+        }
+        if (dn != NULL) WLDAP32$ldap_memfreeA(dn);
+        shown++;
+        entry = WLDAP32$ldap_next_entry(ldap, entry);
+    }
+    BeaconPrintf(CALLBACK_OUTPUT, "[ldap-query] status=complete shown=%lu limit=%lu server=%s base=%s filter=%s", shown, limit, server, base, filter);
+    WLDAP32$ldap_msgfree(message);
+    WLDAP32$ldap_unbind_s(ldap);
+    NETAPI32$NetApiBufferFree(dc);
+}`,
+		Call: "bofbench_feature_ldap_query($PARSER);",
+	},
+	{
 		Name:        "lab-file-write",
 		Description: "create a known BOFBench marker file in the Windows temporary directory",
 		Declaration: `DWORD WINAPI KERNEL32$GetTempPathA(DWORD, LPSTR);

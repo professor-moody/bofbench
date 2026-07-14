@@ -121,9 +121,19 @@ work/bin/bofbench arsenal inventory arsenal/trustedsec-sa
 work/bin/bofbench arsenal search arsenal/trustedsec-sa --can token
 work/bin/bofbench arsenal search arsenal/trustedsec-sa \
   --effect credential-access --works-with sliver
+work/bin/bofbench arsenal search arsenal/trustedsec-sa \
+  --arch x64 --confidence 'strong chain' --has-args
 ```
 
-Indexes include capabilities, behavior chains, arguments, effects, requirements, architecture, loader support, source/version, runtime targets, and duplicate object groups.
+Indexes include capabilities, behavior chains, arguments, effects, requirements, architecture, loader support, source/version, runtime targets, and duplicate object groups. Exact object analyses are cached and refreshed only when the object, source identity, or analyzer signature set changes.
+
+Scale pack validation and live proof from the same manifests:
+
+```bash
+work/bin/bofbench pack test --all --catalog builtin
+work/bin/bofbench pack test --all --catalog internal
+work/bin/bofbench pack prove internal/section-map-inject --via lab --lab devbox
+```
 
 ## Operator TUI
 

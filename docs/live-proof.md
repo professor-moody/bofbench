@@ -33,6 +33,16 @@ bofbench analyze bofs/portable-survey
 
 The analysis should name discovery capabilities, read-only effects, `process_filter` and `result_limit` argument types, runtime requirements, and supported targets.
 
+Before the walkthrough, validate the catalog contracts in one command:
+
+```bash
+bofbench pack test --all --catalog builtin
+bofbench pack prove process-tree --via lab --lab dedicated
+bofbench pack prove thread-inventory --via lab --lab dedicated
+```
+
+Unavailable MSVC, domain, Sliver, or licensed Cobalt Strike coverage is recorded as unavailable rather than misreported as a pack failure.
+
 ### Run different queries without rebuilding
 
 ```bash
@@ -174,7 +184,7 @@ bofbench run bofs/task-proof --via lab --lab dedicated --cleanup \
   --arg task_name=BOFBench-LiveProof
 ```
 
-After each cleanup, verify from an independent Windows administrative shell that the exact Run value or task no longer exists.
+After each cleanup, verify from an independent Windows administrative shell that the exact Run value or task no longer exists. Declarative `pack prove` cases perform their named verification automatically when the pack provides it.
 
 ### Service and explicit remote-service proof
 

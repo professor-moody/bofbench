@@ -22,14 +22,16 @@ import (
 )
 
 const (
-	Schema            = "bofbench.pack"
-	SchemaVersion     = 1
-	LockSchema        = "bofbench.pack-lock"
-	LockSchemaVersion = 1
-	LockName          = "bofbench.lock.json"
+	Schema               = "bofbench.pack"
+	SchemaVersion        = 2
+	MinimumSchemaVersion = 1
+	LockSchema           = "bofbench.pack-lock"
+	LockSchemaVersion    = 1
+	LockName             = "bofbench.lock.json"
 )
 
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+var placeholderPattern = regexp.MustCompile(`\$[A-Z][A-Z0-9_]*`)
 
 type Argument struct {
 	Name        string `json:"name"`
@@ -45,27 +47,57 @@ type Source struct {
 	Calls           []string `json:"calls,omitempty"`
 }
 
+type AnalysisStep struct {
+	Action string   `json:"action"`
+	APIs   []string `json:"apis"`
+}
+
+type AnalysisSignature struct {
+	ID              string         `json:"id"`
+	Name            string         `json:"name"`
+	Summary         string         `json:"summary"`
+	Steps           []AnalysisStep `json:"steps"`
+	RequiredStrings []string       `json:"required_strings,omitempty"`
+	Effects         []string       `json:"effects"`
+	Requirements    []string       `json:"requirements,omitempty"`
+}
+
+type ProofExpectation struct {
+	Tag    string            `json:"tag"`
+	Fields map[string]string `json:"fields,omitempty"`
+}
+
+type ProofCase struct {
+	ID        string            `json:"id"`
+	Via       []string          `json:"via"`
+	Arguments map[string]string `json:"arguments,omitempty"`
+	Expect    ProofExpectation  `json:"expect"`
+	Cleanup   bool              `json:"cleanup,omitempty"`
+}
+
 type Document struct {
-	Schema           string     `json:"schema"`
-	SchemaVersion    int        `json:"schema_version"`
-	ID               string     `json:"id"`
-	Version          string     `json:"version"`
-	Title            string     `json:"title"`
-	Summary          string     `json:"summary"`
-	Tier             string     `json:"tier"`
-	Capabilities     []string   `json:"capabilities"`
-	Effects          []string   `json:"effects"`
-	Platforms        []string   `json:"platforms"`
-	Architecture     []string   `json:"architecture"`
-	Privilege        string     `json:"privilege"`
-	Network          string     `json:"network"`
-	Arguments        []Argument `json:"arguments,omitempty"`
-	Dependencies     []string   `json:"dependencies,omitempty"`
-	Source           Source     `json:"source"`
-	ExpectedAnalysis []string   `json:"expected_analysis,omitempty"`
-	OutputFields     []string   `json:"output_fields,omitempty"`
-	CleanupPack      string     `json:"cleanup_pack,omitempty"`
-	TargetSupport    []string   `json:"target_support"`
+	Schema             string              `json:"schema"`
+	SchemaVersion      int                 `json:"schema_version"`
+	ID                 string              `json:"id"`
+	Version            string              `json:"version"`
+	Title              string              `json:"title"`
+	Summary            string              `json:"summary"`
+	Tier               string              `json:"tier"`
+	Capabilities       []string            `json:"capabilities"`
+	Effects            []string            `json:"effects"`
+	Platforms          []string            `json:"platforms"`
+	Architecture       []string            `json:"architecture"`
+	Privilege          string              `json:"privilege"`
+	Network            string              `json:"network"`
+	Arguments          []Argument          `json:"arguments,omitempty"`
+	Dependencies       []string            `json:"dependencies,omitempty"`
+	Source             Source              `json:"source"`
+	ExpectedAnalysis   []string            `json:"expected_analysis,omitempty"`
+	AnalysisSignatures []AnalysisSignature `json:"analysis_signatures,omitempty"`
+	ProofCases         []ProofCase         `json:"proof_cases,omitempty"`
+	OutputFields       []string            `json:"output_fields,omitempty"`
+	CleanupPack        string              `json:"cleanup_pack,omitempty"`
+	TargetSupport      []string            `json:"target_support"`
 }
 
 type Resolved struct {
@@ -178,10 +210,24 @@ func Load(opts LoadOptions) (*Registry, error) {
 		}
 	}
 	for _, path := range opts.ExtraCatalogs {
+		if path == "builtin" {
+			continue
+		}
+		resolvedPath := path
 		name := strings.ToLower(filepath.Base(filepath.Clean(path)))
-		if err := loadCatalog(path, name); err != nil {
+		for _, configured := range config.Catalogs {
+			if configured.Name == path {
+				resolvedPath = configured.Path
+				name = configured.Name
+				break
+			}
+		}
+		if err := loadCatalog(resolvedPath, name); err != nil {
 			return nil, err
 		}
+	}
+	if err := r.validateReferences(); err != nil {
+		return nil, err
 	}
 	return r, nil
 }
@@ -218,6 +264,36 @@ func (r *Registry) Search(query string) []Resolved {
 		}
 	}
 	return out
+}
+
+func (r *Registry) ResolveRelated(owner Resolved, reference string) (Resolved, error) {
+	reference = strings.TrimSpace(reference)
+	if reference == "" {
+		return Resolved{}, fmt.Errorf("empty related pack reference")
+	}
+	if strings.Contains(reference, "/") {
+		return r.Resolve(reference)
+	}
+	if item, ok := r.items[owner.Catalog+"/"+reference]; ok {
+		return item, nil
+	}
+	return r.Resolve(reference)
+}
+
+func (r *Registry) validateReferences() error {
+	for _, item := range r.List() {
+		for _, dependency := range item.Document.Dependencies {
+			if _, err := r.ResolveRelated(item, dependency); err != nil {
+				return fmt.Errorf("pack %s dependency %s: %w", item.Qualified, dependency, err)
+			}
+		}
+		if item.Document.CleanupPack != "" {
+			if _, err := r.ResolveRelated(item, item.Document.CleanupPack); err != nil {
+				return fmt.Errorf("pack %s cleanup %s: %w", item.Qualified, item.Document.CleanupPack, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (r *Registry) Resolve(name string) (Resolved, error) {
@@ -280,7 +356,11 @@ func (r *Registry) Apply(project string, names []string) (ApplyResult, error) {
 		}
 		visiting[item.Qualified] = true
 		for _, dependency := range item.Document.Dependencies {
-			if err := apply(dependency); err != nil {
+			resolvedDependency, resolveErr := r.ResolveRelated(item, dependency)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			if err := apply(resolvedDependency.Qualified); err != nil {
 				return fmt.Errorf("%s dependency %s: %w", item.Qualified, dependency, err)
 			}
 		}
@@ -592,6 +672,55 @@ func builtins() []Resolved {
 	systemDiscovery.OutputFields = []string{"pid", "image", "elevated", "integrity", "service", "state", "status"}
 	systemDiscovery.ExpectedAnalysis = []string{"process enumeration", "token inspection", "service enumeration", "Beacon argument parsing"}
 	byID["system-discovery"] = systemDiscovery
+	processTree := byID["process-tree"]
+	processTree.Title = "Process Tree Inventory"
+	processTree.Capabilities = []string{"bounded process tree inventory", "process session and architecture context"}
+	processTree.Arguments = []Argument{{Name: "process_filter", Type: "string", Description: "case-insensitive image substring; empty matches all", Default: ""}, {Name: "result_limit", Type: "int", Description: "maximum rows (1-256)", Default: "25"}}
+	processTree.ExpectedAnalysis = []string{"process_tree_inventory"}
+	processTree.OutputFields = []string{"pid", "ppid", "session", "arch", "image", "shown", "limit", "filter", "status"}
+	processTree.AnalysisSignatures = []AnalysisSignature{{ID: "process_tree_inventory", Name: "Process-tree inventory", Summary: "Enumerate processes and correlate parent, session, and architecture context.", Steps: []AnalysisStep{{Action: "enumerate processes", APIs: []string{"CreateToolhelp32Snapshot"}}, {Action: "read process rows", APIs: []string{"Process32First", "Process32FirstW"}}, {Action: "resolve sessions", APIs: []string{"ProcessIdToSessionId"}}}, Effects: []string{"reads process metadata"}, Requirements: []string{"process snapshot access"}}}
+	processTree.ProofCases = []ProofCase{{ID: "bounded", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"process_filter": "", "result_limit": "10"}, Expect: ProofExpectation{Tag: "process-tree", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["process-tree"] = processTree
+	threadInventory := byID["thread-inventory"]
+	threadInventory.Title = "Thread Inventory"
+	threadInventory.Capabilities = []string{"bounded thread inventory for one process"}
+	threadInventory.Arguments = []Argument{{Name: "target_pid", Type: "int", Description: "exact process identifier", Required: true}, {Name: "result_limit", Type: "int", Description: "maximum rows (1-512)", Default: "64"}}
+	threadInventory.ExpectedAnalysis = []string{"thread_inventory"}
+	threadInventory.OutputFields = []string{"pid", "tid", "base_priority", "delta_priority", "shown", "limit", "status"}
+	threadInventory.AnalysisSignatures = []AnalysisSignature{{ID: "thread_inventory", Name: "Thread inventory", Summary: "Enumerate thread identifiers owned by one selected process.", Steps: []AnalysisStep{{Action: "create thread snapshot", APIs: []string{"CreateToolhelp32Snapshot"}}, {Action: "enumerate threads", APIs: []string{"Thread32First"}}}, Effects: []string{"reads process metadata"}, Requirements: []string{"an exact target PID"}}}
+	threadInventory.ProofCases = []ProofCase{{ID: "target-threads", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID", "result_limit": "16"}, Expect: ProofExpectation{Tag: "thread-inventory", Fields: map[string]string{"status": "complete", "pid": "*"}}}}
+	byID["thread-inventory"] = threadInventory
+	pipeInventory := byID["named-pipe-inventory"]
+	pipeInventory.Title = "Named Pipe Inventory"
+	pipeInventory.Capabilities = []string{"bounded named-pipe discovery"}
+	pipeInventory.Arguments = []Argument{{Name: "prefix", Type: "string", Description: "case-insensitive pipe-name prefix; empty matches all", Default: ""}, {Name: "result_limit", Type: "int", Description: "maximum rows (1-512)", Default: "64"}}
+	pipeInventory.ExpectedAnalysis = []string{"named_pipe_inventory"}
+	pipeInventory.OutputFields = []string{"name", "shown", "limit", "prefix", "status"}
+	pipeInventory.AnalysisSignatures = []AnalysisSignature{{ID: "named_pipe_inventory", Name: "Named-pipe inventory", Summary: "Enumerate bounded entries from the local named-pipe namespace.", Steps: []AnalysisStep{{Action: "open pipe namespace search", APIs: []string{"FindFirstFileA", "FindFirstFileW"}}, {Action: "enumerate pipe names", APIs: []string{"FindNextFileA", "FindNextFileW"}}}, RequiredStrings: []string{`\\.\pipe\*`}, Effects: []string{"reads named-pipe metadata"}}}
+	pipeInventory.ProofCases = []ProofCase{{ID: "bounded", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"prefix": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "named-pipe-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["named-pipe-inventory"] = pipeInventory
+	ldapQuery := byID["ldap-query"]
+	ldapQuery.Title = "Bounded LDAP Query"
+	ldapQuery.Capabilities = []string{"bounded LDAP directory query", "explicit attribute retrieval"}
+	ldapQuery.Network = "domain"
+	ldapQuery.Arguments = []Argument{{Name: "server", Type: "string", Description: "domain controller; empty discovers the current domain", Default: ""}, {Name: "base_dn", Type: "string", Description: "LDAP base DN; empty derives the current domain", Default: ""}, {Name: "filter", Type: "string", Description: "LDAP filter", Default: "(objectClass=*)"}, {Name: "attributes", Type: "string", Description: "comma-separated attributes (maximum eight)", Default: "distinguishedName"}, {Name: "result_limit", Type: "int", Description: "maximum directory entries (1-100)", Default: "25"}}
+	ldapQuery.ExpectedAnalysis = []string{"ldap_directory_query"}
+	ldapQuery.OutputFields = []string{"row", "dn", "attribute", "value", "shown", "limit", "server", "base", "filter", "status"}
+	ldapQuery.AnalysisSignatures = []AnalysisSignature{{ID: "ldap_directory_query", Name: "LDAP directory query", Summary: "Discover a domain controller, authenticate with the current context, and issue a bounded LDAP search.", Steps: []AnalysisStep{{Action: "discover domain controller", APIs: []string{"DsGetDcNameA", "DsGetDcNameW"}}, {Action: "connect to LDAP", APIs: []string{"ldap_connect"}}, {Action: "bind current context", APIs: []string{"ldap_bind_sA", "ldap_bind_sW"}}, {Action: "search directory", APIs: []string{"ldap_search_sA", "ldap_search_sW", "ldap_search_ext_sA", "ldap_search_ext_sW"}}}, Effects: []string{"reaches a domain controller", "reads directory data"}, Requirements: []string{"domain connectivity", "directory read access"}}}
+	byID["ldap-query"] = ldapQuery
+	for id, document := range byID {
+		for _, feature := range document.Source.Features {
+			if signature, ok := builtinContextSignature(feature); ok && !hasAnalysisSignature(document.AnalysisSignatures, signature.ID) {
+				document.AnalysisSignatures = append(document.AnalysisSignatures, signature)
+			}
+		}
+		if len(document.ExpectedAnalysis) > 0 && len(document.AnalysisSignatures) == 0 {
+			document.ExpectedAnalysis = builtinExpectedAnalysis(document.Source.Features)
+		} else if len(document.ExpectedAnalysis) > 0 && !hasSpecialPackSignature(document) {
+			document.ExpectedAnalysis = builtinExpectedAnalysis(document.Source.Features)
+		}
+		byID[id] = document
+	}
 	ids := make([]string, 0, len(byID))
 	for id := range byID {
 		ids = append(ids, id)
@@ -605,6 +734,55 @@ func builtins() []Resolved {
 		out = append(out, item)
 	}
 	return out
+}
+
+func builtinContextSignature(feature string) (AnalysisSignature, bool) {
+	switch feature {
+	case "process":
+		return AnalysisSignature{ID: "current_process_context", Name: "Current process context", Summary: "Read the current BOF loader process identifier.", Steps: []AnalysisStep{{Action: "read current process identifier", APIs: []string{"GetCurrentProcessId"}}}, Effects: []string{"reads process metadata"}}, true
+	case "host":
+		return AnalysisSignature{ID: "host_identity", Name: "Host identity", Summary: "Read the local computer name.", Steps: []AnalysisStep{{Action: "read computer name", APIs: []string{"GetComputerNameA", "GetComputerNameW"}}}, Effects: []string{"reads host metadata"}}, true
+	case "filesystem":
+		return AnalysisSignature{ID: "filesystem_context", Name: "Filesystem context", Summary: "Read the current Windows temporary-directory path.", Steps: []AnalysisStep{{Action: "read temporary path", APIs: []string{"GetTempPathA", "GetTempPathW"}}}, Effects: []string{"reads filesystem metadata"}}, true
+	case "lab-run-key":
+		return AnalysisSignature{ID: "run_key_persistence", Name: "Current-user Run-key persistence", Summary: "Create or open a current-user registry key and set a Run-key value.", Steps: []AnalysisStep{{Action: "open persistence key", APIs: []string{"RegCreateKeyExA", "RegCreateKeyExW"}}, {Action: "set persistence value", APIs: []string{"RegSetValueExA", "RegSetValueExW"}}}, Effects: []string{"writes registry state", "persists"}, Requirements: []string{"current-user registry write access"}}, true
+	default:
+		return AnalysisSignature{}, false
+	}
+}
+
+func hasAnalysisSignature(signatures []AnalysisSignature, id string) bool {
+	for _, signature := range signatures {
+		if signature.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSpecialPackSignature(document Document) bool {
+	for _, signature := range document.AnalysisSignatures {
+		if signature.ID != "current_process_context" && signature.ID != "host_identity" && signature.ID != "filesystem_context" && signature.ID != "run_key_persistence" {
+			return true
+		}
+	}
+	return false
+}
+
+func builtinExpectedAnalysis(features []string) []string {
+	mapping := map[string]string{
+		"process": "current_process_context", "host": "host_identity", "identity": "identity_account_sid", "filesystem": "filesystem_context",
+		"network": "network_tcp", "registry": "registry_read", "process-list": "process_inventory", "process-search": "process_inventory",
+		"token-context": "token_context", "service-list": "service_inventory", "tcp-connections": "network_tcp", "domain-context": "domain_context",
+		"lab-file-write": "file_write", "lab-registry-write": "registry_write", "lab-run-key": "run_key_persistence", "lab-process-launch": "process_launch", "lab-cleanup": "file_write",
+	}
+	var result []string
+	for _, feature := range features {
+		if expected := mapping[feature]; expected != "" && !contains(result, expected) {
+			result = append(result, expected)
+		}
+	}
+	return result
 }
 
 func baseBuiltin(id, title, summary string, features, effects []string) Document {
@@ -640,8 +818,11 @@ func effectsForImpact(impact string) []string {
 
 func validate(document Document, root string) error {
 	var problems []string
-	if document.Schema != Schema || document.SchemaVersion != SchemaVersion {
-		problems = append(problems, fmt.Sprintf("schema must be %s version %d", Schema, SchemaVersion))
+	if document.Schema != Schema || document.SchemaVersion < MinimumSchemaVersion || document.SchemaVersion > SchemaVersion {
+		problems = append(problems, fmt.Sprintf("schema must be %s version %d or %d", Schema, MinimumSchemaVersion, SchemaVersion))
+	}
+	if document.SchemaVersion == 1 && (len(document.AnalysisSignatures) > 0 || len(document.ProofCases) > 0) {
+		problems = append(problems, "analysis_signatures and proof_cases require schema version 2")
 	}
 	if !idPattern.MatchString(document.ID) {
 		problems = append(problems, "id must contain lowercase letters, numbers, dot, underscore, or hyphen")
@@ -674,6 +855,53 @@ func validate(document Document, root string) error {
 	for _, relative := range document.Source.HeaderFragments {
 		if _, err := safeSourcePath(root, relative); err != nil {
 			problems = append(problems, err.Error())
+		}
+	}
+	seenSignatures := map[string]bool{}
+	for _, signature := range document.AnalysisSignatures {
+		if !idPattern.MatchString(signature.ID) {
+			problems = append(problems, fmt.Sprintf("invalid analysis signature id %q", signature.ID))
+		}
+		if seenSignatures[signature.ID] {
+			problems = append(problems, fmt.Sprintf("duplicate analysis signature %q", signature.ID))
+		}
+		seenSignatures[signature.ID] = true
+		if strings.TrimSpace(signature.Name) == "" || strings.TrimSpace(signature.Summary) == "" || len(signature.Steps) == 0 || len(signature.Effects) == 0 {
+			problems = append(problems, fmt.Sprintf("analysis signature %s requires name, summary, steps, and effects", signature.ID))
+		}
+		for _, step := range signature.Steps {
+			if strings.TrimSpace(step.Action) == "" || len(step.APIs) == 0 {
+				problems = append(problems, fmt.Sprintf("analysis signature %s has an incomplete step", signature.ID))
+			}
+		}
+	}
+	allowedPlaceholders := map[string]bool{"$TARGET_PID": true, "$TARGET_TID": true, "$MEMORY_ADDRESS": true, "$MEMORY_SIZE": true, "$CANARY_PATH": true, "$DPAPI_USER_PATH": true, "$DPAPI_MACHINE_PATH": true, "$LAB_HOST": true, "$TEMP": true, "$RUN_ID": true}
+	seenProofs := map[string]bool{}
+	for _, proof := range document.ProofCases {
+		if !idPattern.MatchString(proof.ID) || seenProofs[proof.ID] {
+			problems = append(problems, fmt.Sprintf("invalid or duplicate proof case id %q", proof.ID))
+		}
+		seenProofs[proof.ID] = true
+		if len(proof.Via) == 0 || !idPattern.MatchString(proof.Expect.Tag) {
+			problems = append(problems, fmt.Sprintf("proof case %s requires via and a valid expected tag", proof.ID))
+		}
+		for _, via := range proof.Via {
+			if !contains([]string{"native", "lab", "sliver", "cobaltstrike"}, via) {
+				problems = append(problems, fmt.Sprintf("proof case %s has unsupported runtime %q", proof.ID, via))
+			}
+		}
+		for name, value := range proof.Arguments {
+			if !seenArgs[name] {
+				problems = append(problems, fmt.Sprintf("proof case %s uses unknown argument %q", proof.ID, name))
+			}
+			for _, placeholder := range placeholderPattern.FindAllString(value, -1) {
+				if !allowedPlaceholders[placeholder] {
+					problems = append(problems, fmt.Sprintf("proof case %s uses unsupported placeholder %q", proof.ID, placeholder))
+				}
+			}
+		}
+		if proof.Cleanup && document.CleanupPack == "" {
+			problems = append(problems, fmt.Sprintf("proof case %s requests cleanup but the pack has no cleanup companion", proof.ID))
 		}
 	}
 	if len(problems) > 0 {

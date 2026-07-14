@@ -19,6 +19,12 @@ import (
 
 const LockFileName = "arsenal.lock.json"
 
+const (
+	arsenalIndexSchema        = "bofbench.arsenal-index"
+	arsenalIndexSchemaVersion = 1
+	analyzerCacheVersion      = "behavior-v2"
+)
+
 type Inventory struct {
 	evidence.Header
 	Root            string                    `json:"root"`
@@ -32,6 +38,8 @@ type Inventory struct {
 	Entries         []InventoryEntry          `json:"entries"`
 	JSONPath        string                    `json:"json_path,omitempty"`
 	MarkdownPath    string                    `json:"markdown_path,omitempty"`
+	IndexPath       string                    `json:"index_path,omitempty"`
+	SignatureSet    string                    `json:"analyzer_signature_set"`
 }
 
 type InventorySummary struct {
@@ -45,6 +53,8 @@ type InventorySummary struct {
 	AnalysisFailed  int            `json:"analysis_failed"`
 	NeedsArguments  int            `json:"needs_arguments"`
 	DuplicateGroups int            `json:"duplicate_groups"`
+	CacheHits       int            `json:"cache_hits"`
+	Refreshed       int            `json:"refreshed"`
 	ByCapability    map[string]int `json:"by_capability,omitempty"`
 }
 
@@ -52,11 +62,14 @@ type InventorySummary struct {
 // field must match, while values inside a field use case-insensitive substring
 // matching so "token" can find token inspection and token impersonation.
 type InventoryFilters struct {
-	Query     string `json:"query,omitempty"`
-	Can       string `json:"can,omitempty"`
-	Effect    string `json:"effect,omitempty"`
-	WorksWith string `json:"works_with,omitempty"`
-	Requires  string `json:"requires,omitempty"`
+	Query      string `json:"query,omitempty"`
+	Can        string `json:"can,omitempty"`
+	Effect     string `json:"effect,omitempty"`
+	WorksWith  string `json:"works_with,omitempty"`
+	Requires   string `json:"requires,omitempty"`
+	Arch       string `json:"arch,omitempty"`
+	Confidence string `json:"confidence,omitempty"`
+	HasArgs    *bool  `json:"has_args,omitempty"`
 }
 
 type InventoryEntry struct {
@@ -74,6 +87,7 @@ type InventoryEntry struct {
 	Capabilities     []string                  `json:"capabilities,omitempty"`
 	CapabilityIDs    []string                  `json:"capability_ids,omitempty"`
 	BehaviorChains   []string                  `json:"behavior_chains,omitempty"`
+	Confidences      []string                  `json:"confidences,omitempty"`
 	Effects          []string                  `json:"effects,omitempty"`
 	Requirements     []string                  `json:"requirements,omitempty"`
 	WorksWith        []string                  `json:"works_with,omitempty"`
@@ -81,6 +95,22 @@ type InventoryEntry struct {
 	SourceAndVersion artifact.SourceAndVersion `json:"source_and_version"`
 	VisibleStrings   []string                  `json:"visible_strings,omitempty"`
 	AnalysisError    string                    `json:"analysis_error,omitempty"`
+	AnalysisCached   bool                      `json:"analysis_cached,omitempty"`
+}
+
+type arsenalAnalysisIndex struct {
+	Schema        string                              `json:"schema"`
+	SchemaVersion int                                 `json:"schema_version"`
+	Root          string                              `json:"root"`
+	UpdatedAt     string                              `json:"updated_at"`
+	Entries       map[string]arsenalAnalysisIndexItem `json:"entries"`
+}
+
+type arsenalAnalysisIndexItem struct {
+	ObjectSHA256 string            `json:"object_sha256"`
+	Source       string            `json:"source_version"`
+	SignatureSet string            `json:"analyzer_signature_set"`
+	Analysis     artifact.Analysis `json:"analysis"`
 }
 
 type Lock struct {
@@ -177,13 +207,20 @@ func BuildInventory(root, query string) (Inventory, error) {
 }
 
 func BuildInventoryWithFilters(root string, filters InventoryFilters) (Inventory, error) {
+	return BuildInventoryWithSignatures(root, filters, nil)
+}
+
+func BuildInventoryWithSignatures(root string, filters InventoryFilters, signatures []artifact.DeclarativeSignature) (Inventory, error) {
 	entries, err := List(root)
 	if err != nil {
 		return Inventory{}, err
 	}
+	signatureSet := analyzerSignatureSet(signatures)
+	indexPath, index := loadArsenalAnalysisIndex(root)
 	report := Inventory{
 		Header: evidence.New(evidence.SchemaArsenalInventory, "", ""), Root: root, Query: strings.TrimSpace(filters.Query), Filters: filters,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339), Status: "pass", Summary: InventorySummary{ByCapability: map[string]int{}},
+		IndexPath: indexPath, SignatureSet: signatureSet,
 	}
 	if fingerprint, err := evidence.FingerprintTree(root); err == nil {
 		report.RootFingerprint = &fingerprint
@@ -193,13 +230,17 @@ func BuildInventoryWithFilters(root string, filters InventoryFilters) (Inventory
 	if source, err := loadSourceMetadata(root); err == nil {
 		report.Source = &source
 	}
+	sourceVersion := arsenalSourceVersion(report.Source, root)
 	for _, entry := range entries {
-		item := inventoryEntry(root, entry)
+		item := inventoryEntry(root, entry, sourceVersion, signatureSet, signatures, &index)
 		if matchesInventoryFilters(item, filters) {
 			report.Entries = append(report.Entries, item)
 		}
 	}
 	summarizeInventory(&report)
+	if err := writeArsenalAnalysisIndex(indexPath, index); err != nil {
+		return Inventory{}, err
+	}
 	return report, nil
 }
 
@@ -237,7 +278,8 @@ func CreateLock(root string) (Lock, error) {
 		lock.Source = &source
 	}
 	for _, entry := range entries {
-		item := LockedEntry{Name: entry.Name, Path: relativeSlash(root, entry.Path), HasSource: hasSource(entry.Path), SourceFiles: sourceFiles(root, entry.Path)}
+		sources := sourceFiles(root, entry.Path)
+		item := LockedEntry{Name: entry.Name, Path: relativeSlash(root, entry.Path), HasSource: len(sources) > 0, SourceFiles: sources}
 		for _, object := range []struct{ Arch, Path string }{{"x64", entry.X64}, {"x86", entry.X86}} {
 			if object.Path == "" {
 				continue
@@ -412,14 +454,20 @@ func InventoryText(report Inventory) string {
 	if report.Query != "" {
 		fmt.Fprintf(&b, "query     %s\n", report.Query)
 	}
-	fmt.Fprintf(&b, "summary   matches=%d x64=%d x86=%d runnable=%d loader-lookup=%d blocked=%d args=%d duplicates=%d\n", report.Summary.Entries, report.Summary.X64Objects, report.Summary.X86Objects, report.Summary.Compatible, report.Summary.RuntimeLookup, report.Summary.Blocked, report.Summary.NeedsArguments, report.Summary.DuplicateGroups)
-	for _, entry := range report.Entries {
-		fmt.Fprintf(&b, "\n%s\n", entry.Name)
-		fmt.Fprintf(&b, "  can do      %s\n", previewValues(append(append([]string{}, entry.BehaviorChains...), entry.Capabilities...), 6))
-		fmt.Fprintf(&b, "  effects     %s\n", previewValues(entry.Effects, 6))
-		fmt.Fprintf(&b, "  needs       %s\n", previewValues(entry.Requirements, 5))
-		fmt.Fprintf(&b, "  works with  %s\n", previewValues(entry.WorksWith, 5))
-		fmt.Fprintf(&b, "  object      %s; loader=%s; args=%t\n", entry.Path, emptyInventory(entry.Compatibility, "not-analyzed"), entry.NeedsArgs)
+	fmt.Fprintf(&b, "summary   matches=%d x64=%d x86=%d runnable=%d loader-lookup=%d blocked=%d args=%d duplicates=%d cached=%d refreshed=%d\n", report.Summary.Entries, report.Summary.X64Objects, report.Summary.X86Objects, report.Summary.Compatible, report.Summary.RuntimeLookup, report.Summary.Blocked, report.Summary.NeedsArguments, report.Summary.DuplicateGroups, report.Summary.CacheHits, report.Summary.Refreshed)
+	groups, groupNames := groupInventoryEntries(report.Entries)
+	for _, group := range groupNames {
+		fmt.Fprintf(&b, "\nCAPABILITY  %s\n", group)
+		for _, entry := range groups[group] {
+			fmt.Fprintf(&b, "%s\n", entry.Name)
+			fmt.Fprintf(&b, "  confidence  %s\n", previewValues(entry.Confidences, 3))
+			fmt.Fprintf(&b, "  arguments   required=%t; %s\n", entry.NeedsArgs, previewArgumentNames(entry.Arguments, entry.ArgumentAPIs))
+			fmt.Fprintf(&b, "  can do      %s\n", previewValues(append(append([]string{}, entry.BehaviorChains...), entry.Capabilities...), 6))
+			fmt.Fprintf(&b, "  effects     %s\n", previewValues(entry.Effects, 6))
+			fmt.Fprintf(&b, "  needs       %s\n", previewValues(entry.Requirements, 5))
+			fmt.Fprintf(&b, "  works with  %s\n", previewValues(entry.WorksWith, 5))
+			fmt.Fprintf(&b, "  object      %s; loader=%s; cached=%t\n", entry.Path, emptyInventory(entry.Compatibility, "not-analyzed"), entry.AnalysisCached)
+		}
 	}
 	if report.JSONPath != "" {
 		fmt.Fprintf(&b, "reports   %s %s\n", report.JSONPath, report.MarkdownPath)
@@ -430,12 +478,46 @@ func InventoryText(report Inventory) string {
 func InventoryMarkdown(report Inventory) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# BOF Arsenal Inventory\n\n- Root: `%s`\n- Query: `%s`\n- Entries: `%d`\n- x64/x86: `%d` / `%d`\n- Compatible/runtime lookup/blocked: `%d` / `%d` / `%d`\n\n", report.Root, report.Query, report.Summary.Entries, report.Summary.X64Objects, report.Summary.X86Objects, report.Summary.Compatible, report.Summary.RuntimeLookup, report.Summary.Blocked)
-	b.WriteString("| Name | Can do | Effects | Needs | Works with | Loader |\n| --- | --- | --- | --- | --- | --- | --- |\n")
+	b.WriteString("| Name | Can do | Confidence | Arguments | Effects | Needs | Works with | Loader |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, entry := range report.Entries {
 		canDo := append(append([]string{}, entry.BehaviorChains...), entry.Capabilities...)
-		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%s` | `%s` | `%s` |\n", entry.Name, strings.Join(canDo, ", "), strings.Join(entry.Effects, ", "), strings.Join(entry.Requirements, ", "), strings.Join(entry.WorksWith, ", "), entry.Compatibility)
+		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` | `%s` |\n", entry.Name, strings.Join(canDo, ", "), strings.Join(entry.Confidences, ", "), previewArgumentNames(entry.Arguments, entry.ArgumentAPIs), strings.Join(entry.Effects, ", "), strings.Join(entry.Requirements, ", "), strings.Join(entry.WorksWith, ", "), entry.Compatibility)
 	}
 	return b.String()
+}
+
+func groupInventoryEntries(entries []InventoryEntry) (map[string][]InventoryEntry, []string) {
+	groups := map[string][]InventoryEntry{}
+	for _, entry := range entries {
+		name := "Other analyzed behavior"
+		if len(entry.BehaviorChains) > 0 {
+			name = entry.BehaviorChains[0]
+		} else if len(entry.Capabilities) > 0 {
+			name = entry.Capabilities[0]
+		}
+		groups[name] = append(groups[name], entry)
+	}
+	var names []string
+	for name := range groups {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return groups, names
+}
+
+func previewArgumentNames(arguments []artifact.ArgumentHint, detected []string) string {
+	var names []string
+	for _, argument := range arguments {
+		label := argument.Name
+		if argument.Type != "" {
+			label += ":" + argument.Type
+		}
+		names = append(names, label)
+	}
+	if len(names) == 0 {
+		names = append(names, detected...)
+	}
+	return previewValues(names, 6)
 }
 
 func LockDiffText(report LockDiff) string {
@@ -490,24 +572,110 @@ func RegressionMarkdown(report RegressionReport) string {
 	return b.String()
 }
 
-func inventoryEntry(root string, entry Entry) InventoryEntry {
-	item := InventoryEntry{Name: entry.Name, Path: relativeSlash(root, entry.Path), HasSource: hasSource(entry.Path), SourceFiles: sourceFiles(root, entry.Path)}
+func analyzerSignatureSet(signatures []artifact.DeclarativeSignature) string {
+	copyOf := append([]artifact.DeclarativeSignature(nil), signatures...)
+	sort.Slice(copyOf, func(i, j int) bool { return copyOf[i].ID < copyOf[j].ID })
+	encoded, _ := json.Marshal(copyOf)
+	hash := sha256.New()
+	_, _ = io.WriteString(hash, analyzerCacheVersion+"\x00")
+	_, _ = hash.Write(encoded)
+	return fmt.Sprintf("%x", hash.Sum(nil))
+}
+
+func arsenalAnalysisIndexPath(root string) string {
+	absolute, err := filepath.Abs(root)
+	if err != nil {
+		absolute = filepath.Clean(root)
+	}
+	rootHash := sha256.Sum256([]byte(absolute))
+	cacheRoot, err := os.UserCacheDir()
+	if err != nil || cacheRoot == "" {
+		cacheRoot = os.TempDir()
+	}
+	return filepath.Join(cacheRoot, "bofbench", "arsenal", fmt.Sprintf("%x.json", rootHash[:12]))
+}
+
+func loadArsenalAnalysisIndex(root string) (string, arsenalAnalysisIndex) {
+	path := arsenalAnalysisIndexPath(root)
+	absolute, _ := filepath.Abs(root)
+	index := arsenalAnalysisIndex{Schema: arsenalIndexSchema, SchemaVersion: arsenalIndexSchemaVersion, Root: absolute, Entries: map[string]arsenalAnalysisIndexItem{}}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return path, index
+	}
+	var stored arsenalAnalysisIndex
+	if json.Unmarshal(data, &stored) != nil || stored.Schema != arsenalIndexSchema || stored.SchemaVersion != arsenalIndexSchemaVersion || stored.Root != absolute || stored.Entries == nil {
+		return path, index
+	}
+	return path, stored
+}
+
+func writeArsenalAnalysisIndex(path string, index arsenalAnalysisIndex) error {
+	index.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(index, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	temporary := path + ".tmp"
+	if err := os.WriteFile(temporary, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(temporary, path)
+}
+
+func arsenalSourceVersion(source *SourceMetadata, root string) string {
+	if source != nil {
+		return strings.Join([]string{source.URL, source.Ref, source.Adapter}, "\x00")
+	}
+	absolute, _ := filepath.Abs(root)
+	return "local\x00" + absolute
+}
+
+func analyzeArsenalObject(path, objectSHA, sourceVersion, signatureSet string, signatures []artifact.DeclarativeSignature, index *arsenalAnalysisIndex) (artifact.Analysis, bool, error) {
+	keyHash := sha256.Sum256([]byte(objectSHA + "\x00" + sourceVersion + "\x00" + signatureSet))
+	key := fmt.Sprintf("%x", keyHash[:])
+	if cached, ok := index.Entries[key]; ok && cached.ObjectSHA256 == objectSHA && cached.Source == sourceVersion && cached.SignatureSet == signatureSet {
+		analysis := cached.Analysis
+		analysis.Path = path
+		return analysis, true, nil
+	}
+	analysis, err := artifact.Analyze(path, "go")
+	if err != nil {
+		return artifact.Analysis{}, false, err
+	}
+	artifact.ApplyDeclarativeSignatures(&analysis, signatures)
+	index.Entries[key] = arsenalAnalysisIndexItem{ObjectSHA256: objectSHA, Source: sourceVersion, SignatureSet: signatureSet, Analysis: analysis}
+	return analysis, false, nil
+}
+
+func inventoryEntry(root string, entry Entry, sourceVersion, signatureSet string, signatures []artifact.DeclarativeSignature, index *arsenalAnalysisIndex) InventoryEntry {
+	sources := sourceFiles(root, entry.Path)
+	item := InventoryEntry{Name: entry.Name, Path: relativeSlash(root, entry.Path), HasSource: len(sources) > 0, SourceFiles: sources}
+	var analysisPath, analysisSHA string
 	for _, object := range []struct{ Arch, Path string }{{"x64", entry.X64}, {"x86", entry.X86}} {
 		if object.Path == "" {
 			continue
 		}
 		if fingerprint, err := evidence.FingerprintFile(object.Path); err == nil {
 			item.Objects = append(item.Objects, LockedObject{Arch: object.Arch, Path: relativeSlash(root, object.Path), Size: fingerprint.Size, SHA256: fingerprint.SHA256})
+			if analysisPath == "" || object.Arch == "x64" {
+				analysisPath, analysisSHA = object.Path, fingerprint.SHA256
+			}
 		}
 	}
-	if entry.X64 == "" {
+	if analysisPath == "" {
 		return item
 	}
-	analysis, err := artifact.Analyze(entry.X64, "go")
+	analysis, cached, err := analyzeArsenalObject(analysisPath, analysisSHA, sourceVersion, signatureSet, signatures, index)
 	if err != nil {
 		item.AnalysisError = err.Error()
 		return item
 	}
+	item.AnalysisCached = cached
 	item.Entrypoint = analysis.EntrypointSymbol
 	item.Relocations = analysis.Relocations
 	if analysis.LoaderCompatibility != nil {
@@ -527,9 +695,11 @@ func inventoryEntry(root string, entry Entry) InventoryEntry {
 	for _, capability := range analysis.Capabilities {
 		item.Capabilities = append(item.Capabilities, capability.Name)
 		item.CapabilityIDs = append(item.CapabilityIDs, capability.ID)
+		item.Confidences = append(item.Confidences, capability.Confidence)
 	}
 	for _, chain := range analysis.BehaviorChains {
 		item.BehaviorChains = append(item.BehaviorChains, chain.Name)
+		item.Confidences = append(item.Confidences, chain.Confidence)
 	}
 	item.Effects = append(item.Effects, analysis.Effects...)
 	item.Requirements = append(item.Requirements, analysis.Requirements.Platform...)
@@ -553,6 +723,7 @@ func inventoryEntry(root string, entry Entry) InventoryEntry {
 	item.Capabilities = uniqueSorted(item.Capabilities)
 	item.CapabilityIDs = uniqueSorted(item.CapabilityIDs)
 	item.BehaviorChains = uniqueSorted(item.BehaviorChains)
+	item.Confidences = uniqueSorted(item.Confidences)
 	item.Effects = uniqueSorted(item.Effects)
 	item.Requirements = uniqueSorted(item.Requirements)
 	item.WorksWith = uniqueSorted(item.WorksWith)
@@ -589,6 +760,11 @@ func summarizeInventory(report *Inventory) {
 		if entry.NeedsArgs {
 			report.Summary.NeedsArguments++
 		}
+		if entry.AnalysisCached {
+			report.Summary.CacheHits++
+		} else if entry.AnalysisError == "" && len(entry.Objects) > 0 {
+			report.Summary.Refreshed++
+		}
 		capabilities := entry.CapabilityIDs
 		if len(capabilities) == 0 {
 			capabilities = entry.Capabilities
@@ -620,15 +796,29 @@ func matchesInventoryFilters(entry InventoryEntry, filters InventoryFilters) boo
 	all = append(all, entry.Effects...)
 	all = append(all, entry.Requirements...)
 	all = append(all, entry.WorksWith...)
+	all = append(all, entry.Confidences...)
 	all = append(all, entry.VisibleStrings...)
 	if !containsAllTerms(all, filters.Query) {
 		return false
 	}
 	canDo := append(append(append([]string{}, entry.Capabilities...), entry.CapabilityIDs...), entry.BehaviorChains...)
+	if filters.Arch != "" {
+		var architectures []string
+		for _, object := range entry.Objects {
+			architectures = append(architectures, object.Arch)
+		}
+		if !containsAllTerms(architectures, filters.Arch) {
+			return false
+		}
+	}
+	if filters.HasArgs != nil && entry.NeedsArgs != *filters.HasArgs {
+		return false
+	}
 	return containsAllTerms(canDo, filters.Can) &&
 		containsAllTerms(entry.Effects, filters.Effect) &&
 		containsAllTerms(entry.WorksWith, filters.WorksWith) &&
-		containsAllTerms(entry.Requirements, filters.Requires)
+		containsAllTerms(entry.Requirements, filters.Requires) &&
+		containsAllTerms(entry.Confidences, filters.Confidence)
 }
 
 func containsAllTerms(values []string, query string) bool {
@@ -659,6 +849,14 @@ func loadSourceMetadata(root string) (SourceMetadata, error) {
 
 func sourceFiles(root, dir string) []string {
 	var files []string
+	seen := map[string]bool{}
+	add := func(path string) {
+		relative := relativeSlash(root, path)
+		if !seen[relative] {
+			seen[relative] = true
+			files = append(files, relative)
+		}
+	}
 	_ = filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -667,11 +865,36 @@ func sourceFiles(root, dir string) []string {
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(entry.Name()))
-		if ext == ".c" || ext == ".h" {
-			files = append(files, relativeSlash(root, path))
+		base := strings.ToLower(entry.Name())
+		if ext == ".c" || ext == ".cc" || ext == ".cpp" || ext == ".h" || ext == ".hpp" || ext == ".cna" || base == "extension.json" {
+			add(path)
 		}
 		return nil
 	})
+	rootAbs, _ := filepath.Abs(root)
+	for current, _ := filepath.Abs(dir); current != ""; current = filepath.Dir(current) {
+		relative, err := filepath.Rel(rootAbs, current)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			break
+		}
+		entries, _ := os.ReadDir(current)
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			base := strings.ToLower(entry.Name())
+			if strings.HasSuffix(base, ".cna") || base == "extension.json" {
+				add(filepath.Join(current, entry.Name()))
+			}
+		}
+		if current == rootAbs {
+			break
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+	}
 	sort.Strings(files)
 	return files
 }
@@ -935,7 +1158,12 @@ func regressionStatusRank(status string) int {
 }
 
 func relativeSlash(root, path string) string {
-	rel, err := filepath.Rel(root, path)
+	rootAbs, rootErr := filepath.Abs(root)
+	pathAbs, pathErr := filepath.Abs(path)
+	if rootErr != nil || pathErr != nil {
+		return filepath.ToSlash(path)
+	}
+	rel, err := filepath.Rel(rootAbs, pathAbs)
 	if err != nil {
 		return filepath.ToSlash(path)
 	}

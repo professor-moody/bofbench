@@ -70,6 +70,25 @@ type chainRuleStep struct {
 	apis   []string
 }
 
+// DeclarativeSignature is the catalog-safe form of a behavior rule. It is
+// intentionally data-only: catalogs can describe evidence, but cannot execute
+// analyzer code.
+type DeclarativeSignature struct {
+	ID              string
+	Name            string
+	Summary         string
+	Catalog         string
+	Steps           []DeclarativeSignatureStep
+	RequiredStrings []string
+	Effects         []string
+	Requirements    []string
+}
+
+type DeclarativeSignatureStep struct {
+	Action string
+	APIs   []string
+}
+
 var behaviorRules = []chainRule{
 	{
 		id: "process_injection_remote_thread", name: "Remote-thread process injection", summary: "Open another process, place executable content in it, and start a remote thread.",
@@ -348,6 +367,10 @@ func structuredOutputName(line string) string {
 }
 
 func inferBehaviorChains(relocations []Relocation, visibleStrings []String) []BehaviorChain {
+	return inferBehaviorChainsWithRules(relocations, visibleStrings, behaviorRules)
+}
+
+func inferBehaviorChainsWithRules(relocations []Relocation, visibleStrings []String, rules []chainRule) []BehaviorChain {
 	byFunction := map[string]map[string]string{}
 	for _, relocation := range relocations {
 		if relocation.Function == "" || relocation.Symbol == "" {
@@ -375,7 +398,7 @@ func inferBehaviorChains(relocations []Relocation, visibleStrings []String) []Be
 	sort.Strings(functions)
 	for _, function := range functions {
 		apis := byFunction[function]
-		for _, rule := range behaviorRules {
+		for _, rule := range rules {
 			if rule.id == "process_memory_read" && seen["credential_process_memory@"+function] {
 				continue
 			}
@@ -405,6 +428,53 @@ func inferBehaviorChains(relocations []Relocation, visibleStrings []String) []Be
 		return chains[i].Function < chains[j].Function
 	})
 	return chains
+}
+
+// ApplyDeclarativeSignatures adds catalog-provided behavior matches while
+// preserving the built-in analyzer results. Conflicting IDs are expected to be
+// qualified by the caller before they reach this boundary.
+func ApplyDeclarativeSignatures(analysis *Analysis, signatures []DeclarativeSignature) {
+	if analysis == nil || len(signatures) == 0 {
+		return
+	}
+	rules := make([]chainRule, 0, len(signatures))
+	for _, signature := range signatures {
+		rule := chainRule{
+			id: signature.ID, name: signature.Name, summary: signature.Summary,
+			effects: append([]string(nil), signature.Effects...), needs: append([]string(nil), signature.Requirements...),
+			requiredStrings: append([]string(nil), signature.RequiredStrings...),
+		}
+		if len(signature.Steps) == 1 {
+			rule.confidence = "confirmed primitive"
+		}
+		for _, step := range signature.Steps {
+			apis := make([]string, 0, len(step.APIs))
+			for _, api := range step.APIs {
+				apis = append(apis, strings.ToLower(strings.TrimSpace(api)))
+			}
+			rule.steps = append(rule.steps, chainRuleStep{action: step.Action, apis: apis})
+		}
+		rules = append(rules, rule)
+	}
+	additional := inferBehaviorChainsWithRules(analysis.RelocationDetails, analysis.Strings, rules)
+	seen := map[string]bool{}
+	for _, chain := range analysis.BehaviorChains {
+		seen[chain.ID+"@"+chain.Function] = true
+	}
+	for _, chain := range additional {
+		key := chain.ID + "@" + chain.Function
+		if !seen[key] {
+			seen[key] = true
+			analysis.BehaviorChains = append(analysis.BehaviorChains, chain)
+		}
+	}
+	sort.Slice(analysis.BehaviorChains, func(i, j int) bool {
+		if analysis.BehaviorChains[i].ID != analysis.BehaviorChains[j].ID {
+			return analysis.BehaviorChains[i].ID < analysis.BehaviorChains[j].ID
+		}
+		return analysis.BehaviorChains[i].Function < analysis.BehaviorChains[j].Function
+	})
+	analysis.Effects = collectEffects(analysis.Capabilities, analysis.BehaviorChains)
 }
 
 func matchRuleSteps(apis map[string]string, rules []chainRuleStep) ([]BehaviorStep, bool) {

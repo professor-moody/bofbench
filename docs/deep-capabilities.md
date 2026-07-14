@@ -15,6 +15,7 @@ bofbench lab target status --lab devbox
 Status prints the exact values used by later commands:
 
 - LocalSystem target PID and alertable thread ID;
+- unique named-pipe fixture;
 - resident memory-canary address, size, and SHA-256;
 - exact file-canary path and SHA-256;
 - Credential Manager target name, owner, size, and expected SHA-256;
@@ -22,6 +23,34 @@ Status prints the exact values used by later commands:
 - a unique WMI marker path.
 
 The generated manifest contains identifiers, paths, limits, and hashes—not plaintext fixture values.
+
+## Continuous capability tranche
+
+The current public tranche adds direct, bounded inventory packs:
+
+```bash
+bofbench pack test process-tree
+bofbench pack test thread-inventory
+bofbench pack test named-pipe-inventory
+bofbench new process-map --pack process-tree
+bofbench build bofs/process-map
+bofbench analyze bofs/process-map
+bofbench run bofs/process-map --via lab --lab devbox \
+  --arg process_filter=BOFBench --arg result_limit=16
+```
+
+`ldap-query` accepts an explicit server, base DN, filter, comma-separated property list, and result limit. Its static build, analyzer, and export contracts work without a domain; live proof remains unavailable until a domain profile exists.
+
+The private tranche adds `token-details`, `process-environment-read`, `parent-process-spawn`, `section-map-inject`, and paired `startup-folder`/`startup-folder-cleanup` packs. All accept exact targets and bounded values:
+
+```bash
+bofbench pack test internal/token-details
+bofbench pack prove internal/token-details --via lab --lab devbox
+bofbench pack prove internal/section-map-inject --via lab --lab devbox
+bofbench pack prove internal/startup-folder --via lab --lab devbox
+```
+
+The section-map proof uses a one-byte `RET` fixture against `BOFBenchTarget`. The Startup-folder proof uses a unique `BOFBench-<run-id>.cmd`, invokes its declared cleanup companion, and verifies the exact leaf is absent through the lab transport.
 
 ## Read an exact memory canary
 

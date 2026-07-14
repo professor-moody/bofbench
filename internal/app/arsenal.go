@@ -11,6 +11,7 @@ import (
 
 	"bofbench/internal/arsenal"
 	"bofbench/internal/artifact"
+	packsvc "bofbench/internal/pack"
 )
 
 func arsenalCommand(stdout io.Writer) *cobra.Command {
@@ -117,10 +118,14 @@ func arsenalInventoryCommand(stdout io.Writer) *cobra.Command {
 func arsenalSearchCommand(stdout io.Writer) *cobra.Command {
 	var format string
 	var filters arsenal.InventoryFilters
+	var hasArgs bool
 	cmd := &cobra.Command{
 		Use: "search <root> [query]", Short: "Find external BOFs by capability, effect, requirements, or runtime", Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			filters.Query = strings.Join(args[1:], " ")
+			if cmd.Flags().Changed("has-args") {
+				filters.HasArgs = &hasArgs
+			}
 			return runArsenalInventoryWithFilters(stdout, args[0], filters, format)
 		},
 	}
@@ -129,6 +134,9 @@ func arsenalSearchCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&filters.Effect, "effect", "", "effect, for example credentials, writes state, or starts execution")
 	cmd.Flags().StringVar(&filters.WorksWith, "works-with", "", "runtime target: native, lab, sliver, or cobaltstrike")
 	cmd.Flags().StringVar(&filters.Requires, "requires", "", "requirement, for example administrator, network, or target process")
+	cmd.Flags().StringVar(&filters.Arch, "arch", "", "object architecture: x64 or x86")
+	cmd.Flags().StringVar(&filters.Confidence, "confidence", "", "analysis confidence: confirmed primitive, strong chain, or possible")
+	cmd.Flags().BoolVar(&hasArgs, "has-args", false, "only show BOFs with typed or detected arguments")
 	return cmd
 }
 
@@ -284,7 +292,11 @@ func runArsenalInventoryWithFilters(stdout io.Writer, root string, filters arsen
 	if format != "text" && format != "json" && format != "md" && format != "markdown" {
 		return fmt.Errorf("arsenal inventory format must be text, json, or md")
 	}
-	report, err := arsenal.BuildInventoryWithFilters(root, filters)
+	registry, err := packsvc.Load(packsvc.LoadOptions{Project: root})
+	if err != nil {
+		return err
+	}
+	report, err := arsenal.BuildInventoryWithSignatures(root, filters, declarativeSignatures(registry.List()))
 	if err != nil {
 		return err
 	}

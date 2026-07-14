@@ -10,7 +10,7 @@ bofbench arsenal acquire https://github.com/trustedsec/CS-Situational-Awareness-
 bofbench arsenal inventory arsenal/trustedsec-sa
 ```
 
-The inventory records capabilities, behavior chains, effects, arguments, architecture, loader support, source/version, target compatibility, and duplicate object groups.
+The inventory records capabilities, behavior chains, effects, arguments, architecture, loader support, source/version, target compatibility, and duplicate object groups. Analysis is cached outside the arsenal by object hash, source identity, architecture, and analyzer-signature-set hash. Repeating a search reuses unchanged objects and reports `cached` versus `refreshed` counts.
 
 ## Search in operator language
 
@@ -19,9 +19,11 @@ bofbench arsenal search arsenal/trustedsec-sa --can token
 bofbench arsenal search arsenal/trustedsec-sa \
   --effect credential-access --works-with sliver
 bofbench arsenal search arsenal/trustedsec-sa --requires admin
+bofbench arsenal search arsenal/trustedsec-sa --arch x64 \
+  --confidence 'strong chain' --has-args
 ```
 
-Search filters are ANDed. The terminal prints compact matches; the persisted JSON and Markdown retain full analysis for drill-down.
+Search filters are ANDed. Results are grouped by operator capability and show confidence, arguments, effects, requirements, and runtimes before object structure. Paired x64/x86 objects are indexed together, and nearby `.cna` plus Sliver `extension.json` metadata is associated with the object.
 
 ## Analyze and compare
 

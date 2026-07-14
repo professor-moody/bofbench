@@ -543,7 +543,7 @@ func writeSource(path string, meta SourceMetadata) error {
 }
 
 func listGenericObjects(root string) ([]Entry, error) {
-	var entries []Entry
+	grouped := map[string]*Entry{}
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -552,30 +552,77 @@ func listGenericObjects(root string) ([]Entry, error) {
 		if !(strings.HasSuffix(lower, ".o") || strings.HasSuffix(lower, ".obj")) {
 			return nil
 		}
-		name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-		entry := Entry{Name: name, Path: filepath.Dir(path)}
-		if strings.Contains(lower, ".x86.") {
+		name, arch := genericObjectIdentity(path)
+		directory := filepath.Dir(path)
+		key := directory + "\x00" + name
+		entry := grouped[key]
+		if entry == nil {
+			entry = &Entry{Name: name, Path: directory}
+			grouped[key] = entry
+		}
+		if arch == "x86" {
 			entry.X86 = path
 		} else {
 			entry.X64 = path
 		}
-		entries = append(entries, entry)
 		return nil
 	})
-	return entries, err
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]Entry, 0, len(grouped))
+	for _, entry := range grouped {
+		entries = append(entries, *entry)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Name == entries[j].Name {
+			return entries[i].Path < entries[j].Path
+		}
+		return entries[i].Name < entries[j].Name
+	})
+	return entries, nil
+}
+
+func genericObjectIdentity(path string) (string, string) {
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	lower := strings.ToLower(name)
+	arch := "x64"
+	for _, marker := range []string{".x86", "-x86", "_x86", ".386", "-386", "_386"} {
+		if strings.HasSuffix(lower, marker) {
+			return name[:len(name)-len(marker)], "x86"
+		}
+	}
+	for _, marker := range []string{".x64", "-x64", "_x64", ".amd64", "-amd64", "_amd64"} {
+		if strings.HasSuffix(lower, marker) {
+			return name[:len(name)-len(marker)], arch
+		}
+	}
+	if strings.Contains(strings.ToLower(path), ".x86.") {
+		arch = "x86"
+	}
+	return name, arch
 }
 
 func hasSource(dir string) bool {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(strings.ToLower(entry.Name()), ".c") {
-			return true
+	found := false
+	_ = filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || found {
+			return err
 		}
-	}
-	return false
+		if entry.IsDir() {
+			if path != dir && strings.HasPrefix(entry.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		extension := strings.ToLower(filepath.Ext(entry.Name()))
+		base := strings.ToLower(entry.Name())
+		if extension == ".c" || extension == ".cc" || extension == ".cpp" || extension == ".cna" || base == "extension.json" {
+			found = true
+		}
+		return nil
+	})
+	return found
 }
 
 func inferType(source string) string {
