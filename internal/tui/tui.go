@@ -15,27 +15,48 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"bofbench/internal/arsenal"
+	"bofbench/internal/lab"
+	packsvc "bofbench/internal/pack"
 )
 
 type model struct {
-	tab            int
-	projectCursor  int
-	arsenalCursor  int
-	runCursor      int
-	labCursor      int
-	viaCursor      int
-	projects       []string
-	arsenalRoot    string
-	arsenal        []arsenal.Entry
-	runs           []runEntry
-	statusFilter   int
-	runtimeFilter  int
-	artifactFilter bool
-	width          int
-	height         int
-	message        string
-	commandOutput  string
-	running        bool
+	tab             int
+	projectCursor   int
+	arsenalCursor   int
+	runCursor       int
+	labCursor       int
+	viaCursor       int
+	packCursor      int
+	topologyCursor  int
+	labProfile      int
+	argumentCursor  int
+	projects        []string
+	packs           []packsvc.Resolved
+	topologies      []string
+	labProfiles     []string
+	runArguments    []tuiArgument
+	argumentProject string
+	argumentEditing bool
+	argumentBuffer  string
+	arsenalRoot     string
+	arsenal         []arsenal.Entry
+	runs            []runEntry
+	statusFilter    int
+	runtimeFilter   int
+	artifactFilter  bool
+	width           int
+	height          int
+	message         string
+	commandOutput   string
+	running         bool
+}
+
+type tuiArgument struct {
+	Name      string
+	Type      string
+	Sensitive bool
+	Required  bool
+	Value     string
 }
 
 type runEntry struct {
@@ -76,7 +97,7 @@ var (
 	statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("51"))
 )
 
-var tabs = []string{"build", "analyze", "arsenal", "run", "lab", "results", "help"}
+var tabs = []string{"build", "analyze", "arsenal", "run", "lab", "results", "packs", "prove", "topology", "help"}
 var runVias = []string{"native", "lab", "sliver", "cobaltstrike"}
 var labActions = [][]string{{"lab", "status"}, {"lab", "bootstrap"}, {"lab", "up"}, {"lab", "snapshot", "clean"}, {"lab", "restore", "clean"}}
 var statusFilters = []string{"all", "pass", "fail", "setup_error", "analysis", "analyze_pass", "mixed_pass"}
@@ -93,7 +114,23 @@ func initialModel() model {
 	root := "arsenal/trustedsec-sa"
 	entries, _ := arsenal.List(root)
 	runs := listRuns()
-	return model{projects: listProjects(), arsenalRoot: root, arsenal: entries, runs: runs, message: "new → add packs → build → analyze → run → export"}
+	registry, _ := packsvc.Load(packsvc.LoadOptions{Project: "."})
+	var packs []packsvc.Resolved
+	if registry != nil {
+		packs = registry.List()
+	}
+	profiles, _ := lab.LoadProfiles(lab.ProfilesPath())
+	labProfiles := lab.ProfileNames(profiles)
+	labProfile := 0
+	for index, name := range labProfiles {
+		if name == profiles.Active {
+			labProfile = index
+			break
+		}
+	}
+	return model{projects: listProjects(), arsenalRoot: root, arsenal: entries, runs: runs, packs: packs,
+		topologies: lab.TopologyNames(profiles), labProfiles: labProfiles, labProfile: labProfile,
+		message: "new → add packs → build → analyze → run → export"}
 }
 
 func (m model) Init() tea.Cmd { return nil }
@@ -104,6 +141,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 	case tea.KeyMsg:
+		if m.argumentEditing {
+			switch msg.String() {
+			case "esc":
+				m.argumentEditing = false
+				m.argumentBuffer = ""
+			case "enter":
+				if m.argumentCursor >= 0 && m.argumentCursor < len(m.runArguments) {
+					m.runArguments[m.argumentCursor].Value = m.argumentBuffer
+				}
+				m.argumentEditing = false
+				m.argumentBuffer = ""
+			case "backspace":
+				if len(m.argumentBuffer) > 0 {
+					m.argumentBuffer = m.argumentBuffer[:len(m.argumentBuffer)-1]
+				}
+			default:
+				if len(msg.Runes) > 0 {
+					m.argumentBuffer += string(msg.Runes)
+				}
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
@@ -137,8 +196,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.runCursor = 0
 			}
 		case "v":
-			if m.tab == 3 {
+			if m.tab == 3 || m.tab == 7 {
 				m.viaCursor = (m.viaCursor + 1) % len(runVias)
+			}
+		case "l":
+			if (m.tab == 3 || m.tab == 7) && len(m.labProfiles) > 0 {
+				m.labProfile = (m.labProfile + 1) % len(m.labProfiles)
+			}
+		case "[":
+			if m.tab == 3 && len(m.runArguments) > 0 {
+				m.argumentCursor = (m.argumentCursor + len(m.runArguments) - 1) % len(m.runArguments)
+			}
+		case "]":
+			if m.tab == 3 && len(m.runArguments) > 0 {
+				m.argumentCursor = (m.argumentCursor + 1) % len(m.runArguments)
+			}
+		case "e":
+			if m.tab == 3 {
+				m.refreshRunArguments()
+				if len(m.runArguments) > 0 {
+					m.argumentEditing = true
+					m.argumentBuffer = m.runArguments[m.argumentCursor].Value
+				}
+			}
+		case "c":
+			if m.tab == 6 && !m.running {
+				if project, ok := m.selectedProject(); ok {
+					if capability, ok := m.selectedPack(); ok {
+						m.running = true
+						command := []string{"add", project, capability.Qualified}
+						m.message = "$ bofbench " + strings.Join(command, " ")
+						return m, executeBOFBench(command)
+					}
+				}
 			}
 		case "enter":
 			if !m.running {
@@ -200,6 +290,12 @@ func (m model) View() string {
 	case 5:
 		b.WriteString(m.viewRuns())
 	case 6:
+		b.WriteString(m.viewPacks())
+	case 7:
+		b.WriteString(m.viewProof())
+	case 8:
+		b.WriteString(m.viewTopologies())
+	case 9:
 		b.WriteString(m.viewHelp())
 	}
 	if m.commandOutput != "" {
@@ -228,7 +324,13 @@ func (m model) renderTabs() string {
 func (m model) footer() string {
 	base := "tab switch  j/k select  enter run  r refresh  q quit"
 	if m.tab == 3 {
-		base += "  v runtime"
+		base += "  v runtime  l lab  [/] argument  e edit"
+	}
+	if m.tab == 6 {
+		base += "  c compose into selected project"
+	}
+	if m.tab == 7 {
+		base += "  v runtime  l lab"
 	}
 	if m.tab == 5 {
 		base += "  f status filter  t runtime filter  a selected artifact"
@@ -246,6 +348,10 @@ func (m model) currentCount() int {
 		return len(labActions)
 	case 5:
 		return len(m.filteredRuns())
+	case 6, 7:
+		return len(m.packs)
+	case 8:
+		return len(m.topologies)
 	default:
 		return 0
 	}
@@ -271,6 +377,14 @@ func (m *model) moveCursor(delta int) {
 			return
 		}
 		m.runCursor = clamp(m.runCursor+delta, 0, count-1)
+	case 6, 7:
+		if len(m.packs) > 0 {
+			m.packCursor = clamp(m.packCursor+delta, 0, len(m.packs)-1)
+		}
+	case 8:
+		if len(m.topologies) > 0 {
+			m.topologyCursor = clamp(m.topologyCursor+delta, 0, len(m.topologies)-1)
+		}
 	}
 }
 
@@ -290,6 +404,14 @@ func (m *model) setCursor(value int) {
 		count := len(m.filteredRuns())
 		if count > 0 {
 			m.runCursor = clamp(value, 0, count-1)
+		}
+	case 6, 7:
+		if len(m.packs) > 0 {
+			m.packCursor = clamp(value, 0, len(m.packs)-1)
+		}
+	case 8:
+		if len(m.topologies) > 0 {
+			m.topologyCursor = clamp(value, 0, len(m.topologies)-1)
 		}
 	}
 }
@@ -328,11 +450,38 @@ func (m model) currentCommand() []string {
 		}
 	case 3:
 		if project, ok := m.selectedProject(); ok {
-			return []string{"run", project, "--via", runVias[m.viaCursor]}
+			command := []string{"run", project, "--via", runVias[m.viaCursor]}
+			if (runVias[m.viaCursor] == "lab" || runVias[m.viaCursor] == "sliver") && len(m.labProfiles) > 0 {
+				command = append(command, "--lab", m.labProfiles[m.labProfile])
+			}
+			for _, argument := range m.runArguments {
+				if argument.Value != "" {
+					command = append(command, "--arg", argument.Name+"="+argument.Value)
+				}
+			}
+			return command
 		}
 	case 4:
 		if m.labCursor >= 0 && m.labCursor < len(labActions) {
 			return append([]string(nil), labActions[m.labCursor]...)
+		}
+	case 6:
+		if capability, ok := m.selectedPack(); ok {
+			return []string{"pack", "show", capability.Qualified}
+		}
+	case 7:
+		if capability, ok := m.selectedPack(); ok {
+			command := []string{"pack", "prove", capability.Qualified, "--via", runVias[m.viaCursor]}
+			if len(m.topologies) > 0 {
+				command = append(command, "--topology", m.topologies[m.topologyCursor])
+			} else if (runVias[m.viaCursor] == "lab" || runVias[m.viaCursor] == "sliver") && len(m.labProfiles) > 0 {
+				command = append(command, "--lab", m.labProfiles[m.labProfile])
+			}
+			return command
+		}
+	case 8:
+		if len(m.topologies) > 0 {
+			return []string{"lab", "topology", "status", m.topologies[m.topologyCursor]}
 		}
 	}
 	return nil
@@ -398,12 +547,165 @@ func (m model) viewBuild() string {
 func (m model) viewRun() string {
 	var b strings.Builder
 	b.WriteString("RUN A BOF\n")
-	fmt.Fprintf(&b, "%s\n\n", mutedStyle.Render("Choose a project and runtime. Named arguments come from its pack lock."))
+	fmt.Fprintf(&b, "%s\n\n", mutedStyle.Render("Choose a project and runtime. Edit typed arguments here; sensitive values are never echoed."))
 	b.WriteString(m.renderProjects())
 	if project, ok := m.selectedProject(); ok {
-		fmt.Fprintf(&b, "\nRuntime   %s  (v to change)\nAction    bofbench run %s --via %s\n", hotStyle.Render(runVias[m.viaCursor]), project, runVias[m.viaCursor])
+		labName := "active"
+		if len(m.labProfiles) > 0 {
+			labName = m.labProfiles[m.labProfile]
+		}
+		fmt.Fprintf(&b, "\nRuntime   %s  Lab %s\nAction    bofbench run %s --via %s\n", hotStyle.Render(runVias[m.viaCursor]), labName, project, runVias[m.viaCursor])
 		fmt.Fprintf(&b, "Cleanup   bofbench run %s --via %s --cleanup\n", project, runVias[m.viaCursor])
+		if m.argumentProject != project {
+			fmt.Fprintf(&b, "\nArguments  press e to load and edit this project's typed arguments\n")
+		} else if len(m.runArguments) == 0 {
+			fmt.Fprintf(&b, "\nArguments  none\n")
+		} else {
+			b.WriteString("\nArguments  [/] select, e edit\n")
+			for index, argument := range m.runArguments {
+				prefix := "  "
+				if index == m.argumentCursor {
+					prefix = "> "
+				}
+				value := argument.Value
+				if argument.Sensitive && value != "" {
+					value = "<redacted>"
+				}
+				if value == "" {
+					value = "<unset>"
+				}
+				if m.argumentEditing && index == m.argumentCursor {
+					value = m.argumentBuffer
+					if argument.Sensitive && value != "" {
+						value = strings.Repeat("•", len([]rune(value)))
+					}
+				}
+				required := ""
+				if argument.Required {
+					required = " required"
+				}
+				fmt.Fprintf(&b, "%s%-24s %-8s%s %s\n", prefix, argument.Name, argument.Type, required, value)
+			}
+		}
 	}
+	return b.String()
+}
+
+func (m *model) refreshRunArguments() {
+	project, ok := m.selectedProject()
+	if !ok || m.argumentProject == project {
+		return
+	}
+	lock, _, err := packsvc.LoadLock(project)
+	if err != nil {
+		m.runArguments = nil
+		m.argumentProject = project
+		return
+	}
+	seen := map[string]bool{}
+	var arguments []tuiArgument
+	for _, record := range lock.Packs {
+		for _, argument := range record.Arguments {
+			if seen[argument.Name] {
+				continue
+			}
+			seen[argument.Name] = true
+			arguments = append(arguments, tuiArgument{Name: argument.Name, Type: argument.Type, Sensitive: argument.Sensitive, Required: argument.Required, Value: argument.Default})
+		}
+	}
+	m.runArguments = arguments
+	m.argumentProject = project
+	m.argumentCursor = 0
+}
+
+func (m model) selectedPack() (packsvc.Resolved, bool) {
+	if len(m.packs) == 0 {
+		return packsvc.Resolved{}, false
+	}
+	return m.packs[clamp(m.packCursor, 0, len(m.packs)-1)], true
+}
+
+func (m model) viewPacks() string {
+	if len(m.packs) == 0 {
+		return "No capability catalogs are available. Add one with:\n\n  bofbench catalog add <path>"
+	}
+	var b strings.Builder
+	b.WriteString("CAPABILITY PACKS\n")
+	b.WriteString(mutedStyle.Render("Browse resolved catalogs. Enter inspects a pack; c composes it into the selected BOF project."))
+	b.WriteString("\n\n")
+	limit := visibleRows(m.height, 10, 16)
+	start, end := windowRange(len(m.packs), m.packCursor, limit)
+	for index := start; index < end; index++ {
+		item := m.packs[index]
+		prefix := "  "
+		if index == m.packCursor {
+			prefix = "> "
+		}
+		fmt.Fprintf(&b, "%s%-44s %-8s %s\n", prefix, item.Qualified, item.Document.Tier, shorten(item.Document.Summary, 70))
+	}
+	if item, ok := m.selectedPack(); ok {
+		project, hasProject := m.selectedProject()
+		b.WriteString("\nSelected\n")
+		fmt.Fprintf(&b, "  Can do: %s\n  Effects: %s\n  Works with: %s\n", strings.Join(item.Document.Capabilities, ", "), strings.Join(item.Document.Effects, ", "), strings.Join(item.Document.TargetSupport, ", "))
+		fmt.Fprintf(&b, "  Inspect: bofbench pack show %s\n", item.Qualified)
+		if hasProject {
+			fmt.Fprintf(&b, "  Compose: bofbench add %s %s\n", project, item.Qualified)
+		}
+		fmt.Fprintf(&b, "  Search:  bofbench pack search <capability>\n")
+	}
+	return b.String()
+}
+
+func (m model) viewProof() string {
+	if len(m.packs) == 0 {
+		return "No capability packs are available for proof."
+	}
+	var b strings.Builder
+	b.WriteString("PROVE A CAPABILITY\n")
+	b.WriteString(mutedStyle.Render("Run the selected pack's declared proof, collect an exact-hash receipt, and independently verify cleanup."))
+	b.WriteString("\n\n")
+	limit := visibleRows(m.height, 10, 16)
+	start, end := windowRange(len(m.packs), m.packCursor, limit)
+	for index := start; index < end; index++ {
+		item := m.packs[index]
+		prefix := "  "
+		if index == m.packCursor {
+			prefix = "> "
+		}
+		coverage := "no proof"
+		if len(item.Document.ProofCases) > 0 {
+			coverage = fmt.Sprintf("%d proof", len(item.Document.ProofCases))
+		}
+		fmt.Fprintf(&b, "%s%-44s %s\n", prefix, item.Qualified, coverage)
+	}
+	if item, ok := m.selectedPack(); ok {
+		labName := "active"
+		if len(m.labProfiles) > 0 {
+			labName = m.labProfiles[m.labProfile]
+		}
+		fmt.Fprintf(&b, "\nRuntime %s  Lab %s\n", hotStyle.Render(runVias[m.viaCursor]), labName)
+		fmt.Fprintf(&b, "Action  bofbench pack prove %s --via %s\n", item.Qualified, runVias[m.viaCursor])
+	}
+	return b.String()
+}
+
+func (m model) viewTopologies() string {
+	if len(m.topologies) == 0 {
+		return "MULTI-HOST TOPOLOGIES\n\nNo topology is configured. Start with:\n\n  bofbench lab topology add dedicated-standalone --execution devbox --target dedicated"
+	}
+	var b strings.Builder
+	b.WriteString("MULTI-HOST TOPOLOGIES\n")
+	b.WriteString(mutedStyle.Render("Topology files store profile names only; credentials remain in the selected transports."))
+	b.WriteString("\n\n")
+	for index, name := range m.topologies {
+		prefix := "  "
+		if index == m.topologyCursor {
+			prefix = "> "
+		}
+		fmt.Fprintf(&b, "%s%s\n", prefix, name)
+	}
+	name := m.topologies[clamp(m.topologyCursor, 0, len(m.topologies)-1)]
+	fmt.Fprintf(&b, "\nAction  bofbench lab topology status %s\nProof   bofbench pack prove --all --via lab --topology %s\n", name, name)
 	return b.String()
 }
 
@@ -508,6 +810,7 @@ func (m model) viewRuns() string {
 			statusFilters[m.statusFilter], runtimeFilters[m.runtimeFilter], m.artifactFilterLabel())
 	}
 	var b strings.Builder
+	b.WriteString("PREDICTED ↔ OBSERVED RESULTS\n")
 	fmt.Fprintf(&b, "Recent runs  status=%s  runtime=%s  artifact=%s  (%d/%d)\n\n",
 		statusFilters[m.statusFilter], runtimeFilters[m.runtimeFilter], m.artifactFilterLabel(), len(filtered), len(m.runs))
 	limit := visibleRows(m.height, 10, 16)
@@ -612,6 +915,10 @@ Controls:
   home/end         jump within current list
   enter            execute the selected action
   v                cycle native/lab/Sliver/Cobalt Strike in Run
+  l                cycle configured lab profiles in Run and Prove
+  [ / ]            select a typed argument in Run
+  e                edit the selected argument; sensitive input is masked
+  c                compose the selected pack into the selected project
   f                cycle status filter in Results
   t                cycle runtime filter in Results
   r                refresh arsenal and run history
