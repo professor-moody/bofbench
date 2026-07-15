@@ -391,7 +391,7 @@ func RemoteRun(ctx context.Context, project string, opts RemoteRunOptions) (Remo
 	}
 	var runErr error
 	if opts.BuildMode == "auto" {
-		remoteCompiler, compilerErr := detectRemoteCompiler(ctx, opts.RemoteOptions)
+		remoteCompiler, compilerErr := detectRemoteCompiler(ctx, opts.RemoteOptions, opts.Arch)
 		if compilerErr == nil && remoteCompiler != "" {
 			opts.BuildMode = "remote"
 			report.BuildMode = "remote"
@@ -401,7 +401,7 @@ func RemoteRun(ctx context.Context, project string, opts RemoteRunOptions) (Remo
 		}
 	}
 	if opts.BuildMode == "remote" && enforceBuildMode {
-		remoteCompiler, compilerErr := detectRemoteCompiler(ctx, opts.RemoteOptions)
+		remoteCompiler, compilerErr := detectRemoteCompiler(ctx, opts.RemoteOptions, opts.Arch)
 		if compilerErr != nil {
 			return report, compilerErr
 		}
@@ -713,13 +713,20 @@ func runtimeArgumentTypes(tokens []string) []string {
 	return types
 }
 
-func detectRemoteCompiler(ctx context.Context, opts RemoteOptions) (string, error) {
-	script := `$compiler=if(Get-Command cl.exe -ErrorAction SilentlyContinue){'msvc'}elseif(Get-Command x86_64-w64-mingw32-gcc.exe -ErrorAction SilentlyContinue){'mingw'}else{''}; Write-Output $compiler`
+func detectRemoteCompiler(ctx context.Context, opts RemoteOptions, arch string) (string, error) {
+	script := remoteCompilerProbeScript(arch)
 	stdout, stderr, err := remoteExecute(ctx, opts, script)
 	if err != nil {
 		return "", fmt.Errorf("probe remote compiler: %w: %s", err, boundedText(string(stderr), 1024))
 	}
 	return strings.TrimSpace(string(stdout)), nil
+}
+
+func remoteCompilerProbeScript(arch string) string {
+	if arch == "x86" {
+		return `$compiler=if(Get-Command i686-w64-mingw32-gcc.exe -ErrorAction SilentlyContinue){'mingw'}else{''}; Write-Output $compiler`
+	}
+	return `$compiler=if(Get-Command cl.exe -ErrorAction SilentlyContinue){'msvc'}elseif(Get-Command x86_64-w64-mingw32-gcc.exe -ErrorAction SilentlyContinue){'mingw'}else{''}; Write-Output $compiler`
 }
 
 func runLocallyBuiltObject(ctx context.Context, runDir, project string, report *RemoteRunReport, opts RemoteRunOptions) error {

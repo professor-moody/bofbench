@@ -32,7 +32,7 @@ bofbench pack show internal/run-key --cleanup
 bofbench pack validate path/to/pack.json
 bofbench pack test process-tree
 bofbench pack test --all --catalog internal
-bofbench pack prove internal/section-map-inject --via lab --lab devbox
+bofbench pack prove internal/section-map-inject --via lab --lab devbox --arch x64
 bofbench pack docs --catalog builtin --output docs/pack-reference.md
 ```
 
@@ -51,6 +51,9 @@ Use `--catalog path` for a one-command external catalog. The resolved root is re
 bofbench operation list
 bofbench operation search process
 bofbench operation show internal/section-map-start-unmap
+bofbench operation graph internal/adaptive-memory-execute
+bofbench operation graph internal/adaptive-memory-execute --format mermaid
+bofbench operation graph internal/adaptive-memory-execute --format json
 bofbench operation validate operations/example/operation.json
 bofbench operation test internal/virtual-memory-execute
 bofbench operation test --all --catalog ~/bofbench-packs-internal \
@@ -64,7 +67,7 @@ bofbench operation cleanup runs/<run-id>/operation.json
 bofbench operation docs --output docs/operation-reference.md
 ```
 
-See [multi-step operations](operations.md) for result contracts, captures, sensitive inputs, static tests, live proof, incomplete C2 tasks, and reverse cleanup.
+See [multi-step operations](operations.md) for result routing, contracts, captures, sensitive inputs, static tests, live proof, incomplete C2 tasks, and reverse cleanup.
 
 ## Build
 

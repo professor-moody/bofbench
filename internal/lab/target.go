@@ -7,12 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 const (
 	TargetServiceName    = "BOFBenchTarget"
 	TargetX86ServiceName = "BOFBenchTargetX86"
+	TargetJobMemberTask  = "BOFBenchTargetJobMember"
 )
 
 type TargetState struct {
@@ -30,6 +32,11 @@ type TargetState struct {
 	AlertableTID         uint32 `json:"alertable_tid"`
 	NamedPipe            string `json:"named_pipe,omitempty"`
 	KnownHandle          string `json:"known_handle,omitempty"`
+	HolderPID            int    `json:"holder_pid,omitempty"`
+	JobMemberPID         int    `json:"job_member_pid,omitempty"`
+	EventName            string `json:"event_name,omitempty"`
+	SectionName          string `json:"section_name,omitempty"`
+	JobName              string `json:"job_name,omitempty"`
 	User                 string `json:"user"`
 	CanaryFile           string `json:"canary_file"`
 	CanaryFileSHA256     string `json:"canary_file_sha256,omitempty"`
@@ -173,6 +180,20 @@ func DeployTarget(ctx context.Context, name string, profile Profile, repository 
 	if err := json.Unmarshal(stdout, &report.State); err != nil {
 		return report, fmt.Errorf("decode disposable target state: %w", err)
 	}
+	jobStatePath := windowsJoin(profile.RemoteRoot, "target", "job-member.pid")
+	jobArgument := fmt.Sprintf(`--job-child --job-state "%s"`, jobStatePath)
+	jobMemberScript := fmt.Sprintf(`$ErrorActionPreference='Stop'; Unregister-ScheduledTask -TaskName %s -Confirm:$false -ErrorAction SilentlyContinue; Remove-Item -LiteralPath %s -Force -ErrorAction SilentlyContinue; $user=[Security.Principal.WindowsIdentity]::GetCurrent().Name; $action=New-ScheduledTaskAction -Execute %s -Argument %s; $principal=New-ScheduledTaskPrincipal -UserId $user -LogonType S4U -RunLevel Highest; $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; Register-ScheduledTask -TaskName %s -Action $action -Principal $principal -Settings $settings -Force|Out-Null; Start-ScheduledTask -TaskName %s; $deadline=(Get-Date).AddSeconds(15); do{Start-Sleep -Milliseconds 250}until((Test-Path -LiteralPath %s)-or(Get-Date)-gt$deadline); if(-not(Test-Path -LiteralPath %s)){throw 'job-member PID file was not created'}; $pidValue=[int](Get-Content -LiteralPath %s -Raw); $state=Get-Content -LiteralPath %s -Raw|ConvertFrom-Json; $state.job_member_pid=$pidValue; $state|ConvertTo-Json -Depth 8|Set-Content -LiteralPath %s -Encoding utf8; Write-Output $pidValue`, powerShellQuote(TargetJobMemberTask), powerShellQuote(jobStatePath), powerShellQuote(remoteExecutable), powerShellQuote(jobArgument), powerShellQuote(TargetJobMemberTask), powerShellQuote(TargetJobMemberTask), powerShellQuote(jobStatePath), powerShellQuote(jobStatePath), powerShellQuote(jobStatePath), powerShellQuote(statePath), powerShellQuote(statePath))
+	jobMemberOutput, jobMemberStderr, jobMemberErr := remoteExecute(ctx, opts, jobMemberScript)
+	if jobMemberErr != nil {
+		_, _, _ = remoteExecute(ctx, opts, targetCleanupScript(targetDirectory))
+		return report, fmt.Errorf("start scheduled disposable job member: %w: %s", jobMemberErr, boundedText(string(jobMemberStderr), 2048))
+	}
+	jobMemberPID, jobMemberParseErr := strconv.Atoi(strings.TrimSpace(string(jobMemberOutput)))
+	if jobMemberParseErr != nil || jobMemberPID <= 0 {
+		_, _, _ = remoteExecute(ctx, opts, targetCleanupScript(targetDirectory))
+		return report, fmt.Errorf("decode scheduled disposable job member PID: %s", boundedText(string(jobMemberOutput), 256))
+	}
+	report.State.JobMemberPID = jobMemberPID
 	if helperOutput, helperStderr, helperErr := remoteExecute(ctx, opts, fmt.Sprintf(`$ErrorActionPreference='Stop'; $service=Get-Service -Name %s -ErrorAction Stop; if($service.Status -ne 'Running'){throw 'x86 target service is not running'}; Get-Content -LiteralPath %s -Raw`, powerShellQuote(TargetX86ServiceName), powerShellQuote(x86StatePath))); helperErr == nil {
 		var helper TargetState
 		if err := json.Unmarshal(helperOutput, &helper); err != nil {
@@ -273,7 +294,8 @@ func targetRemoteFixtureScript(targetDirectory string) string {
 
 func targetCleanupScript(targetDirectory string) string {
 	fixturePath := windowsJoin(targetDirectory, "remote-fixture.json")
-	return fmt.Sprintf(`$ErrorActionPreference='Continue'; $fixture=$null; if(Test-Path -LiteralPath %s){try{$fixture=Get-Content -LiteralPath %s -Raw|ConvertFrom-Json}catch{}}; foreach($name in @(%s,%s)){$service=Get-Service -Name $name -ErrorAction SilentlyContinue; if($service -and $service.Status -ne 'Stopped'){Stop-Service -Name $name -Force -ErrorAction SilentlyContinue}; if($service){sc.exe delete $name|Out-Null}}; Start-Sleep -Milliseconds 500; if($fixture){$key='HKLM:\'+[string]$fixture.remote_registry_path; $keyItem=Get-Item -LiteralPath $key -ErrorAction SilentlyContinue; if($keyItem){foreach($valueName in @($keyItem.GetValueNames()|Where-Object{$_ -like 'BOFBench-Remote-*'})){Remove-ItemProperty -LiteralPath $key -Name $valueName -Force -ErrorAction SilentlyContinue}}; Remove-ItemProperty -LiteralPath $key -Name ([string]$fixture.remote_registry_name) -Force -ErrorAction SilentlyContinue; if([bool]$fixture.remote_registry_key_created){Remove-Item -LiteralPath $key -Force -ErrorAction SilentlyContinue}; Remove-Item -LiteralPath ([string]$fixture.remote_stage_local_root) -Recurse -Force -ErrorAction SilentlyContinue; $remote=Get-Service -Name 'RemoteRegistry' -ErrorAction SilentlyContinue; if($remote){if($remote.Status -ne 'Stopped'){Stop-Service -Name 'RemoteRegistry' -Force -ErrorAction SilentlyContinue}; switch([string]$fixture.remote_registry_previous_start_type){'Automatic'{Set-Service -Name 'RemoteRegistry' -StartupType Automatic};'Manual'{Set-Service -Name 'RemoteRegistry' -StartupType Manual};'Disabled'{Set-Service -Name 'RemoteRegistry' -StartupType Disabled}}; if([string]$fixture.remote_registry_previous_status -eq 'Running'){Start-Service -Name 'RemoteRegistry'}else{Stop-Service -Name 'RemoteRegistry' -Force -ErrorAction SilentlyContinue}; $after=Get-Service -Name 'RemoteRegistry'; if([string]$after.Status -ne [string]$fixture.remote_registry_previous_status){throw 'RemoteRegistry status was not restored'}; if([string]$after.StartType -ne [string]$fixture.remote_registry_previous_start_type){throw 'RemoteRegistry start type was not restored'}}}; Remove-Item -LiteralPath %s -Recurse -Force -ErrorAction SilentlyContinue; if(Get-Service -Name %s -ErrorAction SilentlyContinue){throw 'target service still exists'}; if(Get-Service -Name %s -ErrorAction SilentlyContinue){throw 'x86 target service still exists'}; if(Test-Path -LiteralPath %s){throw 'target directory still exists'}; Write-Output 'removed'`, powerShellQuote(fixturePath), powerShellQuote(fixturePath), powerShellQuote(TargetServiceName), powerShellQuote(TargetX86ServiceName), powerShellQuote(targetDirectory), powerShellQuote(TargetServiceName), powerShellQuote(TargetX86ServiceName), powerShellQuote(targetDirectory))
+	statePath := windowsJoin(targetDirectory, "target.json")
+	return fmt.Sprintf(`$ErrorActionPreference='Continue'; $fixture=$null; $targetState=$null; if(Test-Path -LiteralPath %s){try{$fixture=Get-Content -LiteralPath %s -Raw|ConvertFrom-Json}catch{}}; if(Test-Path -LiteralPath %s){try{$targetState=Get-Content -LiteralPath %s -Raw|ConvertFrom-Json}catch{}}; Stop-ScheduledTask -TaskName %s -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName %s -Confirm:$false -ErrorAction SilentlyContinue; if($targetState -and [int]$targetState.job_member_pid -gt 0){Stop-Process -Id ([int]$targetState.job_member_pid) -Force -ErrorAction SilentlyContinue}; foreach($name in @(%s,%s)){$service=Get-Service -Name $name -ErrorAction SilentlyContinue; if($service -and $service.Status -ne 'Stopped'){Stop-Service -Name $name -Force -ErrorAction SilentlyContinue}; if($service){sc.exe delete $name|Out-Null}}; Start-Sleep -Milliseconds 500; if($fixture){$key='HKLM:\'+[string]$fixture.remote_registry_path; $keyItem=Get-Item -LiteralPath $key -ErrorAction SilentlyContinue; if($keyItem){foreach($valueName in @($keyItem.GetValueNames()|Where-Object{$_ -like 'BOFBench-Remote-*'})){Remove-ItemProperty -LiteralPath $key -Name $valueName -Force -ErrorAction SilentlyContinue}}; Remove-ItemProperty -LiteralPath $key -Name ([string]$fixture.remote_registry_name) -Force -ErrorAction SilentlyContinue; if([bool]$fixture.remote_registry_key_created){Remove-Item -LiteralPath $key -Force -ErrorAction SilentlyContinue}; Remove-Item -LiteralPath ([string]$fixture.remote_stage_local_root) -Recurse -Force -ErrorAction SilentlyContinue; $remote=Get-Service -Name 'RemoteRegistry' -ErrorAction SilentlyContinue; if($remote){if($remote.Status -ne 'Stopped'){Stop-Service -Name 'RemoteRegistry' -Force -ErrorAction SilentlyContinue}; switch([string]$fixture.remote_registry_previous_start_type){'Automatic'{Set-Service -Name 'RemoteRegistry' -StartupType Automatic};'Manual'{Set-Service -Name 'RemoteRegistry' -StartupType Manual};'Disabled'{Set-Service -Name 'RemoteRegistry' -StartupType Disabled}}; if([string]$fixture.remote_registry_previous_status -eq 'Running'){Start-Service -Name 'RemoteRegistry'}else{Stop-Service -Name 'RemoteRegistry' -Force -ErrorAction SilentlyContinue}; $after=Get-Service -Name 'RemoteRegistry'; if([string]$after.Status -ne [string]$fixture.remote_registry_previous_status){throw 'RemoteRegistry status was not restored'}; if([string]$after.StartType -ne [string]$fixture.remote_registry_previous_start_type){throw 'RemoteRegistry start type was not restored'}}}; Remove-Item -LiteralPath %s -Recurse -Force -ErrorAction SilentlyContinue; if(Get-Service -Name %s -ErrorAction SilentlyContinue){throw 'target service still exists'}; if(Get-Service -Name %s -ErrorAction SilentlyContinue){throw 'x86 target service still exists'}; if(Get-ScheduledTask -TaskName %s -ErrorAction SilentlyContinue){throw 'job-member task still exists'}; if(Test-Path -LiteralPath %s){throw 'target directory still exists'}; Write-Output 'removed'`, powerShellQuote(fixturePath), powerShellQuote(fixturePath), powerShellQuote(statePath), powerShellQuote(statePath), powerShellQuote(TargetJobMemberTask), powerShellQuote(TargetJobMemberTask), powerShellQuote(TargetServiceName), powerShellQuote(TargetX86ServiceName), powerShellQuote(targetDirectory), powerShellQuote(TargetServiceName), powerShellQuote(TargetX86ServiceName), powerShellQuote(TargetJobMemberTask), powerShellQuote(targetDirectory))
 }
 
 func mergeRemoteFixtures(target *TargetFixtureState, remote TargetFixtureState) {

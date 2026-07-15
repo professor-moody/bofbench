@@ -20,10 +20,10 @@ import (
 
 const (
 	Schema                = "bofbench.operation"
-	SchemaVersion         = 2
+	SchemaVersion         = 3
 	MinimumSchemaVersion  = 1
 	ReceiptSchema         = "bofbench.operation-receipt"
-	ReceiptSchemaVersion  = 2
+	ReceiptSchemaVersion  = 3
 	MinimumReceiptVersion = 1
 )
 
@@ -49,6 +49,15 @@ type Cleanup struct {
 	Arguments map[string]string `json:"arguments,omitempty"`
 }
 
+// Outcome is an ordered result route. The first expectation that matches a
+// completed runtime result selects the next step. Runtime failures and
+// incomplete output never reach outcome evaluation.
+type Outcome struct {
+	ID     string                   `json:"id"`
+	Expect packsvc.ProofExpectation `json:"expect"`
+	Next   string                   `json:"next"`
+}
+
 type Step struct {
 	ID        string                    `json:"id"`
 	Pack      string                    `json:"pack"`
@@ -56,6 +65,7 @@ type Step struct {
 	Captures  map[string]Capture        `json:"captures,omitempty"`
 	Cleanup   *Cleanup                  `json:"cleanup,omitempty"`
 	Expect    *packsvc.ProofExpectation `json:"expect,omitempty"`
+	Outcomes  []Outcome                 `json:"outcomes,omitempty"`
 }
 
 type ProofCase struct {
@@ -67,6 +77,7 @@ type ProofCase struct {
 	ExpectCaptures map[string]string         `json:"expect_captures,omitempty"`
 	Cleanup        bool                      `json:"cleanup,omitempty"`
 	StateChecks    []packsvc.ProofStateCheck `json:"state_checks,omitempty"`
+	ExpectPath     []string                  `json:"expect_path,omitempty"`
 }
 
 type Document struct {
@@ -122,6 +133,8 @@ type StepReceipt struct {
 	MatchedTag      string                  `json:"matched_tag,omitempty"`
 	MatchedFields   []string                `json:"matched_fields,omitempty"`
 	PayloadVerified bool                    `json:"payload_verified,omitempty"`
+	MatchedOutcome  string                  `json:"matched_outcome,omitempty"`
+	NextStep        string                  `json:"next_step,omitempty"`
 }
 
 type Receipt struct {
@@ -138,6 +151,8 @@ type Receipt struct {
 	Inputs          map[string]string `json:"inputs,omitempty"`
 	RedactedInputs  []string          `json:"redacted_inputs,omitempty"`
 	Captures        map[string]string `json:"captures,omitempty"`
+	ActualPath      []string          `json:"actual_path,omitempty"`
+	SkippedSteps    []string          `json:"skipped_steps,omitempty"`
 	Steps           []StepReceipt     `json:"steps"`
 	CleanupState    string            `json:"cleanup_state,omitempty"`
 	StartedAt       string            `json:"started_at"`
@@ -431,6 +446,16 @@ func validate(document Document) error {
 		return fmt.Errorf("operation must declare at least one step")
 	}
 	inputs, steps, captures := map[string]Input{}, map[string]bool{}, map[string]string{}
+	stepIndexes := map[string]int{}
+	for index, step := range document.Steps {
+		if !idPattern.MatchString(step.ID) || step.Pack == "" {
+			return fmt.Errorf("each step needs a valid id and pack")
+		}
+		if _, exists := stepIndexes[step.ID]; exists {
+			return fmt.Errorf("duplicate step %q", step.ID)
+		}
+		stepIndexes[step.ID] = index
+	}
 	for _, input := range document.Inputs {
 		if !idPattern.MatchString(input.Name) {
 			return fmt.Errorf("invalid input name %q", input.Name)
@@ -449,36 +474,38 @@ func validate(document Document) error {
 		}
 		inputs[input.Name] = input
 	}
-	for _, step := range document.Steps {
-		if !idPattern.MatchString(step.ID) || step.Pack == "" {
-			return fmt.Errorf("each step needs a valid id and pack")
-		}
-		if steps[step.ID] {
-			return fmt.Errorf("duplicate step %q", step.ID)
-		}
+	for stepIndex, step := range document.Steps {
 		steps[step.ID] = true
-		if document.SchemaVersion >= 2 && step.Expect == nil {
+		if document.SchemaVersion == 2 && step.Expect == nil {
 			return fmt.Errorf("step %s requires expect in operation schema version 2", step.ID)
 		}
+		if document.SchemaVersion < 3 && len(step.Outcomes) > 0 {
+			return fmt.Errorf("step %s outcomes require operation schema version 3", step.ID)
+		}
+		if document.SchemaVersion >= 3 && (step.Expect == nil) == (len(step.Outcomes) == 0) {
+			return fmt.Errorf("step %s must declare exactly one of expect or outcomes", step.ID)
+		}
 		if step.Expect != nil {
-			if !idPattern.MatchString(step.Expect.Tag) {
-				return fmt.Errorf("step %s has invalid expected tag %q", step.ID, step.Expect.Tag)
+			if err := validateExpectation(step.ID, *step.Expect, inputs, captures, steps); err != nil {
+				return err
 			}
-			for _, value := range step.Expect.Fields {
-				if value != "*" {
-					if err := validateReference(value, inputs, captures, steps); err != nil {
-						return fmt.Errorf("step %s expectation: %w", step.ID, err)
-					}
-				}
+		}
+		seenOutcomes := map[string]bool{}
+		for _, outcome := range step.Outcomes {
+			if !idPattern.MatchString(outcome.ID) || seenOutcomes[outcome.ID] {
+				return fmt.Errorf("step %s has invalid or duplicate outcome %q", step.ID, outcome.ID)
 			}
-			if payload := step.Expect.Payload; payload != nil {
-				if !idPattern.MatchString(payload.Tag) || !idPattern.MatchString(payload.Field) || (payload.Encoding != "hex" && payload.Encoding != "base64") || payload.SHA256 == "" {
-					return fmt.Errorf("step %s has invalid payload expectation", step.ID)
+			seenOutcomes[outcome.ID] = true
+			if err := validateExpectation(step.ID+" outcome "+outcome.ID, outcome.Expect, inputs, captures, steps); err != nil {
+				return err
+			}
+			if outcome.Next != "$complete" && outcome.Next != "$fail" {
+				target, ok := stepIndexes[outcome.Next]
+				if !ok {
+					return fmt.Errorf("step %s outcome %s selects unknown step %q", step.ID, outcome.ID, outcome.Next)
 				}
-				if strings.HasPrefix(payload.SHA256, "$") {
-					if err := validateReference(payload.SHA256, inputs, captures, steps); err != nil {
-						return fmt.Errorf("step %s payload expectation: %w", step.ID, err)
-					}
+				if target <= stepIndex {
+					return fmt.Errorf("step %s outcome %s must select a later step", step.ID, outcome.ID)
 				}
 			}
 		}
@@ -531,6 +558,41 @@ func validate(document Document) error {
 		for name := range proof.ExpectCaptures {
 			if captures[name] == "" {
 				return fmt.Errorf("proof case %s expects unknown capture %q", proof.ID, name)
+			}
+		}
+		previous := -1
+		for _, stepID := range proof.ExpectPath {
+			index, ok := stepIndexes[stepID]
+			if !ok {
+				return fmt.Errorf("proof case %s expects unknown path step %q", proof.ID, stepID)
+			}
+			if index <= previous {
+				return fmt.Errorf("proof case %s expect_path must follow definition order", proof.ID)
+			}
+			previous = index
+		}
+	}
+	return nil
+}
+
+func validateExpectation(label string, expectation packsvc.ProofExpectation, inputs map[string]Input, captures map[string]string, steps map[string]bool) error {
+	if !idPattern.MatchString(expectation.Tag) {
+		return fmt.Errorf("step %s has invalid expected tag %q", label, expectation.Tag)
+	}
+	for _, value := range expectation.Fields {
+		if value != "*" {
+			if err := validateReference(value, inputs, captures, steps); err != nil {
+				return fmt.Errorf("step %s expectation: %w", label, err)
+			}
+		}
+	}
+	if payload := expectation.Payload; payload != nil {
+		if !idPattern.MatchString(payload.Tag) || !idPattern.MatchString(payload.Field) || (payload.Encoding != "hex" && payload.Encoding != "base64") || payload.SHA256 == "" {
+			return fmt.Errorf("step %s has invalid payload expectation", label)
+		}
+		if strings.HasPrefix(payload.SHA256, "$") {
+			if err := validateReference(payload.SHA256, inputs, captures, steps); err != nil {
+				return fmt.Errorf("step %s payload expectation: %w", label, err)
 			}
 		}
 	}
@@ -630,31 +692,184 @@ func ValidateTopologyRoles(roles []string, values map[string]string) error {
 	return nil
 }
 
-// RunnableStepIndexes returns unfinished steps in definition order. Completed
-// steps are deliberately skipped when an operation is resumed.
+// NextRunnableStep returns the single step selected by the persisted route.
+// The selected next step is written when a completed result contract matches,
+// so resume never reevaluates a prior branch against different output.
+func NextRunnableStep(document Document, receipt Receipt) (int, bool, error) {
+	if len(document.Steps) != len(receipt.Steps) {
+		return 0, false, fmt.Errorf("operation receipt step count does not match definition")
+	}
+	for index, step := range receipt.Steps {
+		if step.State == "incomplete" || step.State == "running" {
+			return index, true, nil
+		}
+	}
+	if len(receipt.ActualPath) == 0 {
+		for index, step := range receipt.Steps {
+			if step.State == "pending" {
+				return index, true, nil
+			}
+		}
+		return 0, false, nil
+	}
+	lastID := receipt.ActualPath[len(receipt.ActualPath)-1]
+	last := -1
+	for index := range document.Steps {
+		if document.Steps[index].ID == lastID {
+			last = index
+			break
+		}
+	}
+	if last < 0 {
+		return 0, false, fmt.Errorf("receipt path references unknown step %q", lastID)
+	}
+	next := receipt.Steps[last].NextStep
+	if next == "$complete" || next == "$fail" {
+		return 0, false, nil
+	}
+	if next != "" {
+		for index := range document.Steps {
+			if document.Steps[index].ID == next {
+				if receipt.Steps[index].State == "completed" {
+					return 0, false, fmt.Errorf("route selected already completed step %q", next)
+				}
+				if receipt.Steps[index].State == "failed" {
+					return 0, false, fmt.Errorf("route-selected step %q failed and cannot be resumed without an explicit retry", next)
+				}
+				return index, true, nil
+			}
+		}
+		return 0, false, fmt.Errorf("route selected unknown step %q", next)
+	}
+	// Version 1/2 receipts and linear version 3 steps advance in definition
+	// order when no explicit route was necessary.
+	for index := last + 1; index < len(receipt.Steps); index++ {
+		if receipt.Steps[index].State == "pending" {
+			return index, true, nil
+		}
+		if receipt.Steps[index].State == "failed" {
+			return 0, false, fmt.Errorf("step %q failed and cannot be resumed without an explicit retry", document.Steps[index].ID)
+		}
+	}
+	return 0, false, nil
+}
+
+// RunnableStepIndexes remains as a compatibility helper for version 1/2
+// callers and tests. New execution uses NextRunnableStep.
 func RunnableStepIndexes(receipt Receipt) []int {
 	indexes := make([]int, 0, len(receipt.Steps))
 	for index, step := range receipt.Steps {
-		if step.State != "completed" {
+		if step.State != "completed" && step.State != "skipped" {
 			indexes = append(indexes, index)
 		}
 	}
 	return indexes
 }
 
+// ApplyRoute records a completed step in the actual path and marks definition
+// steps bypassed by its selected forward route as skipped.
+func ApplyRoute(document Document, receipt *Receipt, index int) error {
+	if index < 0 || index >= len(document.Steps) || index >= len(receipt.Steps) {
+		return fmt.Errorf("invalid route step index %d", index)
+	}
+	id := document.Steps[index].ID
+	if len(receipt.ActualPath) == 0 || receipt.ActualPath[len(receipt.ActualPath)-1] != id {
+		receipt.ActualPath = append(receipt.ActualPath, id)
+	}
+	next := receipt.Steps[index].NextStep
+	target := index + 1
+	if next == "$complete" || next == "$fail" {
+		target = len(document.Steps)
+	} else if next != "" {
+		target = -1
+		for candidate := index + 1; candidate < len(document.Steps); candidate++ {
+			if document.Steps[candidate].ID == next {
+				target = candidate
+				break
+			}
+		}
+		if target < 0 {
+			return fmt.Errorf("step %s selected invalid next step %q", id, next)
+		}
+	}
+	for skipped := index + 1; skipped < target; skipped++ {
+		if receipt.Steps[skipped].State == "pending" {
+			receipt.Steps[skipped].State = "skipped"
+			receipt.Steps[skipped].ContractState = "skipped"
+			receipt.SkippedSteps = appendUnique(receipt.SkippedSteps, document.Steps[skipped].ID)
+		}
+	}
+	return nil
+}
+
+func appendUnique(values []string, value string) []string {
+	for _, candidate := range values {
+		if candidate == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
 // CleanupStepIndexes returns completed stateful steps in reverse order.
 func CleanupStepIndexes(document Document, receipt Receipt) []int {
 	var indexes []int
-	for index := len(document.Steps) - 1; index >= 0; index-- {
+	ordered := make([]int, 0, len(document.Steps))
+	if len(receipt.ActualPath) > 0 {
+		for _, id := range receipt.ActualPath {
+			for index := range document.Steps {
+				if document.Steps[index].ID == id {
+					ordered = append(ordered, index)
+					break
+				}
+			}
+		}
+	} else {
+		for index := range document.Steps {
+			ordered = append(ordered, index)
+		}
+	}
+	for position := len(ordered) - 1; position >= 0; position-- {
+		index := ordered[position]
 		if index >= len(receipt.Steps) {
 			continue
 		}
 		step, state := document.Steps[index], receipt.Steps[index]
-		if state.State == "completed" && step.Cleanup != nil && state.CleanupState != "completed" {
+		if state.State == "completed" && step.Cleanup != nil && state.CleanupState != "completed" && cleanupReferencesAvailable(step.Cleanup, receipt.Captures) {
 			indexes = append(indexes, index)
 		}
 	}
 	return indexes
+}
+
+func cleanupReferencesAvailable(cleanup *Cleanup, captures map[string]string) bool {
+	for _, value := range cleanup.Arguments {
+		if strings.HasPrefix(value, "$capture.") && captures[strings.TrimPrefix(value, "$capture.")] == "" {
+			return false
+		}
+		if strings.HasPrefix(value, "$step.") {
+			parts := strings.Split(strings.TrimPrefix(value, "$step."), ".")
+			if len(parts) == 2 && captures[parts[1]] == "" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// EvaluateOutcomes returns the first ordered result route whose expectation
+// matches. A mismatch is not a runtime failure; it is simply considered for
+// the next declared outcome.
+func EvaluateOutcomes(lines []string, outcomes []Outcome, inputs, captures, topology map[string]string) (Outcome, []string, bool, error) {
+	var failures []string
+	for _, outcome := range outcomes {
+		fields, payload, err := EvaluateExpectation(lines, &outcome.Expect, inputs, captures, topology)
+		if err == nil {
+			return outcome, fields, payload, nil
+		}
+		failures = append(failures, outcome.ID)
+	}
+	return Outcome{}, nil, false, fmt.Errorf("structured output matched no outcome (%s)", strings.Join(failures, ", "))
 }
 
 // ClassifyExecution converts a runtime result into operation step and receipt
@@ -689,6 +904,23 @@ func CaptureOutput(lines []string, captures map[string]Capture) (map[string]stri
 		}
 	}
 	return result, nil
+}
+
+// CaptureAvailableOutput records captures present on a selected result route.
+// A fallback result may intentionally omit fields produced only by a primary
+// path; later steps still fail normally if they reference a missing capture.
+func CaptureAvailableOutput(lines []string, captures map[string]Capture) map[string]string {
+	result := map[string]string{}
+	for name, capture := range captures {
+		for _, line := range lines {
+			tag, fields := parseStructuredLine(line)
+			if tag == capture.Tag && fields[capture.Field] != "" {
+				result[name] = fields[capture.Field]
+				break
+			}
+		}
+	}
+	return result
 }
 
 // EvaluateExpectation verifies a completed step's structured output. Payload
@@ -841,11 +1073,18 @@ func LoadReceipt(path string) (Receipt, error) {
 	if receipt.Schema != ReceiptSchema || receipt.SchemaVersion < MinimumReceiptVersion || receipt.SchemaVersion > ReceiptSchemaVersion {
 		return Receipt{}, fmt.Errorf("unsupported operation receipt schema")
 	}
-	if receipt.SchemaVersion == 1 {
+	if receipt.SchemaVersion < ReceiptSchemaVersion {
+		previous := receipt.SchemaVersion
 		receipt.SchemaVersion = ReceiptSchemaVersion
 		for index := range receipt.Steps {
-			if receipt.Steps[index].State == "completed" {
+			if previous == 1 && receipt.Steps[index].State == "completed" {
 				receipt.Steps[index].ContractState = "legacy"
+			}
+			if receipt.Steps[index].State == "completed" {
+				receipt.ActualPath = appendUnique(receipt.ActualPath, receipt.Steps[index].ID)
+			}
+			if receipt.Steps[index].State == "skipped" {
+				receipt.SkippedSteps = appendUnique(receipt.SkippedSteps, receipt.Steps[index].ID)
 			}
 		}
 	}
@@ -897,7 +1136,13 @@ func builtins() []Resolved {
 		{ID: "routes", Pack: "network-route-inventory", Arguments: map[string]string{"family": "$input.family", "interface_index": "0", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "network-route-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
 		{ID: "proxy", Pack: "proxy-configuration-inventory", Expect: &packsvc.ProofExpectation{Tag: "proxy-configuration-inventory", Fields: map[string]string{"status": "complete"}}},
 	}, ProofCases: []ProofCase{{ID: "local-network", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Inputs: map[string]string{"family": "all", "result_limit": "16"}}}}
-	documents := []Document{triage, network}
+	waitTriage := Document{Schema: Schema, SchemaVersion: 3, ID: "wait-chain-triage", Version: "1.0.0", Title: "Wait Chain Triage", Summary: "Correlate process images, thread state, handle types, and Windows wait chains for an exact process", Tier: "public", Inputs: []Input{{Name: "target_pid", Type: "int", Required: true}, {Name: "target_tid", Type: "int", Default: "0"}, {Name: "result_limit", Type: "int", Default: "32"}}, Steps: []Step{
+		{ID: "process", Pack: "process-image-inventory", Arguments: map[string]string{"target_pid": "$input.target_pid", "module_filter": "", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "process-image-inventory", Fields: map[string]string{"status": "complete", "target_pid": "$input.target_pid"}}},
+		{ID: "threads", Pack: "thread-state-inventory", Arguments: map[string]string{"target_pid": "$input.target_pid", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "thread-state-inventory", Fields: map[string]string{"status": "complete", "target_pid": "$input.target_pid"}}},
+		{ID: "handles", Pack: "process-handle-type-summary", Arguments: map[string]string{"target_pid": "$input.target_pid", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "process-handle-type-summary", Fields: map[string]string{"status": "complete", "target_pid": "$input.target_pid"}}},
+		{ID: "waits", Pack: "thread-wait-chain-inventory", Arguments: map[string]string{"target_pid": "$input.target_pid", "target_tid": "$input.target_tid", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "thread-wait-chain-inventory", Fields: map[string]string{"status": "complete", "target_pid": "$input.target_pid"}}},
+	}, ProofCases: []ProofCase{{ID: "target-waits", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Inputs: map[string]string{"target_pid": "$TARGET_PID", "target_tid": "$TARGET_TID", "result_limit": "16"}, ExpectPath: []string{"process", "threads", "handles", "waits"}}}}
+	documents := []Document{triage, network, waitTriage}
 	items := make([]Resolved, 0, len(documents))
 	for _, document := range documents {
 		item := Resolved{Document: document, Catalog: "builtin", Qualified: "builtin/" + document.ID}
@@ -907,21 +1152,122 @@ func builtins() []Resolved {
 	return items
 }
 
+type GraphNode struct {
+	ID   string `json:"id"`
+	Pack string `json:"pack"`
+}
+
+type GraphEdge struct {
+	From    string `json:"from"`
+	To      string `json:"to"`
+	Outcome string `json:"outcome,omitempty"`
+}
+
+type GraphDocument struct {
+	Schema        string      `json:"schema"`
+	SchemaVersion int         `json:"schema_version"`
+	Operation     string      `json:"operation"`
+	Nodes         []GraphNode `json:"nodes"`
+	Edges         []GraphEdge `json:"edges"`
+}
+
+func Graph(document Document, format string) (string, error) {
+	graph := GraphDocument{Schema: "bofbench.operation-graph", SchemaVersion: 1, Operation: document.ID}
+	for index, step := range document.Steps {
+		graph.Nodes = append(graph.Nodes, GraphNode{ID: step.ID, Pack: step.Pack})
+		if len(step.Outcomes) > 0 {
+			for _, outcome := range step.Outcomes {
+				graph.Edges = append(graph.Edges, GraphEdge{From: step.ID, To: outcome.Next, Outcome: outcome.ID})
+			}
+		} else if index+1 < len(document.Steps) {
+			graph.Edges = append(graph.Edges, GraphEdge{From: step.ID, To: document.Steps[index+1].ID})
+		} else {
+			graph.Edges = append(graph.Edges, GraphEdge{From: step.ID, To: "$complete"})
+		}
+	}
+	switch strings.ToLower(format) {
+	case "", "text":
+		var body strings.Builder
+		fmt.Fprintf(&body, "OPERATION GRAPH\noperation  %s\n", document.ID)
+		for _, edge := range graph.Edges {
+			label := ""
+			if edge.Outcome != "" {
+				label = " [" + edge.Outcome + "]"
+			}
+			fmt.Fprintf(&body, "%s -> %s%s\n", edge.From, edge.To, label)
+		}
+		return body.String(), nil
+	case "mermaid":
+		var body strings.Builder
+		body.WriteString("flowchart TD\n")
+		for _, node := range graph.Nodes {
+			fmt.Fprintf(&body, "  %s[\"%s · %s\"]\n", mermaidID(node.ID), node.ID, strings.ReplaceAll(node.Pack, "\"", "'"))
+		}
+		body.WriteString("  complete([\"complete\"])\n  fail([\"fail\"])\n")
+		for _, edge := range graph.Edges {
+			to := mermaidID(edge.To)
+			if edge.To == "$complete" {
+				to = "complete"
+			} else if edge.To == "$fail" {
+				to = "fail"
+			}
+			if edge.Outcome != "" {
+				fmt.Fprintf(&body, "  %s -- \"%s\" --> %s\n", mermaidID(edge.From), strings.ReplaceAll(edge.Outcome, "\"", "'"), to)
+			} else {
+				fmt.Fprintf(&body, "  %s --> %s\n", mermaidID(edge.From), to)
+			}
+		}
+		return body.String(), nil
+	case "json":
+		data, err := json.MarshalIndent(graph, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		return string(data) + "\n", nil
+	default:
+		return "", fmt.Errorf("unsupported graph format %q; use text, mermaid, or json", format)
+	}
+}
+
+func mermaidID(value string) string {
+	value = strings.TrimPrefix(value, "$")
+	value = strings.NewReplacer("-", "_", ".", "_", "/", "_").Replace(value)
+	return "step_" + value
+}
+
 func ReferenceMarkdown(items []Resolved) string {
 	var body strings.Builder
 	body.WriteString("# Operation Reference\n\nGenerated from resolved `bofbench.operation` manifests.\n\n")
 	for _, item := range items {
 		fmt.Fprintf(&body, "## `%s`\n\n%s\n\n", item.Qualified, item.Document.Summary)
+		fmt.Fprintf(&body, "- Schema version: `%d`\n- Tier: `%s`\n- Steps: `%d`\n- Proof cases: `%d`\n\n", item.Document.SchemaVersion, item.Document.Tier, len(item.Document.Steps), len(item.Document.ProofCases))
 		if len(item.Document.Inputs) > 0 {
-			body.WriteString("### Inputs\n\n| Name | Type | Required | Sensitive |\n|---|---|---:|---:|\n")
+			body.WriteString("### Inputs\n\n| Name | Type | Required | Sensitive | Topology value |\n|---|---|---:|---:|---|\n")
 			for _, in := range item.Document.Inputs {
-				fmt.Fprintf(&body, "| `%s` | `%s` | %t | %t |\n", in.Name, in.Type, in.Required, in.Sensitive)
+				fmt.Fprintf(&body, "| `%s` | `%s` | %t | %t | `%s` |\n", in.Name, in.Type, in.Required, in.Sensitive, in.TopologyValue)
 			}
 			body.WriteString("\n")
 		}
 		body.WriteString("### Steps\n\n")
 		for i, step := range item.Document.Steps {
-			fmt.Fprintf(&body, "%d. `%s` → `%s`\n", i+1, step.ID, step.Pack)
+			fmt.Fprintf(&body, "%d. `%s` → `%s`", i+1, step.ID, step.Pack)
+			if step.Cleanup != nil {
+				fmt.Fprintf(&body, "; cleanup `%s`", step.Cleanup.Pack)
+			}
+			body.WriteString("\n")
+			for _, outcome := range step.Outcomes {
+				fmt.Fprintf(&body, "    - outcome `%s` → `%s` when `[%s]` matches\n", outcome.ID, outcome.Next, outcome.Expect.Tag)
+			}
+		}
+		if len(item.Document.ProofCases) > 0 {
+			body.WriteString("\n### Proof cases\n\n")
+			for _, proof := range item.Document.ProofCases {
+				fmt.Fprintf(&body, "- `%s`: via `%s`, architectures `%s`", proof.ID, strings.Join(proof.Via, ","), strings.Join(proof.Architectures, ","))
+				if len(proof.ExpectPath) > 0 {
+					fmt.Fprintf(&body, ", expected path `%s`", strings.Join(proof.ExpectPath, " → "))
+				}
+				body.WriteString("\n")
+			}
 		}
 		body.WriteString("\n")
 	}

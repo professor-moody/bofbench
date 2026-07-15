@@ -82,6 +82,7 @@ nav:
       - Diagnose a Workflow: scenarios/diagnose-workflow.md
       - Reproducible Handoff: scenarios/release-handoff.md
       - Multi-Step Operation Lifecycle: scenarios/operation-lifecycle.md
+      - Adaptive Native Coordination: scenarios/adaptive-native-coordination.md
       - Operator Playbooks: playbooks.md
       - Deep Capability Workflows: deep-capabilities.md
       - Native Process Depth: native-process-depth.md

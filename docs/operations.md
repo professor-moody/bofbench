@@ -1,11 +1,11 @@
-# Provable Multi-Step Operations
+# Adaptive, Provable Multi-Step Operations
 
-Operations connect capability packs into a result-aware linear workflow. A step can capture a structured output field—such as a PID, address, hash, path, or pipe name—and pass it to a later step. The operation advances only when both conditions are true:
+Operations connect capability packs into a result-aware, forward-only workflow. A step can capture a structured output field—such as a PID, address, hash, path, object name, or pipe name—and pass it to a later step. Version 3 can also route a completed, understood result to a later step. The operation advances only when both conditions are true:
 
 1. the runtime task completed with complete output; and
 2. the step's declared structured-result contract matched.
 
-A loader invocation that exits normally but emits `status=failed` therefore stops the operation. Packs remain independently buildable and runnable; operations add sequencing, result contracts, captures, checkpointing, static testing, live proof, resume, and reverse cleanup.
+A loader invocation that exits normally but emits a declared clean-failure result can select an explicit fallback. A runtime crash, timeout, or incomplete result cannot select a fallback because its effects are unknown. Packs remain independently buildable and runnable; operations add sequencing, result contracts, ordered outcomes, captures, checkpointing, static testing, live proof, resume, and reverse cleanup.
 
 <video controls preload="metadata" poster="assets/images/operation-lifecycle.png" width="100%">
   <source src="assets/media/operation-lifecycle.webm" type="video/webm">
@@ -17,6 +17,9 @@ A loader invocation that exits normally but emits `status=failed` therefore stop
 bofbench operation list
 bofbench operation search memory
 bofbench operation show internal/virtual-memory-execute
+bofbench operation graph internal/adaptive-memory-execute
+bofbench operation graph internal/adaptive-memory-execute --format mermaid
+bofbench operation graph internal/adaptive-memory-execute --format json
 bofbench operation validate operations/example/operation.json
 
 # Portable build, analyzer, and export coverage
@@ -48,7 +51,7 @@ bofbench operation run internal/virtual-memory-execute \
 
 Normal operation accepts operator-selected targets and payloads. Proof fixtures and benign proof payloads are acceptance infrastructure, not runtime restrictions. `--cleanup` and `--cleanup-on-failure` remain optional.
 
-The run creates `runs/<run-id>/operation.json`. The version-2 receipt pins the operation definition, action and cleanup pack hashes, object hashes, runtime receipts, contract state, matched non-sensitive field names, non-sensitive captures, and cleanup results. Sensitive values are never stored.
+The run creates `runs/<run-id>/operation.json`. The version-3 receipt pins the operation definition, action and cleanup pack hashes, object hashes, runtime receipts, contract state, matched outcomes, the actual path, skipped steps, non-sensitive captures, and cleanup results. Sensitive values are never stored.
 
 ```mermaid
 flowchart LR
@@ -59,9 +62,12 @@ flowchart LR
   E --> F["Resume later"]
   F --> D
   D -- "Yes" --> G{"Structured result matches?"}
-  G -- "No" --> H["Checkpoint failed contract"]
+  G -- "No" --> H["Try the next declared outcome"]
+  H --> L{"A clean outcome matched?"}
+  L -- "No" --> M["Checkpoint failed contract"]
+  L -- "Yes" --> I
   G -- "Yes" --> I["Verify payload and capture fields"]
-  I --> J["Resolve next step"]
+  I --> J["Pin route and mark bypassed steps skipped"]
   J --> K["Optional reverse cleanup"]
 ```
 
@@ -105,7 +111,50 @@ Payload contracts can join bounded hex or base64 chunks in memory and compare th
 }
 ```
 
-Schema-version-1 operations remain readable and executable. Their steps are labeled `legacy` because they have no result contract; update them to version 2 before relying on `operation prove` for result-aware acceptance.
+Schema-version-1 operations remain readable and executable. Their steps are labeled `legacy` because they have no result contract. Schema-version-2 operations retain their linear result contracts unchanged.
+
+## Ordered outcomes and result routing
+
+Schema version 3 lets a step replace `expect` with ordered `outcomes`. The first matching structured result pins the next step. Targets may be only a later step, `$complete`, or `$fail`; backward edges and cycles are rejected.
+
+```json
+{
+  "id": "map",
+  "pack": "process-section-map",
+  "outcomes": [
+    {
+      "id": "mapped",
+      "expect": {
+        "tag": "process-section-map",
+        "fields": {"status": "complete", "remote_base": "*"}
+      },
+      "next": "section-start"
+    },
+    {
+      "id": "fallback",
+      "expect": {
+        "tag": "process-section-map",
+        "fields": {"status": "failed"}
+      },
+      "next": "allocate"
+    }
+  ]
+}
+```
+
+Order matters when outcome contracts overlap. BOFBench records the matched outcome and next step before advancing. Resume uses that recorded route and never reevaluates an earlier branch against changed output. Every unvisited definition step is recorded as `skipped`, and cleanup walks only completed stateful steps in reverse execution order.
+
+Use `operation graph` before execution to inspect the route:
+
+```text
+map · process-section-map
+  mapped   -> section-start
+  fallback -> allocate
+section-start -> complete
+allocate -> write -> protect -> fallback-start -> complete
+```
+
+`--format mermaid` produces a documentation-ready flowchart. `--format json` produces stable nodes and edges for other tooling.
 
 ## Reference and capture forms
 
@@ -120,7 +169,7 @@ Forward references are rejected. Captures are extracted only after the step cont
 
 ## Proof cases and independent state
 
-Version 2 can declare architectures, runtimes, topology roles, typed proof inputs, expected captures, independent state checks, and whether cleanup runs. Pack proof placeholders are available, including `$TARGET_PID`, `$TARGET_TID`, `$TARGET_NAMED_PIPE`, `$PAYLOAD_RET_PATH`, `$PROOF_SECRET_PATH`, and `$RUN_ID`. State checks may consume dynamic values such as `$capture.remote_base`.
+Version 3 proof cases retain architectures, runtimes, topology roles, typed proof inputs, expected captures, independent state checks, and cleanup selection. They add `expect_path`, which proves the exact route. Pack proof placeholders include `$TARGET_PID`, `$TARGET_TID`, `$TARGET_HOLDER_PID`, `$TARGET_JOB_MEMBER_PID`, `$TARGET_EVENT_NAME`, `$TARGET_SECTION_NAME`, `$TARGET_JOB_NAME`, `$TARGET_NAMED_PIPE`, `$PAYLOAD_RET_PATH`, `$PROOF_SECRET_PATH`, and `$RUN_ID`. State checks may consume dynamic values such as `$capture.remote_base` or `$capture.retained_handle`.
 
 ```json
 {
@@ -134,6 +183,7 @@ Version 2 can declare architectures, runtimes, topology roles, typed proof input
     "payload_sha256": "$PROOF_SECRET_SHA256"
   },
   "expect_captures": {"remote_base": "*"},
+  "expect_path": ["allocate", "write", "read"],
   "cleanup": true,
   "state_checks": [
     {
@@ -159,7 +209,7 @@ Submitted or running C2 tasks leave the step and operation `incomplete`:
 bofbench operation resume runs/<run-id>/operation.json
 ```
 
-Resume refreshes the embedded runtime receipt, confirms the object hash, reevaluates the version-2 result contract, and only then extracts captures and advances. Completed steps are skipped. Resupply sensitive inputs when an unfinished step still needs them:
+Resume refreshes the embedded runtime receipt, confirms the object hash, evaluates the step contract or ordered outcomes, and only then extracts captures and advances. A persisted route is never recalculated, completed steps are retained, and unvisited steps remain skipped. Failed runtime work is terminal rather than an implicit retry. Resupply sensitive inputs when an unfinished step still needs them:
 
 ```bash
 bofbench operation resume runs/<run-id>/operation.json \
@@ -192,11 +242,13 @@ Topologies contain profile names only. Authentication values continue to use `@p
 
 ## TUI
 
-Open `bofbench tui` and select **Operations**. Choose a definition, runtime, lab, architecture, and typed inputs. Press `x` for static test or `p` for declared proof; execute ordinary runs with `enter`. The result view separates runtime task state from result-contract state and shows captures, resume, and cleanup commands.
+Open `bofbench tui` and select **Operations**. Choose a definition, runtime, lab, architecture, and typed inputs. Press `x` for static test or `p` for declared proof; execute ordinary runs with `enter`. The definition view shows available routes. The result view separates runtime task state from contract state and shows the actual path, matched outcomes, skipped steps, captures, resume, and cleanup commands.
 
 ## Common failures
 
 - **Runtime complete, contract failed:** inspect `contract_state`, `matched_tag`, and the structured output. The BOF ran, but its declared result was not successful.
+- **No outcome matched:** the runtime result was complete, but no declared clean result described it. The operation stops instead of guessing a route.
+- **Runtime failed before routing:** inspect the runtime receipt. Crashes, timeouts, and incomplete output never select a fallback because effects may be unknown.
 - **Missing tag or field:** the pack output no longer matches the operation definition; update the operation only after confirming the pack contract.
 - **Payload hash mismatch:** verify the declared encoding, bounded response size, and expected SHA-256.
 - **Missing capture:** captures occur after contract matching; fix the producing step rather than supplying a guessed value.

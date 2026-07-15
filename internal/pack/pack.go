@@ -892,6 +892,33 @@ func builtins() []Resolved {
 	proxy.AnalysisSignatures = []AnalysisSignature{{ID: "proxy_configuration_inventory", Name: "Proxy configuration inventory", Summary: "Read current-user WinHTTP proxy, PAC, bypass, and automatic-detection configuration.", Steps: []AnalysisStep{{Action: "read current-user proxy configuration", APIs: []string{"WinHttpGetIEProxyConfigForCurrentUser"}}, {Action: "release proxy strings", APIs: []string{"GlobalFree"}}}, RequiredStrings: []string{"[proxy-configuration-inventory]"}, Effects: []string{"reads local proxy configuration"}, Requirements: []string{"the runtime user context"}}}
 	proxy.ProofCases = []ProofCase{{ID: "current-user", Via: []string{"lab", "sliver"}, Expect: ProofExpectation{Tag: "proxy-configuration-inventory", Fields: map[string]string{"status": "complete"}}}}
 	byID["proxy-configuration-inventory"] = proxy
+	waitChains := byID["thread-wait-chain-inventory"]
+	waitChains.Title = "Thread Wait Chain Inventory"
+	waitChains.Capabilities = []string{"bounded Windows wait-chain traversal for one exact process or thread"}
+	waitChains.Arguments = []Argument{{Name: "target_pid", Type: "int", Description: "exact process identifier; required when target_tid is zero", Default: "0"}, {Name: "target_tid", Type: "int", Description: "exact thread identifier; zero enumerates threads in target_pid", Default: "0"}, {Name: "result_limit", Type: "int", Description: "maximum wait-chain nodes (1-512)", Default: "64"}}
+	waitChains.ExpectedAnalysis = []string{"thread_wait_chain_inventory"}
+	waitChains.OutputFields = []string{"status", "target_pid", "target_tid", "node", "kind", "pid", "tid", "type", "cycle", "shown", "limit", "error"}
+	waitChains.AnalysisSignatures = []AnalysisSignature{{ID: "thread_wait_chain_inventory", Name: "Thread wait-chain inventory", Summary: "Traverse bounded Windows wait-chain nodes for selected process threads.", Steps: []AnalysisStep{{Action: "query thread wait chains", APIs: []string{"GetThreadWaitChain"}}}, RequiredStrings: []string{"[thread-wait-chain-inventory]"}, Effects: []string{"reads thread synchronization metadata"}, Requirements: []string{"an exact PID or TID", "thread query access"}}}
+	waitChains.ProofCases = []ProofCase{{ID: "target-waits", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID", "target_tid": "$TARGET_TID", "result_limit": "32"}, Expect: ProofExpectation{Tag: "thread-wait-chain-inventory", Fields: map[string]string{"status": "complete", "target_tid": "$TARGET_TID"}}}}
+	byID["thread-wait-chain-inventory"] = waitChains
+	handleSummary := byID["process-handle-type-summary"]
+	handleSummary.Title = "Process Handle Type Summary"
+	handleSummary.Capabilities = []string{"bounded per-object-type handle counts for one selected process"}
+	handleSummary.Arguments = []Argument{{Name: "target_pid", Type: "int", Description: "exact process identifier", Required: true}, {Name: "result_limit", Type: "int", Description: "maximum object types (1-256)", Default: "64"}}
+	handleSummary.ExpectedAnalysis = []string{"process_handle_type_summary"}
+	handleSummary.OutputFields = []string{"status", "target_pid", "type_index", "type", "count", "shown", "limit", "error"}
+	handleSummary.AnalysisSignatures = []AnalysisSignature{{ID: "process_handle_type_summary", Name: "Process handle type summary", Summary: "Read the system handle table and summarize one process by object type.", Steps: []AnalysisStep{{Action: "read the system handle table", APIs: []string{"NtQuerySystemInformation"}}}, RequiredStrings: []string{"[process-handle-type-summary]"}, Effects: []string{"reads process handle metadata"}, Requirements: []string{"an exact PID", "PROCESS_DUP_HANDLE access"}}}
+	handleSummary.ProofCases = []ProofCase{{ID: "target-handles", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID", "result_limit": "32"}, Expect: ProofExpectation{Tag: "process-handle-type-summary", Fields: map[string]string{"status": "complete", "target_pid": "$TARGET_PID", "shown": "*"}}}}
+	byID["process-handle-type-summary"] = handleSummary
+	objectSecurity := byID["named-object-security-inventory"]
+	objectSecurity.Title = "Named Object Security Inventory"
+	objectSecurity.Capabilities = []string{"owner and DACL metadata for one exact named event, mutex, semaphore, section, or job"}
+	objectSecurity.Arguments = []Argument{{Name: "object_type", Type: "string", Description: "event, mutex, semaphore, section, or job", Required: true}, {Name: "object_name", Type: "wstring", Description: "exact object name", Required: true}}
+	objectSecurity.ExpectedAnalysis = []string{"named_object_security_inventory"}
+	objectSecurity.OutputFields = []string{"status", "object_type", "owner", "dacl_present", "ace_count", "shown", "ace_index", "ace_type", "rights", "sid", "protected", "inherited", "control", "error"}
+	objectSecurity.AnalysisSignatures = []AnalysisSignature{{ID: "named_object_security_inventory", Name: "Named object security inventory", Summary: "Open one exact named kernel object and read its owner and DACL control metadata.", Steps: []AnalysisStep{{Action: "open a selected named kernel object", APIs: []string{"OpenEventW", "OpenMutexW", "OpenSemaphoreW", "OpenFileMappingW", "OpenJobObjectW"}}, {Action: "read kernel-object security metadata", APIs: []string{"GetSecurityInfo"}}}, RequiredStrings: []string{"[named-object-security-inventory]"}, Effects: []string{"reads kernel object security metadata"}, Requirements: []string{"an exact object type and name", "READ_CONTROL access"}}}
+	objectSecurity.ProofCases = []ProofCase{{ID: "target-event", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"object_type": "event", "object_name": "$TARGET_EVENT_NAME"}, Expect: ProofExpectation{Tag: "named-object-security-inventory", Fields: map[string]string{"status": "complete", "object_type": "event"}}}}
+	byID["named-object-security-inventory"] = objectSecurity
 	pipeInventory := byID["named-pipe-inventory"]
 	pipeInventory.Title = "Named Pipe Inventory"
 	pipeInventory.Capabilities = []string{"bounded named-pipe discovery"}
@@ -1210,7 +1237,8 @@ func validate(document Document, root string) error {
 	allowedPlaceholders := map[string]bool{
 		"$TARGET_PID": true, "$TARGET_TID": true, "$TARGET_HANDLE": true,
 		"$TARGET_NAMED_PIPE": true,
-		"$TARGET_ARCH":       true, "$TARGET_MODULE_BASE": true, "$TARGET_MODULE_PATH": true, "$EXECUTION_ADDRESS": true,
+		"$TARGET_HOLDER_PID": true, "$TARGET_JOB_MEMBER_PID": true, "$TARGET_EVENT_NAME": true, "$TARGET_SECTION_NAME": true, "$TARGET_JOB_NAME": true,
+		"$TARGET_ARCH": true, "$TARGET_MODULE_BASE": true, "$TARGET_MODULE_PATH": true, "$EXECUTION_ADDRESS": true,
 		"$X86_TARGET_PID": true, "$X86_TARGET_TID": true, "$X86_TARGET_MODULE_BASE": true, "$X86_TARGET_MODULE_PATH": true,
 		"$MEMORY_ADDRESS": true, "$MEMORY_SIZE": true, "$MEMORY_SHA256": true, "$CANARY_PATH": true, "$CANARY_SHA256": true,
 		"$MEMORY_WRITE_ADDRESS": true, "$MEMORY_WRITE_SIZE": true, "$MEMORY_WRITE_SHA256": true,
@@ -1220,7 +1248,7 @@ func validate(document Document, root string) error {
 		"$VAULT_GUID": true, "$VAULT_RESOURCE": true, "$VAULT_IDENTITY": true, "$VAULT_SHA256": true, "$VAULT_SIZE": true,
 		"$CERT_THUMBPRINT": true, "$CERT_STORE": true, "$CERT_SUBJECT": true,
 		"$LAB_HOST": true, "$SERVICE_BINARY": true, "$TARGET_SERVICE": true, "$WMI_MARKER_PATH": true, "$TEMP": true, "$RUN_ID": true, "$PROOF_SECRET": true,
-		"$PROOF_SECRET_SHA256": true, "$PROOF_SECRET_CRLF_SHA256": true, "$PROOF_SECRET_PATH": true,
+		"$PROOF_SECRET_SIZE": true, "$PROOF_SECRET_SHA256": true, "$PROOF_SECRET_CRLF_SHA256": true, "$PROOF_SECRET_PATH": true,
 		"$REMOTE_REGISTRY_HIVE": true, "$REMOTE_REGISTRY_PATH": true, "$REMOTE_REGISTRY_NAME": true, "$REMOTE_REGISTRY_SHA256": true, "$REMOTE_REGISTRY_SIZE": true,
 		"$REMOTE_STAGE_SHARE": true, "$REMOTE_STAGE_RELATIVE_ROOT": true, "$REMOTE_STAGE_LOCAL_ROOT": true,
 		"$REMOTE_STAGE_RELATIVE": true, "$REMOTE_STAGE_LOCAL_PATH": true, "$REMOTE_TASK_NAME": true, "$REMOTE_TASK_MARKER_PATH": true,
@@ -1303,6 +1331,7 @@ func validate(document Document, root string) error {
 			"dpapi_file": {"path", "sha256"}, "pfx": {"path", "password", "thumbprint"},
 			"process_memory": {"pid", "address", "size", "sha256"}, "process_protection": {"pid", "address", "protection"},
 			"process_memory_region": {"pid", "address"}, "thread_suspend_state": {"tid", "suspended"}, "thread_context": {"tid", "ip"},
+			"kernel_object": {"object_type", "name"}, "event_state": {"name", "state"}, "section_payload": {"name", "offset", "size", "sha256"}, "job_membership": {"name", "pid"},
 			"process":              {"pid", "image", "marker"},
 			"process_command_line": {"pid", "value"},
 			"service_config":       {"name", "field", "value"},

@@ -29,9 +29,9 @@ builtin/process-tree  pass_with_unavailable
 
 ```bash
 bofbench lab target deploy --lab devbox
-bofbench pack prove process-tree --via lab --lab devbox
+bofbench pack prove process-tree --via lab --lab devbox --arch x64
 bofbench pack prove internal/process-memory-write \
-  --catalog ~/bofbench-packs-internal --via lab --lab devbox
+  --catalog ~/bofbench-packs-internal --via lab --lab devbox --arch x86
 bofbench lab target remove --lab devbox
 bofbench lab verify clean --lab devbox
 ```
@@ -81,7 +81,7 @@ bofbench operation prove internal/memory-allocation-roundtrip \
   --via lab --lab devbox --arch x64
 ```
 
-Reports are written to `runs/<run-id>/operation-proof.json`. Each case is `pass`, `failed`, `incomplete`, or `unavailable`. Runtime completion and contract matching are separate: output containing the expected tag with `status=failed` cannot advance a step that requires `status=complete`.
+Reports are written to `runs/<run-id>/operation-proof.json`. Each case is `pass`, `failed`, `incomplete`, or `unavailable`. Runtime completion and contract matching are separate: output containing the expected tag with `status=failed` cannot advance a step that requires `status=complete`. In a schema-version-3 operation, it may advance only when an ordered outcome explicitly matches that complete clean-failure result. Runtime failure or incomplete output never selects a fallback.
 
 Operation proof accepts captures inside independent state checks. For example, an allocation step can capture `remote_base`, later steps can write and read it, and the final `process_memory_region` cleanup check can require that exact captured base to be absent.
 
@@ -89,10 +89,10 @@ Operation proof accepts captures inside independent state checks. For example, a
 
 ```bash
 bofbench pack prove --all --catalog ~/bofbench-packs-internal \
-  --via sliver --lab devbox
+  --via sliver --lab devbox --arch x64
 
 bofbench pack prove --all --catalog ~/bofbench-packs-internal \
-  --via sliver --lab devbox \
+  --via sliver --lab devbox --arch x64 \
   --resume runs/<prior-proof>/pack-proof.json \
   --only failed,unavailable
 ```

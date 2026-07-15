@@ -78,6 +78,9 @@ type runEntry struct {
 	Summary        string
 	Events         []eventEntry
 	Findings       []findingEntry
+	ActualPath     []string
+	SkippedSteps   []string
+	MatchedRoutes  []string
 	ModTime        time.Time
 }
 
@@ -818,7 +821,7 @@ func (m model) viewOperations() string {
 	}
 	var b strings.Builder
 	b.WriteString("MULTI-STEP OPERATIONS\n")
-	b.WriteString(mutedStyle.Render("Run linear pack workflows with typed inputs, persisted captures, resume, and reverse cleanup."))
+	b.WriteString(mutedStyle.Render("Run result-aware pack workflows with typed inputs, pinned routes, resume, and reverse cleanup."))
 	b.WriteString("\n\n")
 	limit := visibleRows(m.height, 12, 16)
 	start, end := windowRange(len(m.operations), m.operationCursor, limit)
@@ -838,6 +841,14 @@ func (m model) viewOperations() string {
 		fmt.Fprintf(&b, "\nRuntime  %s  Lab %s\nRun      bofbench operation run %s --via %s\n", hotStyle.Render(runVias[m.viaCursor]), labName, item.Qualified, runVias[m.viaCursor])
 		fmt.Fprintf(&b, "Test [x] bofbench operation test %s\nProve[p] bofbench operation prove %s --via %s\n", item.Qualified, item.Qualified, runVias[m.viaCursor])
 		fmt.Fprintf(&b, "Resume   bofbench operation resume runs/<id>/operation.json\nCleanup  bofbench operation cleanup runs/<id>/operation.json\n")
+		if graph, err := operationsvc.Graph(item.Document, "text"); err == nil {
+			b.WriteString("\nRoutes\n")
+			for _, line := range strings.Split(strings.TrimSpace(graph), "\n") {
+				if strings.Contains(line, " -> ") {
+					fmt.Fprintf(&b, "  %s\n", line)
+				}
+			}
+		}
 		if len(m.operationArguments) == 0 {
 			b.WriteString("\nArguments  press e to load and edit typed operation inputs\n")
 		} else {
@@ -1014,6 +1025,15 @@ func renderRunDetail(run runEntry) string {
 	if run.ExecutionState != "" || run.TaskID != "" {
 		fmt.Fprintf(&b, "  task: %s  state=%s  output_complete=%t\n", emptyDash(run.TaskID), emptyDash(run.ExecutionState), run.OutputComplete)
 	}
+	if len(run.ActualPath) > 0 {
+		fmt.Fprintf(&b, "  path:   %s\n", strings.Join(run.ActualPath, " → "))
+		if len(run.SkippedSteps) > 0 {
+			fmt.Fprintf(&b, "  skipped: %s\n", strings.Join(run.SkippedSteps, ", "))
+		}
+		if len(run.MatchedRoutes) > 0 {
+			fmt.Fprintf(&b, "  outcomes: %s\n", strings.Join(run.MatchedRoutes, ", "))
+		}
+	}
 	if run.Summary != "" {
 		fmt.Fprintf(&b, "  summary: %s\n", run.Summary)
 	}
@@ -1181,7 +1201,7 @@ func listRuns() []runEntry {
 
 func readRunEntry(path string, modTime time.Time) runEntry {
 	run := runEntry{Path: path, ModTime: modTime}
-	for _, name := range []string{"result.json", "lab-smoke.json", "analysis.json"} {
+	for _, name := range []string{"operation.json", "result.json", "lab-smoke.json", "analysis.json"} {
 		report := filepath.Join(path, name)
 		b, err := os.ReadFile(report)
 		if err != nil {
@@ -1195,6 +1215,20 @@ func readRunEntry(path string, modTime time.Time) runEntry {
 		run.Source = strings.TrimSuffix(name, ".json")
 		applyRunFields(&run, v)
 		switch name {
+		case "operation.json":
+			run.Source = "operation"
+			run.ActualPath = stringSliceField(v, "actual_path")
+			run.SkippedSteps = stringSliceField(v, "skipped_steps")
+			if steps, ok := v["steps"].([]any); ok {
+				for _, raw := range steps {
+					step, ok := raw.(map[string]any)
+					if !ok || stringField(step, "matched_outcome") == "" {
+						continue
+					}
+					run.MatchedRoutes = append(run.MatchedRoutes, stringField(step, "id")+"="+stringField(step, "matched_outcome"))
+				}
+			}
+			run.Summary = strings.Join(run.ActualPath, " → ")
 		case "analysis.json":
 			run.Source = "analysis"
 			if run.Status == "" {
@@ -1380,6 +1414,20 @@ func intField(m map[string]any, key string) int64 {
 	default:
 		return 0
 	}
+}
+
+func stringSliceField(m map[string]any, key string) []string {
+	raw, ok := m[key].([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(raw))
+	for _, value := range raw {
+		if text, ok := value.(string); ok {
+			result = append(result, text)
+		}
+	}
+	return result
 }
 
 func selectedObject(entry arsenal.Entry) string {

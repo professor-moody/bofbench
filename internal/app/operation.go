@@ -72,6 +72,7 @@ func operationCommand(stdout io.Writer) *cobra.Command {
 			printOperation(stdout, item)
 			return nil
 		}},
+		operationGraphCommand(stdout, load),
 		&cobra.Command{Use: "validate <operation-or-operation.json>", Short: "Validate a resolved operation or definition file", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
 			var document operationsvc.Document
 			qualified := args[0]
@@ -100,6 +101,28 @@ func operationCommand(stdout io.Writer) *cobra.Command {
 		}},
 		operationDocsCommand(stdout, load), operationTestCommand(stdout, load, func() []string { return append([]string(nil), catalogs...) }), operationProveCommand(stdout, load, func() []string { return append([]string(nil), catalogs...) }), operationRunCommand(stdout, load), operationResumeCommand(stdout, load), operationCleanupCommand(stdout, load),
 	)
+	return cmd
+}
+
+func operationGraphCommand(stdout io.Writer, load func() (*operationsvc.Registry, error)) *cobra.Command {
+	var format string
+	cmd := &cobra.Command{Use: "graph <operation>", Short: "Show operation steps and result routes", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		registry, err := load()
+		if err != nil {
+			return err
+		}
+		item, err := registry.Resolve(args[0])
+		if err != nil {
+			return err
+		}
+		body, err := operationsvc.Graph(item.Document, format)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprint(stdout, body)
+		return err
+	}}
+	cmd.Flags().StringVar(&format, "format", "text", "graph format: text, mermaid, or json")
 	return cmd
 }
 
@@ -146,7 +169,7 @@ func operationDocsCommand(stdout io.Writer, load func() (*operationsvc.Registry,
 
 func operationRunCommand(stdout io.Writer, load func() (*operationsvc.Registry, error)) *cobra.Command {
 	opts := operationOptions{via: "native", arch: "x64", compiler: "auto", profiles: lab.ProfilesPath()}
-	cmd := &cobra.Command{Use: "run <operation>", Short: "Build, analyze, and execute a linear operation", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "run <operation>", Short: "Build, analyze, and execute a result-aware operation", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		registry, err := load()
 		if err != nil {
 			return err
@@ -353,8 +376,11 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 	if err := validatePinnedOperationPacks(item.Document, &receipt, registry.PackRegistry()); err != nil {
 		return err
 	}
-	runnable := operationsvc.RunnableStepIndexes(receipt)
-	if resumePath != "" && len(runnable) == 0 {
+	_, hasRunnable, routeErr := operationsvc.NextRunnableStep(item.Document, receipt)
+	if routeErr != nil {
+		return routeErr
+	}
+	if resumePath != "" && !hasRunnable {
 		if opts.cleanup && receipt.CleanupState != "completed" {
 			return cleanupOperation(ctx, stdout, registry, item, inputs, &receipt, path, opts)
 		}
@@ -370,7 +396,16 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		return err
 	}
-	for _, index := range runnable {
+	for {
+		index, runnable, err := operationsvc.NextRunnableStep(item.Document, receipt)
+		if err != nil {
+			receipt.Status, receipt.Error = "failed", err.Error()
+			_ = operationsvc.SaveReceipt(path, &receipt)
+			return err
+		}
+		if !runnable {
+			break
+		}
 		step := item.Document.Steps[index]
 		stepReceipt := &receipt.Steps[index]
 		if stepReceipt.State == "incomplete" {
@@ -392,7 +427,7 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 				if err := applyOperationContract(step, stepReceipt, contractOutput, inputs, receipt.Captures, topologyValues); err != nil {
 					return failOperation(stdout, path, &receipt, stepReceipt, err)
 				}
-				captured, captureErr := operationsvc.CaptureOutput(contractOutput, step.Captures)
+				captured, captureErr := captureOperationOutput(step, contractOutput)
 				if captureErr != nil {
 					return failOperation(stdout, path, &receipt, stepReceipt, captureErr)
 				}
@@ -400,9 +435,24 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 				for name, value := range captured {
 					receipt.Captures[name] = value
 				}
+				stepReceipt.State = "completed"
+				if err := operationsvc.ApplyRoute(item.Document, &receipt, index); err != nil {
+					return failOperation(stdout, path, &receipt, stepReceipt, err)
+				}
 				stepReceipt.Error = ""
 				printOperationResult(stdout, updated.Output, captured)
 				if err := operationsvc.SaveReceipt(path, &receipt); err != nil {
+					return err
+				}
+				if stepReceipt.NextStep == "$fail" {
+					err := fmt.Errorf("step %s selected the explicit failure route", step.ID)
+					receipt.Status, receipt.Error = "failed", err.Error()
+					if saveErr := operationsvc.SaveReceipt(path, &receipt); saveErr != nil {
+						return saveErr
+					}
+					if opts.cleanupOnFailure {
+						_ = cleanupOperation(ctx, stdout, registry, item, inputs, &receipt, path, opts)
+					}
 					return err
 				}
 				continue
@@ -460,7 +510,7 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 		if err := applyOperationContract(step, stepReceipt, contractOutput, inputs, receipt.Captures, topologyValues); err != nil {
 			return failOperation(stdout, path, &receipt, stepReceipt, err)
 		}
-		captured, err := operationsvc.CaptureOutput(contractOutput, step.Captures)
+		captured, err := captureOperationOutput(step, contractOutput)
 		if err != nil {
 			return failOperation(stdout, path, &receipt, stepReceipt, err)
 		}
@@ -470,7 +520,21 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 		}
 		printOperationResult(stdout, runtimeReceipt.Output, captured)
 		stepReceipt.State = "completed"
+		if err := operationsvc.ApplyRoute(item.Document, &receipt, index); err != nil {
+			return failOperation(stdout, path, &receipt, stepReceipt, err)
+		}
 		if err := operationsvc.SaveReceipt(path, &receipt); err != nil {
+			return err
+		}
+		if stepReceipt.NextStep == "$fail" {
+			err := fmt.Errorf("step %s selected the explicit failure route", step.ID)
+			receipt.Status, receipt.Error = "failed", err.Error()
+			if saveErr := operationsvc.SaveReceipt(path, &receipt); saveErr != nil {
+				return saveErr
+			}
+			if opts.cleanupOnFailure {
+				_ = cleanupOperation(ctx, stdout, registry, item, inputs, &receipt, path, opts)
+			}
 			return err
 		}
 	}
@@ -485,7 +549,28 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 	return nil
 }
 
+func captureOperationOutput(step operationsvc.Step, output []string) (map[string]string, error) {
+	if len(step.Outcomes) > 0 {
+		return operationsvc.CaptureAvailableOutput(output, step.Captures), nil
+	}
+	return operationsvc.CaptureOutput(output, step.Captures)
+}
+
 func applyOperationContract(step operationsvc.Step, receipt *operationsvc.StepReceipt, output []string, inputs, captures, topology map[string]string) error {
+	if len(step.Outcomes) > 0 {
+		outcome, fields, payloadVerified, err := operationsvc.EvaluateOutcomes(output, step.Outcomes, inputs, captures, topology)
+		if err != nil {
+			receipt.ContractState = "failed"
+			return fmt.Errorf("step %s result outcomes: %w", step.ID, err)
+		}
+		receipt.ContractState = "matched"
+		receipt.MatchedOutcome = outcome.ID
+		receipt.NextStep = outcome.Next
+		receipt.MatchedTag = outcome.Expect.Tag
+		receipt.MatchedFields = fields
+		receipt.PayloadVerified = payloadVerified
+		return nil
+	}
 	fields, payloadVerified, err := operationsvc.EvaluateExpectation(output, step.Expect, inputs, captures, topology)
 	if err != nil {
 		receipt.ContractState = "failed"
@@ -499,6 +584,7 @@ func applyOperationContract(step operationsvc.Step, receipt *operationsvc.StepRe
 	receipt.MatchedTag = step.Expect.Tag
 	receipt.MatchedFields = fields
 	receipt.PayloadVerified = payloadVerified
+	receipt.NextStep = ""
 	return nil
 }
 

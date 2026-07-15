@@ -46,6 +46,7 @@ type operationProofResult struct {
 	Status       string            `json:"status"`
 	Receipt      string            `json:"receipt,omitempty"`
 	Captures     map[string]string `json:"captures,omitempty"`
+	ActualPath   []string          `json:"actual_path,omitempty"`
 	StateChecks  int               `json:"state_checks,omitempty"`
 	CleanupState string            `json:"cleanup_state,omitempty"`
 	Output       []string          `json:"output,omitempty"`
@@ -224,7 +225,7 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 			args = append(args, "--lab", profile)
 		}
 		var target lab.TargetReport
-		if statusErr := Run(args, &output, &output); statusErr == nil && json.Unmarshal(output.Bytes(), &target) == nil && target.Status == "pass" {
+		if statusErr := Run(args, &output, &output); statusErr == nil && json.Unmarshal(output.Bytes(), &target) == nil && target.Status == "pass" && target.State.SchemaVersion >= 5 {
 			targets[profile] = target
 			return target, nil
 		}
@@ -346,6 +347,7 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 				continue
 			}
 			result.Captures = receipt.Captures
+			result.ActualPath = append([]string(nil), receipt.ActualPath...)
 			if err := matchOperationProofCaptures(proof.ExpectCaptures, receipt.Captures, placeholders); err != nil {
 				result.Status, result.Error = "fail", err.Error()
 				report.Failed++
@@ -370,6 +372,12 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 				var cleanup bytes.Buffer
 				if cleanupErr := Run(cleanupArgs, &cleanup, &cleanup); cleanupErr != nil {
 					result.Status, result.Error = "fail", "cleanup: "+cleanupErr.Error()
+					report.Failed++
+					report.Results = append(report.Results, result)
+					continue
+				}
+				if err := matchOperationProofPath(proof.ExpectPath, receipt.ActualPath); err != nil {
+					result.Status, result.Error = "fail", err.Error()
 					report.Failed++
 					report.Results = append(report.Results, result)
 					continue
@@ -483,6 +491,21 @@ func matchOperationProofCaptures(expected, actual, placeholders map[string]strin
 		got, ok := actual[name]
 		if !ok || (want != "*" && got != want) {
 			return fmt.Errorf("capture %s=%q did not match %q", name, got, want)
+		}
+	}
+	return nil
+}
+
+func matchOperationProofPath(expected, actual []string) error {
+	if len(expected) == 0 {
+		return nil
+	}
+	if len(expected) != len(actual) {
+		return fmt.Errorf("operation path %v did not match %v", actual, expected)
+	}
+	for index := range expected {
+		if expected[index] != actual[index] {
+			return fmt.Errorf("operation path %v did not match %v", actual, expected)
 		}
 	}
 	return nil

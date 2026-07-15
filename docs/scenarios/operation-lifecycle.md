@@ -2,7 +2,7 @@
 
 ## Objective and result
 
-Use a catalog-backed operation to validate every participating pack, pass structured output between BOFs, reject a completed-but-unsuccessful result, inspect its checkpoint, prove live behavior, and perform reverse cleanup. The virtual-memory example allocates a region, captures its base, writes and verifies bytes, changes protection, starts a thread at that captured address, and releases the region during proof cleanup.
+Use a catalog-backed operation to validate every participating pack, pass structured output between BOFs, route an explicitly understood result, inspect its checkpoint, prove live behavior, and perform reverse cleanup. The virtual-memory example remains linear; the adaptive-memory example prefers section mapping and routes a declared clean failure to allocation, write, protection, and thread start.
 
 ## Prerequisites
 
@@ -17,6 +17,7 @@ Use an existing architecture-matched payload file. Automated proof uses a one-by
 
 ```bash
 bofbench operation show internal/virtual-memory-execute
+bofbench operation graph internal/adaptive-memory-execute
 bofbench operation test internal/virtual-memory-execute \
   --catalog ~/bofbench-packs-internal \
   --compiler mingw --compiler msvc
@@ -72,6 +73,8 @@ receipt    runs/<run-id>/operation.json
 
 The address in every later step must equal the captured base from `allocate`. Each step receipt records runtime completion separately from contract matching. If a BOF emits `[process-memory-protect] status=failed`, the operation stops even when the loader itself exits normally.
 
+For a result-routed operation, inspect `actual_path`, `matched_outcome`, and `skipped_steps` in the version-3 receipt. Only declared complete output selects a route. Runtime crashes, timeouts, and incomplete C2 work stop without fallback because their effects are unknown.
+
 ## Inspect and resume
 
 ```bash
@@ -107,6 +110,8 @@ Cleanup uses the persisted non-sensitive base capture and runs in reverse step o
 - Use `memory-find-read` to pass a discovered address into a bounded read.
 - Use `memory-patch-restore --cleanup` to patch and restore an exact range in one invocation.
 - Use `remote-service-lifecycle` with a topology to pass exact host and credential context through create/start/cleanup.
+- Use `adaptive-memory-execute` to prove a primary section-map path and a controlled allocation fallback.
+- Use `named-event-lifecycle`, `shared-section-roundtrip`, and `job-contained-process` to pass object names and retained handles through native coordination steps.
 
 ## Failures and recovery
 

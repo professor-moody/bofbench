@@ -19,14 +19,14 @@ func TestLoadProofResumeSelection(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "pack-proof.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	selection, err := loadProofResumeSelection(dir, nil, "sliver", "devbox", "")
+	selection, err := loadProofResumeSelection(dir, nil, "sliver", "devbox", "", "x64")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(selection.Keys) != 2 || !selection.Keys[proofResumeKey("internal/one", "live", "sliver")] || !selection.Keys[proofResumeKey("internal/three", "live", "sliver")] {
 		t.Fatalf("selection = %+v", selection)
 	}
-	passed, err := loadProofResumeSelection(dir, []string{"passed"}, "sliver", "devbox", "")
+	passed, err := loadProofResumeSelection(dir, []string{"passed"}, "sliver", "devbox", "", "x64")
 	if err != nil || len(passed.Keys) != 1 || !passed.Keys[proofResumeKey("internal/two", "live", "sliver")] {
 		t.Fatalf("passed selection = %+v err=%v", passed, err)
 	}
@@ -40,7 +40,7 @@ func TestLoadProofResumeSelectionRejectsRuntimeMismatch(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadProofResumeSelection(path, nil, "sliver", "devbox", ""); err == nil {
+	if _, err := loadProofResumeSelection(path, nil, "sliver", "devbox", "", "x64"); err == nil {
 		t.Fatal("expected runtime mismatch")
 	}
 }

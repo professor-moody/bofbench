@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -57,6 +58,11 @@ type targetState struct {
 	AlertableTID         uint32 `json:"alertable_tid"`
 	NamedPipe            string `json:"named_pipe,omitempty"`
 	KnownHandle          string `json:"known_handle,omitempty"`
+	HolderPID            int    `json:"holder_pid,omitempty"`
+	JobMemberPID         int    `json:"job_member_pid,omitempty"`
+	EventName            string `json:"event_name,omitempty"`
+	SectionName          string `json:"section_name,omitempty"`
+	JobName              string `json:"job_name,omitempty"`
 	User                 string `json:"user"`
 	CanaryFile           string `json:"canary_file"`
 	CanaryFileSHA256     string `json:"canary_file_sha256"`
@@ -135,7 +141,7 @@ func (service helperHandler) Execute(_ []string, requests <-chan svc.ChangeReque
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
-	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 4, Service: service.name, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 5, Service: service.name, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if module, _, _ := procModuleHandle.Call(0); module != 0 {
 		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
 	}
@@ -196,6 +202,75 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		return true, 2
 	}
 	defer knownFile.Close()
+	objectSD, err := windows.SecurityDescriptorFromString("D:(A;;0x001F001F;;;SY)(A;;0x001F001F;;;BA)(A;;0x001F001F;;;AU)S:(ML;;NW;;;LW)")
+	if err != nil {
+		return true, 2
+	}
+	objectSA := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: objectSD}
+	eventName := fmt.Sprintf(`Global\BOFBenchTargetEvent-%d`, os.Getpid())
+	eventNamePtr, _ := windows.UTF16PtrFromString(eventName)
+	eventHandle, err := windows.CreateEvent(objectSA, 1, 0, eventNamePtr)
+	if err != nil {
+		return true, 2
+	}
+	defer windows.CloseHandle(eventHandle)
+	sectionName := fmt.Sprintf(`Global\BOFBenchTargetSection-%d`, os.Getpid())
+	sectionNamePtr, _ := windows.UTF16PtrFromString(sectionName)
+	sectionHandle, err := windows.CreateFileMapping(windows.InvalidHandle, objectSA, windows.PAGE_READWRITE, 0, 4096, sectionNamePtr)
+	if err != nil {
+		return true, 2
+	}
+	defer windows.CloseHandle(sectionHandle)
+	sectionView, err := windows.MapViewOfFile(sectionHandle, windows.FILE_MAP_WRITE|windows.FILE_MAP_READ, 0, 0, 4096)
+	if err != nil {
+		return true, 2
+	}
+	sectionCanary := randomBytes(32)
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(sectionView)), len(sectionCanary)), sectionCanary)
+	defer windows.UnmapViewOfFile(sectionView)
+	jobName := fmt.Sprintf(`BOFBenchTargetJob-%d`, os.Getpid())
+	jobNamePtr, _ := windows.UTF16PtrFromString(jobName)
+	jobHandle, err := windows.CreateJobObject(objectSA, jobNamePtr)
+	if err != nil {
+		return true, 2
+	}
+	defer windows.CloseHandle(jobHandle)
+	objectDACL, _, err := objectSD.DACL()
+	if err != nil || windows.SetSecurityInfo(jobHandle, windows.SE_KERNEL_OBJECT, windows.DACL_SECURITY_INFORMATION, nil, nil, objectDACL, nil) != nil {
+		return true, 2
+	}
+	executable, _ := os.Executable()
+	jobChild := exec.Command(executable, "--job-child")
+	jobChild.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_BREAKAWAY_FROM_JOB}
+	if err := jobChild.Start(); err != nil {
+		return true, 2
+	}
+	childHandle, childErr := windows.OpenProcess(windows.WRITE_DAC|windows.WRITE_OWNER|windows.ACCESS_SYSTEM_SECURITY, false, uint32(jobChild.Process.Pid))
+	if childErr != nil {
+		_ = jobChild.Process.Kill()
+		_, _ = jobChild.Process.Wait()
+		return true, 2
+	}
+	childDACL, _, childErr := objectSD.DACL()
+	if childErr == nil {
+		var childSACL *windows.ACL
+		childSACL, _, childErr = objectSD.SACL()
+		if childErr == nil {
+			childErr = windows.SetSecurityInfo(childHandle, windows.SE_KERNEL_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.LABEL_SECURITY_INFORMATION, nil, nil, childDACL, childSACL)
+		}
+	}
+	windows.CloseHandle(childHandle)
+	if childErr != nil {
+		_ = jobChild.Process.Kill()
+		_, _ = jobChild.Process.Wait()
+		return true, 2
+	}
+	defer func() {
+		if jobChild.Process != nil {
+			_ = jobChild.Process.Kill()
+			_, _ = jobChild.Process.Wait()
+		}
+	}()
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
@@ -204,10 +279,11 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	pipe := <-pipeReady
 	fixtureErr := launchFixtureInConsoleSession(service.root, "deploy")
 	state := targetState{
-		Schema: "bofbench.target", SchemaVersion: 4, Service: service.name,
+		Schema: "bofbench.target", SchemaVersion: 5, Service: service.name,
 		PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, NamedPipe: pipe.Name, User: `NT AUTHORITY\SYSTEM`,
 		KnownHandle: fmt.Sprintf("0x%X", knownFile.Fd()),
-		CanaryFile:  canaryPath, CanaryFileSHA256: hashBytes(fileCanary),
+		HolderPID:   os.Getpid(), JobMemberPID: jobChild.Process.Pid, EventName: eventName, SectionName: sectionName, JobName: jobName,
+		CanaryFile: canaryPath, CanaryFileSHA256: hashBytes(fileCanary),
 		MemoryCanaryAddress: fmt.Sprintf("0x%X", uintptr(unsafe.Pointer(&memoryCanary[0]))),
 		MemoryCanarySize:    len(canary), MemoryCanarySHA256: hashBytes(canary),
 		ExecutionAddress:   fmt.Sprintf("0x%X", executionRegion),
@@ -580,7 +656,22 @@ func main() {
 	fixture := flag.String("fixture", "", "fixture operation: deploy, status, or remove")
 	helper := flag.Bool("helper", false, "run a persistent architecture-specific proof helper")
 	helperService := flag.Bool("helper-service", false, "run the architecture-specific proof helper as a Windows service")
+	jobChild := flag.Bool("job-child", false, "run a disposable job-member child")
+	jobState := flag.String("job-state", "", "optional PID file written by a disposable job-member child")
 	flag.Parse()
+	if *jobChild {
+		if *jobState != "" {
+			if err := os.MkdirAll(filepath.Dir(*jobState), 0o755); err != nil {
+				os.Exit(1)
+			}
+			if err := os.WriteFile(*jobState, []byte(fmt.Sprintf("%d", os.Getpid())), 0o600); err != nil {
+				os.Exit(1)
+			}
+		}
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
 	if *helperService {
 		if err := svc.Run(*name, helperHandler{name: *name, root: *root}); err != nil {
 			os.Exit(1)
@@ -640,7 +731,7 @@ func runArchitectureHelper(root string) error {
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
-	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 4, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 5, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if module, _, _ := procModuleHandle.Call(0); module != 0 {
 		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
 	}

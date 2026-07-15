@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="$ROOT/work/bin/bofbench"
 LAB="${BOFBENCH_DOCS_LAB:-devbox}"
+export BOFBENCH_PRIVATE_CATALOG="${BOFBENCH_PRIVATE_CATALOG:-$(dirname "$ROOT")/bofbench-packs-internal}"
 
 for tool in vhs ffmpeg; do
   command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 1; }
@@ -14,6 +15,8 @@ go build -o "$BIN" ./cmd/bofbench
 export PATH="$ROOT/work/bin:$PATH"
 export BOFBENCH_DOCS_LAB="$LAB"
 MEDIA_TARGET_DEPLOYED=0
+MEDIA_RUN_STASH="$(mktemp -d "${TMPDIR:-/tmp}/bofbench-media-runs.XXXXXX")"
+MEDIA_RUNS_STASHED=0
 
 cleanup() {
 	if [[ "$MEDIA_TARGET_DEPLOYED" == "1" ]]; then
@@ -24,9 +27,26 @@ cleanup() {
     bofs/docs-capture bofs/docs-lab bofs/docs-export \
     export/docs-capture-* export/docs-lab-* export/docs-export-* \
     dist/docs-capture.* dist/docs-lab.* dist/docs-export.* || true
+	if [[ "$MEDIA_RUNS_STASHED" == "1" ]]; then
+		rm -rf runs/*operation-adaptive-memory-execute* || true
+		for saved in "$MEDIA_RUN_STASH"/*; do
+			[[ -e "$saved" ]] || continue
+			mv "$saved" runs/
+		done
+	fi
+	rm -rf "$MEDIA_RUN_STASH"
 }
 trap cleanup EXIT
-cleanup
+rm -f /tmp/bofbench-ret.bin
+rm -rf \
+  bofs/docs-capture bofs/docs-lab bofs/docs-export \
+  export/docs-capture-* export/docs-lab-* export/docs-export-* \
+  dist/docs-capture.* dist/docs-lab.* dist/docs-export.* || true
+for existing in runs/*operation-adaptive-memory-execute*; do
+	[[ -e "$existing" ]] || continue
+	mv "$existing" "$MEDIA_RUN_STASH"/
+done
+MEDIA_RUNS_STASHED=1
 printf '\303' > /tmp/bofbench-ret.bin
 
 if [[ -f docs/media-src/operation-lifecycle.tape ]]; then

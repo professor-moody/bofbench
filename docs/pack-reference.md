@@ -457,6 +457,23 @@ enumerate bounded PE sections from one selected process module
 | `module_base` | `string` | no | no | `` | optional exact module base |
 | `result_limit` | `int` | no | no | `32` | maximum section rows |
 
+## `builtin/named-object-security-inventory`
+
+read owner and DACL metadata for one exact named kernel object
+
+- Can do: owner and DACL metadata for one exact named event, mutex, semaphore, section, or job
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `named_object_security_inventory`
+- Live proofs: target-event (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `object_type` | `string` | yes | no | `` | event, mutex, semaphore, section, or job |
+| `object_name` | `wstring` | yes | no | `` | exact object name |
+
 ## `builtin/named-pipe-inventory`
 
 enumerate bounded named-pipe entries with an optional prefix filter
@@ -654,6 +671,23 @@ Enumerate a bounded local process snapshot
 | --- | --- | --- | --- | --- | --- |
 | `process_filter` | `string` | no | no | `` | case-insensitive process image substring; empty matches all |
 | `result_limit` | `int` | no | no | `25` | maximum matching process rows (1-256) |
+
+## `builtin/process-handle-type-summary`
+
+summarize bounded process handles by Windows object type
+
+- Can do: bounded per-object-type handle counts for one selected process
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `process_handle_type_summary`
+- Live proofs: target-handles (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` | exact process identifier |
+| `result_limit` | `int` | no | no | `64` | maximum object types (1-256) |
 
 ## `builtin/process-heap-inventory`
 
@@ -1011,6 +1045,24 @@ enumerate bounded thread scheduling and execution-time state for one selected pr
 | --- | --- | --- | --- | --- | --- |
 | `target_pid` | `int` | yes | no | `` | process identifier |
 | `result_limit` | `int` | no | no | `64` | maximum threads (1-512) |
+
+## `builtin/thread-wait-chain-inventory`
+
+inspect bounded Windows wait chains for an exact process or thread
+
+- Can do: bounded Windows wait-chain traversal for one exact process or thread
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `thread_wait_chain_inventory`
+- Live proofs: target-waits (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | no | no | `0` | exact process identifier; required when target_tid is zero |
+| `target_tid` | `int` | no | no | `0` | exact thread identifier; zero enumerates threads in target_pid |
+| `result_limit` | `int` | no | no | `64` | maximum wait-chain nodes (1-512) |
 
 ## `builtin/token-context`
 

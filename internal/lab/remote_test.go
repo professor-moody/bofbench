@@ -22,6 +22,15 @@ func TestRemoteEvidenceRedactsSensitiveFieldsAndEventMessages(t *testing.T) {
 	}
 }
 
+func TestRemoteCompilerProbeIsArchitectureSpecific(t *testing.T) {
+	if script := remoteCompilerProbeScript("x86"); !strings.Contains(script, "i686-w64-mingw32-gcc") || strings.Contains(script, "cl.exe") {
+		t.Fatalf("x86 compiler probe = %q", script)
+	}
+	if script := remoteCompilerProbeScript("x64"); !strings.Contains(script, "cl.exe") || !strings.Contains(script, "x86_64-w64-mingw32-gcc") {
+		t.Fatalf("x64 compiler probe = %q", script)
+	}
+}
+
 func TestRemoteStatusPersistsDoctorAndLoaderState(t *testing.T) {
 	withRemoteTestWorkspace(t)
 	withFakeTransport(t, func(ctx context.Context, executable string, args ...string) ([]byte, []byte, error) {

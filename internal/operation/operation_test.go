@@ -226,7 +226,77 @@ func TestLoadReceiptMigratesVersionOneContractState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.SchemaVersion != 2 || loaded.Steps[0].ContractState != "legacy" || loaded.Steps[1].ContractState != "" {
+	if loaded.SchemaVersion != 3 || loaded.Steps[0].ContractState != "legacy" || loaded.Steps[1].ContractState != "" || len(loaded.ActualPath) != 1 {
 		t.Fatalf("unexpected migrated receipt: %#v", loaded)
+	}
+}
+
+func TestSchemaVersionThreeRoutesForwardAndRejectsCycles(t *testing.T) {
+	document := Document{Schema: Schema, SchemaVersion: 3, ID: "adaptive", Version: "1.0.0", Title: "Adaptive", Summary: "Route a completed result", Tier: "internal", Steps: []Step{
+		{ID: "map", Pack: "host-discovery", Outcomes: []Outcome{{ID: "mapped", Expect: packsvc.ProofExpectation{Tag: "map", Fields: map[string]string{"status": "complete"}}, Next: "start"}, {ID: "fallback", Expect: packsvc.ProofExpectation{Tag: "map", Fields: map[string]string{"status": "failed"}}, Next: "allocate"}}},
+		{ID: "start", Pack: "host-discovery", Expect: &packsvc.ProofExpectation{Tag: "start", Fields: map[string]string{"status": "complete"}}},
+		{ID: "allocate", Pack: "host-discovery", Expect: &packsvc.ProofExpectation{Tag: "allocate", Fields: map[string]string{"status": "complete"}}},
+	}}
+	if err := validate(document); err != nil {
+		t.Fatal(err)
+	}
+	document.Steps[0].Outcomes[0].Next = "map"
+	if err := validate(document); err == nil || !strings.Contains(err.Error(), "later step") {
+		t.Fatalf("expected backward route rejection, got %v", err)
+	}
+}
+
+func TestResultRoutePinsPathAndSkipsUnvisitedSteps(t *testing.T) {
+	document := Document{Steps: []Step{{ID: "map"}, {ID: "start"}, {ID: "allocate"}, {ID: "write"}}}
+	receipt := Receipt{Steps: []StepReceipt{{ID: "map", State: "completed", NextStep: "allocate"}, {ID: "start", State: "pending"}, {ID: "allocate", State: "pending"}, {ID: "write", State: "pending"}}}
+	if err := ApplyRoute(document, &receipt, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(receipt.ActualPath) != 1 || receipt.ActualPath[0] != "map" || receipt.Steps[1].State != "skipped" || len(receipt.SkippedSteps) != 1 {
+		t.Fatalf("route was not persisted: %#v", receipt)
+	}
+	index, ok, err := NextRunnableStep(document, receipt)
+	if err != nil || !ok || index != 2 {
+		t.Fatalf("next=%d ok=%t err=%v", index, ok, err)
+	}
+}
+
+func TestFailedSelectedStepCannotBeRetriedByResume(t *testing.T) {
+	document := Document{Steps: []Step{{ID: "map"}, {ID: "allocate"}}}
+	receipt := Receipt{
+		ActualPath: []string{"map"},
+		Steps: []StepReceipt{
+			{ID: "map", State: "completed", NextStep: "allocate"},
+			{ID: "allocate", State: "failed"},
+		},
+	}
+	if _, ok, err := NextRunnableStep(document, receipt); err == nil || ok || !strings.Contains(err.Error(), "cannot be resumed") {
+		t.Fatalf("expected failed route to remain terminal, ok=%t err=%v", ok, err)
+	}
+}
+
+func TestOutcomesAreOrderedAndRuntimeResultSelectsOne(t *testing.T) {
+	outcomes := []Outcome{
+		{ID: "mapped", Expect: packsvc.ProofExpectation{Tag: "map", Fields: map[string]string{"status": "complete"}}, Next: "start"},
+		{ID: "fallback", Expect: packsvc.ProofExpectation{Tag: "map", Fields: map[string]string{"status": "failed"}}, Next: "allocate"},
+	}
+	selected, fields, _, err := EvaluateOutcomes([]string{"[map] status=failed error=5"}, outcomes, nil, nil, nil)
+	if err != nil || selected.ID != "fallback" || selected.Next != "allocate" || len(fields) != 1 {
+		t.Fatalf("selected=%#v fields=%v err=%v", selected, fields, err)
+	}
+	if _, _, _, err := EvaluateOutcomes([]string{"[map] status=unknown"}, outcomes, nil, nil, nil); err == nil {
+		t.Fatal("unmatched result selected a route")
+	}
+}
+
+func TestGraphRendersMermaidAndJSON(t *testing.T) {
+	document := Document{ID: "adaptive", Steps: []Step{{ID: "map", Pack: "section", Outcomes: []Outcome{{ID: "mapped", Next: "$complete"}, {ID: "fallback", Next: "allocate"}}}, {ID: "allocate", Pack: "memory"}}}
+	mermaid, err := Graph(document, "mermaid")
+	if err != nil || !strings.Contains(mermaid, "mapped") || !strings.Contains(mermaid, "step_allocate") {
+		t.Fatalf("mermaid=%q err=%v", mermaid, err)
+	}
+	body, err := Graph(document, "json")
+	if err != nil || !strings.Contains(body, `"schema": "bofbench.operation-graph"`) || !strings.Contains(body, `"outcome": "fallback"`) {
+		t.Fatalf("json=%q err=%v", body, err)
 	}
 }

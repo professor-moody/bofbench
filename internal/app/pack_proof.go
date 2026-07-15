@@ -60,6 +60,7 @@ type packProofResult struct {
 	Pack            string   `json:"pack"`
 	Case            string   `json:"case"`
 	Runtime         string   `json:"runtime"`
+	Architecture    string   `json:"architecture"`
 	Status          string   `json:"status"`
 	Output          []string `json:"output,omitempty"`
 	Receipt         string   `json:"receipt,omitempty"`
@@ -75,6 +76,7 @@ type packProofReport struct {
 	Lab          string            `json:"lab,omitempty"`
 	Topology     string            `json:"topology,omitempty"`
 	Runtime      string            `json:"runtime"`
+	Architecture string            `json:"architecture"`
 	GeneratedAt  string            `json:"generated_at"`
 	Results      []packProofResult `json:"results"`
 	Declared     int               `json:"declared"`
@@ -148,7 +150,7 @@ func packTestCommand(stdout io.Writer, load func() (*packsvc.Registry, error), c
 
 func packProveCommand(stdout io.Writer, load func() (*packsvc.Registry, error), catalogSelectors func() []string) *cobra.Command {
 	var all bool
-	var via, labName, topologyName, format, resumePath string
+	var via, labName, topologyName, arch, format, resumePath string
 	var onlyStatuses []string
 	cmd := &cobra.Command{
 		Use: "prove [pack]", Short: "Run declared capability proofs and cleanup through a selected runtime", Args: cobra.MaximumNArgs(1),
@@ -158,6 +160,9 @@ func packProveCommand(stdout io.Writer, load func() (*packsvc.Registry, error), 
 			}
 			if via != "native" && via != "lab" && via != "sliver" && via != "cobaltstrike" {
 				return fmt.Errorf("unsupported proof runtime %q", via)
+			}
+			if arch != "x64" && arch != "x86" {
+				return fmt.Errorf("unsupported proof architecture %q", arch)
 			}
 			registry, err := load()
 			if err != nil {
@@ -176,11 +181,11 @@ func packProveCommand(stdout io.Writer, load func() (*packsvc.Registry, error), 
 				topology = &resolved
 				labName = resolved.Topology.Execution.Name
 			}
-			resume, err := loadProofResumeSelection(resumePath, onlyStatuses, via, labName, topologyName)
+			resume, err := loadProofResumeSelection(resumePath, onlyStatuses, via, labName, topologyName, arch)
 			if err != nil {
 				return err
 			}
-			report, proofErr := provePacks(cmd.Context(), stdout, registry, items, via, labName, topology, resume)
+			report, proofErr := provePacks(cmd.Context(), stdout, registry, items, via, labName, arch, topology, resume)
 			if format == "json" {
 				if err := printJSON(stdout, report); err != nil {
 					return err
@@ -195,6 +200,7 @@ func packProveCommand(stdout io.Writer, load func() (*packsvc.Registry, error), 
 	cmd.Flags().StringVar(&via, "via", "lab", "runtime: native, lab, sliver, or cobaltstrike")
 	cmd.Flags().StringVar(&labName, "lab", "", "named lab profile for lab or Sliver proof")
 	cmd.Flags().StringVar(&topologyName, "topology", "", "named execution, target, and optional domain-controller role mapping")
+	cmd.Flags().StringVar(&arch, "arch", "x64", "proof architecture: x64 or x86")
 	cmd.Flags().StringVar(&resumePath, "resume", "", "prior pack-proof report or directory; rerun only selected prior statuses")
 	cmd.Flags().StringSliceVar(&onlyStatuses, "only", nil, "prior statuses to rerun with --resume: unavailable, failed, or passed")
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
@@ -202,7 +208,7 @@ func packProveCommand(stdout io.Writer, load func() (*packsvc.Registry, error), 
 	return cmd
 }
 
-func loadProofResumeSelection(path string, only []string, via, labName, topologyName string) (*proofResumeSelection, error) {
+func loadProofResumeSelection(path string, only []string, via, labName, topologyName, arch string) (*proofResumeSelection, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		if len(only) > 0 {
@@ -230,6 +236,9 @@ func loadProofResumeSelection(path string, only []string, via, labName, topology
 	}
 	if previous.Runtime != "" && previous.Runtime != via {
 		return nil, fmt.Errorf("resume report runtime is %q, requested %q", previous.Runtime, via)
+	}
+	if previous.Architecture != "" && previous.Architecture != arch {
+		return nil, fmt.Errorf("resume report architecture is %q, requested %q", previous.Architecture, arch)
 	}
 	if topologyName != "" && previous.Topology != "" && previous.Topology != topologyName {
 		return nil, fmt.Errorf("resume report topology is %q, requested %q", previous.Topology, topologyName)
@@ -464,8 +473,8 @@ func unavailableCoverage(err error) bool {
 	return strings.Contains(value, "not found") || strings.Contains(value, "unavailable") || strings.Contains(value, "requires windows") || strings.Contains(value, "could not resolve compiler") || strings.Contains(value, "currently supports x64 only") || strings.Contains(value, "no live sliver session") || strings.Contains(value, "sliver session matched")
 }
 
-func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registry, items []packsvc.Resolved, via, labName string, topology *resolvedTopologyValues, resume *proofResumeSelection) (packProofReport, error) {
-	report := packProofReport{Header: evidence.New("bofbench.pack-proof", "", ""), Status: "pass", Lab: labName, Runtime: via, GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
+func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registry, items []packsvc.Resolved, via, labName, arch string, topology *resolvedTopologyValues, resume *proofResumeSelection) (packProofReport, error) {
+	report := packProofReport{Header: evidence.New("bofbench.pack-proof", "", ""), Status: "pass", Lab: labName, Runtime: via, Architecture: arch, GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
 	if topology != nil {
 		report.Topology = topology.Topology.Name
 	}
@@ -531,7 +540,7 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 			statusArgs = append(statusArgs, "--lab", profileName)
 		}
 		var target lab.TargetReport
-		if statusErr := Run(statusArgs, &output, &output); statusErr == nil && json.Unmarshal(output.Bytes(), &target) == nil && target.Status == "pass" {
+		if statusErr := Run(statusArgs, &output, &output); statusErr == nil && json.Unmarshal(output.Bytes(), &target) == nil && target.Status == "pass" && target.State.SchemaVersion >= 5 {
 			targets[profileName] = target
 			return target, ensureProofWorkspace()
 		}
@@ -572,7 +581,7 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 			}
 			matchedProof = true
 			report.Declared++
-			result := packProofResult{Pack: item.Qualified, Case: proof.ID, Runtime: via, Status: "pass"}
+			result := packProofResult{Pack: item.Qualified, Case: proof.ID, Runtime: via, Architecture: arch, Status: "pass"}
 			if containsString(proof.Roles, "domain_controller") && (topology == nil || topology.Topology.DomainController == nil) {
 				result.Status, result.Error, report.Status = "unavailable", "proof requires a domain_controller role; select a topology with a domain-controller profile", "pass_with_unavailable"
 				report.Unavailable++
@@ -630,6 +639,7 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 				continue
 			}
 			placeholders := proofPlaceholderValues(target, report.RunID, proofSecret)
+			selectProofArchitecture(placeholders, target, arch)
 			placeholders["$PAYLOAD_RET_PATH"] = retPayload
 			placeholders["$MEMORY_NEEDLE_PATH"] = memoryNeedle
 			placeholders["$PROOF_SECRET_PATH"] = secretPath
@@ -651,7 +661,7 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 				report.Results = append(report.Results, result)
 				continue
 			}
-			args := []string{"run", project, "--via", via}
+			args := []string{"run", project, "--via", via, "--arch", arch}
 			if labName != "" && (via == "lab" || via == "sliver") {
 				args = append(args, "--lab", labName)
 			}
@@ -725,7 +735,7 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 				result.Output = append(result.Output, nonemptyLines(cleanup.String())...)
 			}
 			if actionSucceeded && len(proof.CleanupSteps) > 0 {
-				cleanupOutput, cleanupErr := runProofCleanupSteps(via, labName, work, registry, item, proof.CleanupSteps, placeholders)
+				cleanupOutput, cleanupErr := runProofCleanupSteps(via, labName, arch, work, registry, item, proof.CleanupSteps, placeholders)
 				result.Output = append(result.Output, cleanupOutput...)
 				if cleanupErr != nil && result.Status != "fail" {
 					result.Status, result.Error, report.Status = "fail", "cleanup: "+cleanupErr.Error(), "fail"
@@ -881,7 +891,9 @@ func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) 
 	return map[string]string{
 		"$TARGET_PID": strconv.FormatUint(uint64(target.State.PID), 10), "$TARGET_TID": strconv.FormatUint(uint64(target.State.AlertableTID), 10), "$TARGET_HANDLE": target.State.KnownHandle,
 		"$TARGET_NAMED_PIPE": target.State.NamedPipe,
-		"$TARGET_ARCH":       target.State.Architecture, "$TARGET_MODULE_BASE": target.State.KnownModuleBase, "$TARGET_MODULE_PATH": target.State.KnownModulePath,
+		"$TARGET_HOLDER_PID": strconv.Itoa(target.State.HolderPID), "$TARGET_JOB_MEMBER_PID": strconv.Itoa(target.State.JobMemberPID),
+		"$TARGET_EVENT_NAME": target.State.EventName, "$TARGET_SECTION_NAME": target.State.SectionName, "$TARGET_JOB_NAME": target.State.JobName,
+		"$TARGET_ARCH": target.State.Architecture, "$TARGET_MODULE_BASE": target.State.KnownModuleBase, "$TARGET_MODULE_PATH": target.State.KnownModulePath,
 		"$EXECUTION_ADDRESS": target.State.ExecutionAddress,
 		"$X86_TARGET_PID":    strconv.Itoa(target.State.X86PID), "$X86_TARGET_TID": strconv.FormatUint(uint64(target.State.X86AlertableTID), 10), "$X86_TARGET_MODULE_BASE": target.State.X86KnownModuleBase, "$X86_TARGET_MODULE_PATH": target.State.X86KnownModulePath,
 		"$MEMORY_ADDRESS": target.State.MemoryCanaryAddress, "$MEMORY_SIZE": strconv.FormatUint(uint64(target.State.MemoryCanarySize), 10),
@@ -898,6 +910,7 @@ func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) 
 		"$LAB_HOST": labHost, "$SERVICE_BINARY": target.ServiceBinary, "$WMI_MARKER_PATH": target.Fixtures.WMIMarkerPath,
 		"$TARGET_SERVICE": target.Service,
 		"$TEMP":           `C:\bofbench\proof\` + runID, "$RUN_ID": runID, "$PROOF_SECRET": proofSecret,
+		"$PROOF_SECRET_SIZE":        strconv.Itoa(len(secretBytes)),
 		"$PROOF_SECRET_SHA256":      hex.EncodeToString(secretHash[:]),
 		"$PROOF_SECRET_CRLF_SHA256": hex.EncodeToString(secretCRLFHash[:]),
 		"$PAYLOAD_RET_SHA256":       hex.EncodeToString(retHash[:]),
@@ -908,6 +921,17 @@ func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) 
 		"$REMOTE_STAGE_LOCAL_ROOT": target.Fixtures.RemoteStageLocal, "$REMOTE_STAGE_RELATIVE": remoteRelative, "$REMOTE_STAGE_LOCAL_PATH": remoteLocalPath,
 		"$REMOTE_TASK_NAME": remoteTaskName, "$REMOTE_TASK_MARKER_PATH": remoteTaskMarker,
 	}
+}
+
+func selectProofArchitecture(placeholders map[string]string, target lab.TargetReport, arch string) {
+	if arch != "x86" {
+		return
+	}
+	placeholders["$TARGET_PID"] = strconv.Itoa(target.State.X86PID)
+	placeholders["$TARGET_TID"] = strconv.FormatUint(uint64(target.State.X86AlertableTID), 10)
+	placeholders["$TARGET_ARCH"] = "x86"
+	placeholders["$TARGET_MODULE_BASE"] = target.State.X86KnownModuleBase
+	placeholders["$TARGET_MODULE_PATH"] = target.State.X86KnownModulePath
 }
 
 func resolveProofValues(input map[string]string, placeholders map[string]string) (map[string]string, error) {
@@ -1150,6 +1174,14 @@ func proofStateCheckScript(kind, expect string, parameters map[string]string) (s
 		probe = `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class BOFBenchSuspendCheck{[DllImport("kernel32.dll",SetLastError=true)]public static extern IntPtr OpenThread(uint a,bool i,uint t);[DllImport("kernel32.dll",SetLastError=true)]public static extern uint SuspendThread(IntPtr h);[DllImport("kernel32.dll",SetLastError=true)]public static extern uint ResumeThread(IntPtr h);[DllImport("kernel32.dll")]public static extern bool CloseHandle(IntPtr h);}' -ErrorAction SilentlyContinue; $handle=[BOFBenchSuspendCheck]::OpenThread(0x0002,$false,[uint32]` + q(parameters["tid"]) + `); $present=$handle -ne [IntPtr]::Zero; $matches=$false; if($present){try{$previous=[BOFBenchSuspendCheck]::SuspendThread($handle); if($previous -eq [uint32]::MaxValue){throw 'SuspendThread failed'}; [void][BOFBenchSuspendCheck]::ResumeThread($handle); $want=([int]` + q(parameters["suspended"]) + `) -ne 0; $matches=(($previous -gt 0) -eq $want)}finally{[void][BOFBenchSuspendCheck]::CloseHandle($handle)}}`
 	case "thread_context":
 		probe = `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class BOFBenchContextCheck{[DllImport("kernel32.dll",SetLastError=true)]static extern IntPtr OpenThread(uint a,bool i,uint t);[DllImport("kernel32.dll",SetLastError=true)]static extern uint SuspendThread(IntPtr h);[DllImport("kernel32.dll",SetLastError=true)]static extern uint ResumeThread(IntPtr h);[DllImport("kernel32.dll",SetLastError=true)]static extern bool GetThreadContext(IntPtr h,IntPtr c);[DllImport("kernel32.dll")]static extern bool CloseHandle(IntPtr h);public static ulong IP(uint tid){IntPtr h=OpenThread(0x0002|0x0008,false,tid);if(h==IntPtr.Zero)throw new System.ComponentModel.Win32Exception();IntPtr c=Marshal.AllocHGlobal(1232);try{for(int i=0;i<1232;i++)Marshal.WriteByte(c,i,0);Marshal.WriteInt32(c,48,0x100001);uint old=SuspendThread(h);if(old==uint.MaxValue)throw new System.ComponentModel.Win32Exception();try{if(!GetThreadContext(h,c))throw new System.ComponentModel.Win32Exception();return unchecked((ulong)Marshal.ReadInt64(c,248));}finally{ResumeThread(h);}}finally{Marshal.FreeHGlobal(c);CloseHandle(h);}}}' -ErrorAction SilentlyContinue; $actual=[BOFBenchContextCheck]::IP([uint32]` + q(parameters["tid"]) + `); $present=$true; $expected=[Convert]::ToUInt64((` + q(parameters["ip"]) + ` -replace '^0x',''),16); $matches=$actual -eq $expected`
+	case "kernel_object":
+		probe = `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class BOFBenchObjectCheck{[DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern IntPtr OpenEvent(uint a,bool i,string n);[DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern IntPtr OpenMutex(uint a,bool i,string n);[DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern IntPtr OpenSemaphore(uint a,bool i,string n);[DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern IntPtr OpenFileMapping(uint a,bool i,string n);[DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern IntPtr OpenJobObject(uint a,bool i,string n);[DllImport("kernel32.dll")]static extern bool CloseHandle(IntPtr h);public static bool Present(string t,string n){IntPtr h=t=="event"?OpenEvent(0x100000,false,n):t=="mutex"?OpenMutex(0x100000,false,n):t=="semaphore"?OpenSemaphore(0x100000,false,n):t=="section"?OpenFileMapping(4,false,n):t=="job"?OpenJobObject(4,false,n):IntPtr.Zero;if(h==IntPtr.Zero)return false;CloseHandle(h);return true;}}' -ErrorAction SilentlyContinue; $present=[BOFBenchObjectCheck]::Present(` + q(strings.ToLower(parameters["object_type"])) + `,` + q(parameters["name"]) + `); $matches=$present`
+	case "event_state":
+		probe = `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class BOFBenchEventCheck{[StructLayout(LayoutKind.Sequential)]struct E{public int Type;public int State;}[DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern IntPtr OpenEvent(uint a,bool i,string n);[DllImport("ntdll.dll")]static extern int NtQueryEvent(IntPtr h,int c,out E e,int s,out int r);[DllImport("kernel32.dll")]static extern bool CloseHandle(IntPtr h);public static int State(string n){IntPtr h=OpenEvent(1,false,n);if(h==IntPtr.Zero)return -1;try{E e;int r;return NtQueryEvent(h,0,out e,8,out r)>=0?e.State:-1;}finally{CloseHandle(h);}}}' -ErrorAction SilentlyContinue; $actual=[BOFBenchEventCheck]::State(` + q(parameters["name"]) + `); $present=$actual -ge 0; $want=if(` + q(strings.ToLower(parameters["state"])) + ` -eq 'signaled'){1}else{0}; $matches=$present -and $actual -eq $want`
+	case "section_payload":
+		probe = `$present=$false; $matches=$false; try{$mapping=[IO.MemoryMappedFiles.MemoryMappedFile]::OpenExisting(` + q(parameters["name"]) + `,[IO.MemoryMappedFiles.MemoryMappedFileRights]::Read); try{$view=$mapping.CreateViewAccessor([int64]` + q(parameters["offset"]) + `,[int64]` + q(parameters["size"]) + `,[IO.MemoryMappedFiles.MemoryMappedFileAccess]::Read); try{$bytes=New-Object byte[] ([int]` + q(parameters["size"]) + `); [void]$view.ReadArray(0,$bytes,0,$bytes.Length); $present=$true; $matches=([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)) -ieq ` + q(parameters["sha256"]) + `)}finally{$view.Dispose()}}finally{$mapping.Dispose()}}catch{}`
+	case "job_membership":
+		probe = `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class BOFBenchJobCheck{[DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern IntPtr OpenJobObject(uint a,bool i,string n);[DllImport("kernel32.dll",SetLastError=true)]static extern IntPtr OpenProcess(uint a,bool i,uint p);[DllImport("kernel32.dll",SetLastError=true)]static extern bool IsProcessInJob(IntPtr p,IntPtr j,out bool r);[DllImport("kernel32.dll")]static extern bool CloseHandle(IntPtr h);public static bool Member(string n,uint p){IntPtr j=OpenJobObject(4,false,n),h=OpenProcess(0x1000,false,p);if(j==IntPtr.Zero||h==IntPtr.Zero){if(j!=IntPtr.Zero)CloseHandle(j);if(h!=IntPtr.Zero)CloseHandle(h);return false;}try{bool r;return IsProcessInJob(h,j,out r)&&r;}finally{CloseHandle(h);CloseHandle(j);}}}' -ErrorAction SilentlyContinue; $present=[BOFBenchJobCheck]::Member(` + q(parameters["name"]) + `,[uint32]` + q(parameters["pid"]) + `); $matches=$present`
 	case "process":
 		probe = `Add-Type -TypeDefinition 'using System;using System.Text;using System.Runtime.InteropServices;public static class BOFBenchProcessCheck{[StructLayout(LayoutKind.Sequential)]struct US{public ushort Length;public ushort MaximumLength;public IntPtr Buffer;}[DllImport("kernel32.dll",SetLastError=true)]static extern IntPtr OpenProcess(uint a,bool i,uint p);[DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)]static extern bool QueryFullProcessImageName(IntPtr p,uint f,StringBuilder n,ref uint s);[DllImport("ntdll.dll")]static extern int NtQueryInformationProcess(IntPtr p,int c,IntPtr b,uint s,out uint r);[DllImport("kernel32.dll")]static extern bool CloseHandle(IntPtr h);public static string[] Inspect(uint pid){IntPtr h=OpenProcess(0x1000,false,pid);if(h==IntPtr.Zero)return null;try{var image=new StringBuilder(1024);uint chars=1024;if(!QueryFullProcessImageName(h,0,image,ref chars))return null;IntPtr buffer=Marshal.AllocHGlobal(8192);try{uint returned;int status=NtQueryInformationProcess(h,60,buffer,8192,out returned);if(status<0)return null;US value=(US)Marshal.PtrToStructure(buffer,typeof(US));string command=Marshal.PtrToStringUni(value.Buffer,value.Length/2);return new[]{image.ToString(),command};}finally{Marshal.FreeHGlobal(buffer);}}finally{CloseHandle(h);}}}' -ErrorAction SilentlyContinue; $info=[BOFBenchProcessCheck]::Inspect([uint32]` + q(parameters["pid"]) + `); $present=$null -ne $info; $matches=$present -and ([IO.Path]::GetFileName([string]$info[0]) -ieq ` + q(parameters["image"]) + `) -and ([string]$info[1] -like ('*'+` + q(parameters["marker"]) + `+'*'))`
 	case "process_command_line":
@@ -1177,7 +1209,7 @@ func proofStateCheckScript(kind, expect string, parameters map[string]string) (s
 	return `$ErrorActionPreference='Stop'; ` + probe + `; ` + assertion + `; Write-Output 'BOFBENCH_STATE_VERIFIED'`, nil
 }
 
-func runProofCleanupSteps(via, labName, work string, registry *packsvc.Registry, owner packsvc.Resolved, steps []packsvc.ProofCleanupStep, placeholders map[string]string) ([]string, error) {
+func runProofCleanupSteps(via, labName, arch, work string, registry *packsvc.Registry, owner packsvc.Resolved, steps []packsvc.ProofCleanupStep, placeholders map[string]string) ([]string, error) {
 	var output []string
 	for _, step := range steps {
 		item, err := registry.ResolveRelated(owner, step.Pack)
@@ -1192,7 +1224,7 @@ func runProofCleanupSteps(via, labName, work string, registry *packsvc.Registry,
 		if err != nil {
 			return output, err
 		}
-		args := []string{"run", project, "--via", via}
+		args := []string{"run", project, "--via", via, "--arch", arch}
 		if labName != "" && (via == "lab" || via == "sliver") {
 			args = append(args, "--lab", labName)
 		}
@@ -1284,9 +1316,10 @@ func printPackProofReport(w io.Writer, report packProofReport) {
 	if report.Topology != "" {
 		fmt.Fprintf(w, "topology  %s execution=%s\n", report.Topology, report.Lab)
 	}
+	fmt.Fprintf(w, "runtime   %s arch=%s lab=%s\n", report.Runtime, report.Architecture, report.Lab)
 	fmt.Fprintf(w, "coverage  declared=%d passed=%d unavailable=%d failed=%d without-proof=%d\n", report.Declared, report.Passed, report.Unavailable, report.Failed, report.WithoutProof)
 	for _, result := range report.Results {
-		fmt.Fprintf(w, "%s/%s via=%s %s\n", result.Pack, result.Case, result.Runtime, result.Status)
+		fmt.Fprintf(w, "%s/%s via=%s arch=%s %s\n", result.Pack, result.Case, result.Runtime, result.Architecture, result.Status)
 		if result.Error != "" {
 			fmt.Fprintf(w, "  %s\n", result.Error)
 		}
