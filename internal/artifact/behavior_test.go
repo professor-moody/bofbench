@@ -254,7 +254,7 @@ func TestRemoteOperationRulesRequireCompleteFunctionLocalChains(t *testing.T) {
 		{"remote_host_information", []string{"NETAPI32$NetWkstaGetInfo", "NETAPI32$NetServerGetInfo"}, nil},
 		{"remote_service_inventory", []string{"ADVAPI32$OpenSCManagerW", "ADVAPI32$EnumServicesStatusExW"}, nil},
 		{"remote_registry_read", []string{"ADVAPI32$RegConnectRegistryW", "ADVAPI32$RegOpenKeyExW", "ADVAPI32$RegQueryValueExW"}, nil},
-		{"remote_wmi_query", []string{"OLE32$CoCreateInstance", "OLE32$CoSetProxyBlanket", "OLEAUT32$SysAllocString"}, nil},
+		{"remote_wmi_query", []string{"OLE32$CoCreateInstance", "OLE32$CoSetProxyBlanket", "OLEAUT32$SysAllocString"}, []String{{Value: "[remote-wmi-query]"}}},
 		{"remote_file_stage", []string{"ADVAPI32$CryptCreateHash", "KERNEL32$CreateFileW", "KERNEL32$WriteFile"}, []String{{Value: "[remote-file-stage]"}}},
 		{"remote_file_cleanup", []string{"KERNEL32$CreateFileW", "ADVAPI32$CryptCreateHash", "KERNEL32$DeleteFileW"}, []String{{Value: "[remote-file-remove]"}}},
 		{"remote_task_execution", []string{"OLE32$CoCreateInstance", "OLEAUT32$SysAllocString"}, []String{{Value: "[remote-task-execute]"}}},
@@ -284,6 +284,17 @@ func TestRemoteOperationRulesRequireCompleteFunctionLocalChains(t *testing.T) {
 	primitive := requireBehavior(t, inferBehaviorChains([]Relocation{{Function: "go", Symbol: "NETAPI32$NetSessionEnum"}}, nil), "remote_session_inventory")
 	if primitive.Confidence != "confirmed primitive" {
 		t.Fatalf("session primitive = %+v", primitive)
+	}
+}
+
+func TestWMIClassificationDoesNotInventRemoteTarget(t *testing.T) {
+	relocations := []Relocation{{Function: "Wmi_Query", Symbol: "OLE32$CoCreateInstance"}, {Function: "Wmi_Query", Symbol: "OLE32$CoSetProxyBlanket"}, {Function: "Wmi_Query", Symbol: "OLEAUT32$SysAllocString"}}
+	chains := inferBehaviorChains(relocations, nil)
+	requireBehavior(t, chains, "wmi_query")
+	for _, chain := range chains {
+		if chain.ID == "remote_wmi_query" {
+			t.Fatalf("untagged WMI query classified as remote: %+v", chain)
+		}
 	}
 }
 

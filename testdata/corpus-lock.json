@@ -1,0 +1,22 @@
+{
+  "schema": "bofbench.corpus-lock",
+  "schema_version": 1,
+  "repositories": [
+    {
+      "name": "trustedsec-situational-awareness-bofs",
+      "repository": "https://github.com/trustedsec/CS-Situational-Awareness-BOF.git",
+      "commit": "ee9459cc4f42c6b025797bad22ffe8d9f1cf6487",
+      "root": "arsenal/trustedsec-sa",
+      "objects": [
+        {"path": "SA/whoami/whoami.x64.o", "sha256": "260c676ff1f4a68163aa4c1f4c1a7ad49a4943909eb54e0b1d3dfb89c67515bd"},
+        {"path": "SA/whoami/whoami.x86.o", "sha256": "ce1abc3e1d8362d28e49bc32683b3d8d0df412c16a2e37b565dae651ce3eab7e"},
+        {"path": "SA/tasklist/tasklist.x64.o", "sha256": "d89d6cea34a1762bc56fbf4519ff167f71092fad1ad6fc5dc12594a71ecdb978"},
+        {"path": "SA/tasklist/tasklist.x86.o", "sha256": "066824e6f8e9953ae58e82f18068c637c66f093f06fbc8d67ddea1763cc0ab0f"},
+        {"path": "SA/wmi_query/wmi_query.x64.o", "sha256": "64cb86c48f5ca6c6595f3a5767928f9e45ca92b937a543a1815f3c16da22d97e"},
+        {"path": "SA/wmi_query/wmi_query.x86.o", "sha256": "c33d2f6e309f02f857738430c5b33d87bcc9f035e937ea935316a055e3b2d2df"},
+        {"path": "SA/sc_enum/sc_enum.x64.o", "sha256": "85ba4141c800cb6cf5258bf36c2657c71e01252ed287dcc680725e885304142a"},
+        {"path": "SA/sc_enum/sc_enum.x86.o", "sha256": "2ce766d5e52e33c4c2bc21492a65bea393aedf897e70828d0ba4a049f109141e"}
+      ]
+    }
+  ]
+}

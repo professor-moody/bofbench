@@ -39,6 +39,7 @@ var (
 	procCredDeleteW  = advapi32.NewProc("CredDeleteW")
 	procCryptProtect = crypt32.NewProc("CryptProtectData")
 	procLocalFree    = kernel32.NewProc("LocalFree")
+	procModuleHandle = kernel32.NewProc("GetModuleHandleW")
 )
 
 type targetState struct {
@@ -46,6 +47,13 @@ type targetState struct {
 	SchemaVersion        int    `json:"schema_version"`
 	Service              string `json:"service"`
 	PID                  int    `json:"pid"`
+	Architecture         string `json:"architecture,omitempty"`
+	KnownModuleBase      string `json:"known_module_base,omitempty"`
+	KnownModulePath      string `json:"known_module_path,omitempty"`
+	X86PID               int    `json:"x86_pid,omitempty"`
+	X86AlertableTID      uint32 `json:"x86_alertable_tid,omitempty"`
+	X86KnownModuleBase   string `json:"x86_known_module_base,omitempty"`
+	X86KnownModulePath   string `json:"x86_known_module_path,omitempty"`
 	AlertableTID         uint32 `json:"alertable_tid"`
 	NamedPipe            string `json:"named_pipe,omitempty"`
 	KnownHandle          string `json:"known_handle,omitempty"`
@@ -152,7 +160,7 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	fixtureErr := launchFixtureInConsoleSession(service.root, "deploy")
 	state := targetState{
 		Schema: "bofbench.target", SchemaVersion: 4, Service: service.name,
-		PID: os.Getpid(), AlertableTID: <-threadID, NamedPipe: pipe.Name, User: `NT AUTHORITY\SYSTEM`,
+		PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, NamedPipe: pipe.Name, User: `NT AUTHORITY\SYSTEM`,
 		KnownHandle: fmt.Sprintf("0x%X", knownFile.Fd()),
 		CanaryFile:  canaryPath, CanaryFileSHA256: hashBytes(fileCanary),
 		MemoryCanaryAddress: fmt.Sprintf("0x%X", uintptr(unsafe.Pointer(&memoryCanary[0]))),
@@ -161,6 +169,10 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		MemoryProtectAddress: fmt.Sprintf("0x%X", protectRegion), MemoryProtectSize: 4096, MemoryProtection: "0x04",
 		StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
+	if module, _, _ := procModuleHandle.Call(0); module != 0 {
+		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
+	}
+	state.KnownModulePath, _ = os.Executable()
 	if fixtureErr != nil {
 		state.FixtureError = fixtureErr.Error()
 	}
@@ -494,7 +506,15 @@ func main() {
 	name := flag.String("service-name", serviceName, "Windows service name")
 	root := flag.String("root", targetRoot, "canary and state directory")
 	fixture := flag.String("fixture", "", "fixture operation: deploy, status, or remove")
+	helper := flag.Bool("helper", false, "run a persistent architecture-specific proof helper")
 	flag.Parse()
+	if *helper {
+		if err := runArchitectureHelper(*root); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	switch strings.ToLower(strings.TrimSpace(*fixture)) {
 	case "deploy":
 		state, err := deployFixtures(*root)
@@ -532,4 +552,23 @@ func main() {
 	if err := svc.Run(*name, handler{name: *name, root: *root}); err != nil {
 		os.Exit(1)
 	}
+}
+
+func runArchitectureHelper(root string) error {
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	stop := make(chan struct{})
+	threadID := make(chan uint32, 1)
+	go alertableThread(stop, threadID)
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 4, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	if module, _, _ := procModuleHandle.Call(0); module != 0 {
+		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
+	}
+	state.KnownModulePath, _ = os.Executable()
+	if err := writeJSON(filepath.Join(root, "x86-helper.json"), state); err != nil {
+		close(stop)
+		return err
+	}
+	select {}
 }

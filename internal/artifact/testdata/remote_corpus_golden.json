@@ -21,8 +21,8 @@
   },
   {
     "name": "wmi_query",
-    "x64": {"loader": "compatible", "capabilities": ["wmi_access"], "chains": ["remote_wmi_query"]},
-    "x86": {"loader": "compatible", "capabilities": ["wmi_access"], "chains": ["remote_wmi_query"]}
+    "x64": {"loader": "compatible", "capabilities": ["wmi_access"], "chains": ["wmi_query"]},
+    "x86": {"loader": "compatible", "capabilities": ["wmi_access"], "chains": ["wmi_query"]}
   },
   {
     "name": "reg_query",

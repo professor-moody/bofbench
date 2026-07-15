@@ -1,8 +1,10 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -19,8 +21,84 @@ type runtimeStatusItem struct {
 
 func runtimeCommand(stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{Use: "runtime", Short: "Inspect native, lab, Sliver, and Cobalt Strike runtime readiness"}
-	cmd.AddCommand(runtimeStatusCommand(stdout), runtimeSessionsCommand(stdout))
+	cmd.AddCommand(runtimeStatusCommand(stdout), runtimeSessionsCommand(stdout), runtimeWaitCommand(stdout))
 	return cmd
+}
+
+func waitForRuntimeSession(ctx context.Context, adapter runtimeadapter.Adapter, interval time.Duration) ([]runtimeadapter.Session, error) {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	for {
+		sessions, err := adapter.Sessions(ctx)
+		if err == nil && len(sessions) > 0 {
+			return sessions, nil
+		}
+		select {
+		case <-ctx.Done():
+			if err != nil {
+				return nil, fmt.Errorf("waiting for %s session: %w", adapter.Name(), err)
+			}
+			return nil, fmt.Errorf("waiting for %s session: %w", adapter.Name(), ctx.Err())
+		case <-time.After(interval):
+		}
+	}
+}
+
+func runtimeWaitCommand(stdout io.Writer) *cobra.Command {
+	var via, labName, profilesPath, format string
+	var timeout, interval time.Duration
+	cmd := &cobra.Command{
+		Use: "wait", Short: "Wait until a matching runtime session is ready", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runContext := &runtimeRunContext{stdout: io.Discard, input: ".", labName: labName, labProfiles: profilesPath}
+			registry, err := runtimeAdapterRegistry(runContext)
+			if err != nil {
+				return err
+			}
+			adapter, err := registry.Resolve(via)
+			if err != nil {
+				return err
+			}
+			availability, err := adapter.Detect(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if !availability.Available {
+				return fmt.Errorf("%s runtime is unavailable: %s", adapter.Name(), emptyText(availability.Detail, "not configured"))
+			}
+			waitContext, cancel := contextWithTimeout(cmd.Context(), timeout)
+			defer cancel()
+			sessions, err := waitForRuntimeSession(waitContext, adapter, interval)
+			if err != nil {
+				return err
+			}
+			if format == "json" {
+				return printJSON(stdout, sessions)
+			}
+			if format != "text" {
+				return fmt.Errorf("runtime wait format must be text or json")
+			}
+			for _, session := range sessions {
+				fmt.Fprintf(stdout, "%s session ready: %s host=%s status=%s\n", adapter.Name(), emptyText(session.Name, session.ID), emptyText(session.Host, "-"), emptyText(session.Status, "ready"))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&via, "via", "sliver", "runtime adapter: native, lab, sliver, or cobaltstrike")
+	cmd.Flags().StringVar(&labName, "lab", "", "named lab profile used for runtime session selection")
+	cmd.Flags().StringVar(&profilesPath, "profiles", lab.ProfilesPath(), "global lab profiles file")
+	cmd.Flags().DurationVar(&timeout, "timeout", 10*time.Minute, "maximum time to wait for a matching session")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "session polling interval")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	return cmd
+}
+
+func contextWithTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.WithCancel(parent)
+	}
+	return context.WithTimeout(parent, timeout)
 }
 
 func runtimeStatusCommand(stdout io.Writer) *cobra.Command {

@@ -764,6 +764,7 @@ func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) 
 	}
 	secretHash := sha256.Sum256(secretBytes)
 	secretCRLFHash := sha256.Sum256([]byte(proofSecret + "\r\n"))
+	retHash := sha256.Sum256([]byte{0xc3})
 	remoteRelative := strings.TrimRight(target.Fixtures.RemoteStageRelative, `\`) + `\remote-stage-` + runID + `.bin`
 	remoteLocalPath := strings.TrimRight(target.Fixtures.RemoteStageLocal, `\`) + `\remote-stage-` + runID + `.bin`
 	remoteTaskName := "BOFBench-Remote-" + runID
@@ -774,6 +775,8 @@ func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) 
 	}
 	return map[string]string{
 		"$TARGET_PID": strconv.FormatUint(uint64(target.State.PID), 10), "$TARGET_TID": strconv.FormatUint(uint64(target.State.AlertableTID), 10), "$TARGET_HANDLE": target.State.KnownHandle,
+		"$TARGET_ARCH": target.State.Architecture, "$TARGET_MODULE_BASE": target.State.KnownModuleBase, "$TARGET_MODULE_PATH": target.State.KnownModulePath,
+		"$X86_TARGET_PID": strconv.Itoa(target.State.X86PID), "$X86_TARGET_TID": strconv.FormatUint(uint64(target.State.X86AlertableTID), 10), "$X86_TARGET_MODULE_BASE": target.State.X86KnownModuleBase, "$X86_TARGET_MODULE_PATH": target.State.X86KnownModulePath,
 		"$MEMORY_ADDRESS": target.State.MemoryCanaryAddress, "$MEMORY_SIZE": strconv.FormatUint(uint64(target.State.MemoryCanarySize), 10),
 		"$MEMORY_SHA256":        target.State.MemoryCanarySHA256,
 		"$MEMORY_WRITE_ADDRESS": target.State.MemoryWriteAddress, "$MEMORY_WRITE_SIZE": strconv.Itoa(target.State.MemoryWriteSize), "$MEMORY_WRITE_SHA256": target.State.MemoryWriteSHA256,
@@ -789,6 +792,7 @@ func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) 
 		"$TEMP": `C:\bofbench\proof\` + runID, "$RUN_ID": runID, "$PROOF_SECRET": proofSecret,
 		"$PROOF_SECRET_SHA256":      hex.EncodeToString(secretHash[:]),
 		"$PROOF_SECRET_CRLF_SHA256": hex.EncodeToString(secretCRLFHash[:]),
+		"$PAYLOAD_RET_SHA256":       hex.EncodeToString(retHash[:]),
 		"$REMOTE_REGISTRY_HIVE":     target.Fixtures.RemoteRegistryHive, "$REMOTE_REGISTRY_PATH": target.Fixtures.RemoteRegistryPath,
 		"$REMOTE_REGISTRY_NAME": target.Fixtures.RemoteRegistryName, "$REMOTE_REGISTRY_SHA256": target.Fixtures.RemoteRegistrySHA256,
 		"$REMOTE_REGISTRY_SIZE": strconv.Itoa(target.Fixtures.RemoteRegistrySize),
@@ -850,7 +854,7 @@ func resolveProofString(value string, placeholders map[string]string) (string, e
 		if !strings.Contains(value, placeholder) {
 			continue
 		}
-		if replacement == "" || ((placeholder == "$TARGET_PID" || placeholder == "$TARGET_TID" || placeholder == "$MEMORY_SIZE" || placeholder == "$MEMORY_WRITE_SIZE" || placeholder == "$MEMORY_PROTECTION_SIZE" || placeholder == "$CREDENTIAL_SIZE" || placeholder == "$VAULT_SIZE") && replacement == "0") {
+		if replacement == "" || ((placeholder == "$TARGET_PID" || placeholder == "$TARGET_TID" || placeholder == "$X86_TARGET_PID" || placeholder == "$X86_TARGET_TID" || placeholder == "$MEMORY_SIZE" || placeholder == "$MEMORY_WRITE_SIZE" || placeholder == "$MEMORY_PROTECTION_SIZE" || placeholder == "$CREDENTIAL_SIZE" || placeholder == "$VAULT_SIZE") && replacement == "0") {
 			return "", fmt.Errorf("proof placeholder %s is unavailable", placeholder)
 		}
 		value = strings.ReplaceAll(value, placeholder, replacement)

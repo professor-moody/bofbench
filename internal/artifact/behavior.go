@@ -229,7 +229,7 @@ var behaviorRules = []chainRule{
 	},
 	{
 		id: "wmi_query", name: "WMI query", summary: "Create a WMI client and authenticate it for an explicit bounded query.",
-		effects: []string{"reads system management data"}, needs: []string{"a namespace", "a WQL query", "a property and result limit", "WMI access"}, requiredStrings: []string{"[wmi-query]"},
+		effects: []string{"reads system management data"}, needs: []string{"a namespace", "a WQL query", "a property and result limit", "WMI access"},
 		steps: []chainRuleStep{
 			{action: "create WMI client", apis: []string{"cocreateinstance"}},
 			{action: "apply WMI security context", apis: []string{"cosetproxyblanket"}},
@@ -265,7 +265,7 @@ var behaviorRules = []chainRule{
 	},
 	{
 		id: "remote_wmi_query", name: "Remote WMI query", summary: "Create a WMI client, authenticate its proxy, and issue a WQL query against a supplied namespace.",
-		effects: []string{"reaches a supplied host", "reads remote management data"}, needs: []string{"one exact target host and namespace", "a bounded WQL query", "DCOM/WMI access"}, requiredFunctions: []string{"wmi_query"},
+		effects: []string{"reaches a supplied host", "reads remote management data"}, needs: []string{"one exact target host and namespace", "a bounded WQL query", "DCOM/WMI access"}, requiredStrings: []string{"[remote-wmi-query]"},
 		steps: []chainRuleStep{{action: "create WMI client", apis: []string{"cocreateinstance"}}, {action: "apply WMI security context", apis: []string{"cosetproxyblanket"}}, {action: "prepare WQL query", apis: []string{"sysallocstring"}}},
 	},
 	{
@@ -352,6 +352,46 @@ var behaviorRules = []chainRule{
 		id: "certificate_pfx_export", name: "Selected certificate and private-key PFX export", summary: "Select an exact certificate, export its available private key into a PFX blob, and write one exact file.",
 		effects: []string{"accesses private-key material", "writes a PFX file"}, needs: []string{"an exact certificate thumbprint", "an exportable private key", "a PFX password", "an output path"},
 		steps: []chainRuleStep{{action: "open certificate store", apis: []string{"certopenstore", "certopensystemstorea", "certopensystemstorew"}}, {action: "select certificate", apis: []string{"certfindcertificateinstore"}}, {action: "export certificate and key", apis: []string{"pfxexportcertstoreex"}}, {action: "write PFX file", apis: []string{"writefile", "ntwritefile"}}},
+	},
+	{
+		id: "thread_hijack_execute", name: "Thread-context hijack execution", summary: "Write content into another process, suspend a selected thread, replace its instruction pointer, and resume execution.",
+		effects: []string{"accesses another process", "writes process memory", "starts execution"}, needs: []string{"a target PID and TID", "payload bytes", "process VM and thread-context access"},
+		steps: []chainRuleStep{{action: "write remote execution bytes", apis: []string{"virtualallocex", "writeprocessmemory"}}, {action: "capture selected thread context", apis: []string{"suspendthread", "getthreadcontext"}}, {action: "redirect selected thread", apis: []string{"setthreadcontext", "resumethread"}}},
+	},
+	{
+		id: "module_stomp_execute", name: "Module-backed byte replacement and execution", summary: "Read a selected process image range, replace its bytes, and optionally begin execution at that address.",
+		effects: []string{"accesses another process", "writes process memory", "starts execution"}, needs: []string{"a target process and module range", "payload bytes", "process VM access"}, requiredStrings: []string{"[module-stomp-execute]"},
+		steps: []chainRuleStep{{action: "read selected image range", apis: []string{"readprocessmemory"}}, {action: "replace selected image bytes", apis: []string{"virtualprotectex", "writeprocessmemory"}}, {action: "optionally start execution", apis: []string{"createremotethread"}}},
+	},
+	{
+		id: "process_hollow_spawn", name: "Suspended-process execution replacement", summary: "Create a selected process suspended, write replacement execution bytes, and redirect its primary thread.",
+		effects: []string{"starts a process", "writes process memory", "starts execution"}, needs: []string{"a host image", "replacement bytes", "process creation rights"},
+		steps: []chainRuleStep{{action: "create host process suspended", apis: []string{"createprocessa", "createprocessw"}}, {action: "write replacement execution bytes", apis: []string{"virtualallocex", "writeprocessmemory"}}, {action: "redirect primary thread", apis: []string{"getthreadcontext", "setthreadcontext"}}},
+	},
+	{
+		id: "process_library_load", name: "Remote library loading", summary: "Write a DLL path into a selected process and invoke its loader through a remote thread.",
+		effects: []string{"accesses another process", "writes process memory", "starts execution"}, needs: []string{"a target PID", "a DLL path", "process VM and create-thread access"}, requiredStrings: []string{"loadlibraryw"},
+		steps: []chainRuleStep{{action: "write remote DLL path", apis: []string{"virtualallocex", "writeprocessmemory"}}, {action: "resolve library loader", apis: []string{"getprocaddress"}}, {action: "start remote library load", apis: []string{"createremotethread"}}},
+	},
+	{
+		id: "kerberos_service_ticket_request", name: "Kerberos service-ticket request", summary: "Acquire outbound Kerberos credentials and initialize a security context for a selected SPN.",
+		effects: []string{"accesses authentication material", "reaches a domain controller"}, needs: []string{"an SPN", "a usable Kerberos logon context"}, requiredStrings: []string{"kerberos"},
+		steps: []chainRuleStep{{action: "acquire Kerberos credentials", apis: []string{"acquirecredentialshandlea", "acquirecredentialshandlew"}}, {action: "request service context", apis: []string{"initializesecuritycontexta", "initializesecuritycontextw"}}},
+	},
+	{
+		id: "remote_winrm_execute", name: "Remote WinRM execution", summary: "Start an exact-host WinRM operation and collect bounded command output.",
+		effects: []string{"reaches a supplied host", "starts remote execution"}, needs: []string{"a target host and command", "WinRM authorization"}, requiredStrings: []string{"[remote-winrm-execute]"},
+		steps: []chainRuleStep{{action: "create captured child output", apis: []string{"createpipe"}}, {action: "start WinRM client", apis: []string{"createprocessa", "createprocessw", "createprocesswithlogonw"}}, {action: "collect command output", apis: []string{"readfile"}}},
+	},
+	{
+		id: "process_library_unload", name: "Remote library unloading", summary: "Resolve FreeLibrary and invoke it in a selected process for a supplied module base.",
+		effects: []string{"accesses another process", "starts execution", "changes loaded modules"}, needs: []string{"a target PID and module base", "process create-thread access"}, requiredStrings: []string{"[process-library-unload]"},
+		steps: []chainRuleStep{{action: "resolve library unload routine", apis: []string{"getprocaddress"}}, {action: "start remote unload", apis: []string{"createremotethread"}}},
+	},
+	{
+		id: "kerberos_ticket_purge", name: "Kerberos ticket-cache purge", summary: "Resolve the Kerberos authentication package and submit an exact or broad cache-purge request.",
+		effects: []string{"changes authentication cache state"}, needs: []string{"an exact ticket selection or explicit broad scope"}, requiredStrings: []string{"[kerberos-ticket-purge]"},
+		steps: []chainRuleStep{{action: "resolve Kerberos authentication package", apis: []string{"lsaconnectuntrusted", "lsalookupauthenticationpackage"}}, {action: "submit purge request", apis: []string{"lsacallauthenticationpackage"}}},
 	},
 }
 
