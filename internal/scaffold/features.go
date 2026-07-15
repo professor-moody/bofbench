@@ -682,6 +682,129 @@ static void bofbench_feature_thread_start_inventory(datap *parser) {
 		Call: "bofbench_feature_thread_start_inventory($PARSER);",
 	},
 	{
+		Name:        "process-image-inventory",
+		Description: "enumerate bounded loaded images for one explicitly selected process",
+		Declaration: `HANDLE WINAPI KERNEL32$CreateToolhelp32Snapshot(DWORD, DWORD);
+BOOL WINAPI KERNEL32$Module32FirstW(HANDLE, LPMODULEENTRY32W);
+BOOL WINAPI KERNEL32$Module32NextW(HANDLE, LPMODULEENTRY32W);
+BOOL WINAPI KERNEL32$CloseHandle(HANDLE);
+
+static void bofbench_process_image_text(const WCHAR *source, char *target, DWORD capacity) {
+    DWORD index = 0;
+    while (source && source[index] && index + 1 < capacity) { target[index] = source[index] < 128 ? (char)source[index] : '?'; index++; }
+    target[index] = 0;
+}
+
+static BOOL bofbench_process_image_match(const char *value, const char *filter, int length) {
+    int start = 0;
+    if (!filter || length <= 0) return TRUE;
+    while (value[start]) {
+        int index = 0;
+        while (index < length && value[start + index]) { char a = value[start + index], b = filter[index]; if (a >= 'A' && a <= 'Z') a += 32; if (b >= 'A' && b <= 'Z') b += 32; if (a != b) break; index++; }
+        if (index == length) return TRUE;
+        start++;
+    }
+    return FALSE;
+}
+
+static void bofbench_feature_process_image_inventory(datap *parser) {
+    DWORD target_pid = (DWORD)BeaconDataInt(parser); int filter_bytes = 0; char *filter = BeaconDataExtract(parser, &filter_bytes); int requested = BeaconDataInt(parser);
+    DWORD limit = requested > 0 ? (DWORD)requested : 64, shown = 0; HANDLE snapshot; MODULEENTRY32W entry; char module[260], path[520];
+    if (!target_pid) { BeaconPrintf(CALLBACK_ERROR, "[process-image-inventory] status=bad-arguments"); return; }
+    if (limit > 512) limit = 512;
+    snapshot = KERNEL32$CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, target_pid);
+    if (snapshot == INVALID_HANDLE_VALUE) { BeaconPrintf(CALLBACK_ERROR, "[process-image-inventory] status=failed target_pid=%lu error=%lu", target_pid, KERNEL32$GetLastError()); return; }
+    entry.dwSize = sizeof(entry);
+    if (KERNEL32$Module32FirstW(snapshot, &entry)) do {
+        bofbench_process_image_text(entry.szModule, module, sizeof(module)); bofbench_process_image_text(entry.szExePath, path, sizeof(path));
+        if (!bofbench_process_image_match(module, filter, filter_bytes > 0 ? filter_bytes - 1 : 0)) continue;
+        BeaconPrintf(CALLBACK_OUTPUT, "[process-image-inventory] target_pid=%lu base=0x%llx size=%lu module=%s path=%s", target_pid, (unsigned long long)(ULONG_PTR)entry.modBaseAddr, entry.modBaseSize, module, path);
+        shown++;
+    } while (shown < limit && KERNEL32$Module32NextW(snapshot, &entry));
+    KERNEL32$CloseHandle(snapshot);
+    BeaconPrintf(CALLBACK_OUTPUT, "[process-image-inventory] status=complete target_pid=%lu shown=%lu limit=%lu filter=%s", target_pid, shown, limit, filter_bytes > 1 ? filter : "*");
+}`,
+		Call: "bofbench_feature_process_image_inventory($PARSER);",
+	},
+	{
+		Name:        "thread-state-inventory",
+		Description: "enumerate bounded thread scheduling and execution-time state for one selected process",
+		Declaration: `HANDLE WINAPI KERNEL32$CreateToolhelp32Snapshot(DWORD, DWORD);
+BOOL WINAPI KERNEL32$Thread32First(HANDLE, LPTHREADENTRY32);
+BOOL WINAPI KERNEL32$Thread32Next(HANDLE, LPTHREADENTRY32);
+HANDLE WINAPI KERNEL32$OpenThread(DWORD, BOOL, DWORD);
+int WINAPI KERNEL32$GetThreadPriority(HANDLE);
+BOOL WINAPI KERNEL32$GetThreadTimes(HANDLE, LPFILETIME, LPFILETIME, LPFILETIME, LPFILETIME);
+BOOL WINAPI KERNEL32$CloseHandle(HANDLE);
+
+static unsigned long long bofbench_thread_state_time(FILETIME value) { return ((unsigned long long)value.dwHighDateTime << 32) | value.dwLowDateTime; }
+
+static void bofbench_feature_thread_state_inventory(datap *parser) {
+    DWORD target_pid = (DWORD)BeaconDataInt(parser); int requested = BeaconDataInt(parser); DWORD limit = requested > 0 ? (DWORD)requested : 64, shown = 0;
+    HANDLE snapshot; THREADENTRY32 entry;
+    if (!target_pid) { BeaconPrintf(CALLBACK_ERROR, "[thread-state-inventory] status=bad-arguments"); return; }
+    if (limit > 512) limit = 512;
+    snapshot = KERNEL32$CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) { BeaconPrintf(CALLBACK_ERROR, "[thread-state-inventory] status=failed target_pid=%lu error=%lu", target_pid, KERNEL32$GetLastError()); return; }
+    entry.dwSize = sizeof(entry);
+    if (KERNEL32$Thread32First(snapshot, &entry)) do {
+        HANDLE thread; FILETIME created, exited, kernel, user; int priority;
+        if (entry.th32OwnerProcessID != target_pid) continue;
+        thread = KERNEL32$OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ThreadID);
+        if (!thread) { BeaconPrintf(CALLBACK_OUTPUT, "[thread-state-inventory] target_pid=%lu tid=%lu state=unavailable base_priority=%ld", target_pid, entry.th32ThreadID, entry.tpBasePri); shown++; continue; }
+        priority = KERNEL32$GetThreadPriority(thread);
+        if (KERNEL32$GetThreadTimes(thread, &created, &exited, &kernel, &user)) BeaconPrintf(CALLBACK_OUTPUT, "[thread-state-inventory] target_pid=%lu tid=%lu state=queryable priority=%d base_priority=%ld created=%llu kernel=%llu user=%llu", target_pid, entry.th32ThreadID, priority, entry.tpBasePri, bofbench_thread_state_time(created), bofbench_thread_state_time(kernel), bofbench_thread_state_time(user));
+        else BeaconPrintf(CALLBACK_OUTPUT, "[thread-state-inventory] target_pid=%lu tid=%lu state=unavailable priority=%d base_priority=%ld", target_pid, entry.th32ThreadID, priority, entry.tpBasePri);
+        KERNEL32$CloseHandle(thread); shown++;
+    } while (shown < limit && KERNEL32$Thread32Next(snapshot, &entry));
+    KERNEL32$CloseHandle(snapshot); BeaconPrintf(CALLBACK_OUTPUT, "[thread-state-inventory] status=complete target_pid=%lu shown=%lu limit=%lu", target_pid, shown, limit);
+}`,
+		Call: "bofbench_feature_thread_state_inventory($PARSER);",
+	},
+	{
+		Name:        "process-job-inventory",
+		Description: "report job-object membership for one explicitly selected process",
+		Declaration: `HANDLE WINAPI KERNEL32$OpenProcess(DWORD, BOOL, DWORD);
+BOOL WINAPI KERNEL32$IsProcessInJob(HANDLE, HANDLE, PBOOL);
+BOOL WINAPI KERNEL32$CloseHandle(HANDLE);
+
+static void bofbench_feature_process_job_inventory(datap *parser) {
+    DWORD target_pid = (DWORD)BeaconDataInt(parser); HANDLE process; BOOL in_job = FALSE;
+    if (!target_pid) { BeaconPrintf(CALLBACK_ERROR, "[process-job-inventory] status=bad-arguments"); return; }
+    process = KERNEL32$OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, target_pid);
+    if (!process || !KERNEL32$IsProcessInJob(process, NULL, &in_job)) { if (process) KERNEL32$CloseHandle(process); BeaconPrintf(CALLBACK_ERROR, "[process-job-inventory] status=failed target_pid=%lu error=%lu", target_pid, KERNEL32$GetLastError()); return; }
+    BeaconPrintf(CALLBACK_OUTPUT, "[process-job-inventory] status=complete target_pid=%lu in_job=%d", target_pid, in_job ? 1 : 0); KERNEL32$CloseHandle(process);
+}`,
+		Call: "bofbench_feature_process_job_inventory($PARSER);",
+	},
+	{
+		Name:        "object-namespace-inventory",
+		Description: "enumerate bounded entries from one Windows object-manager directory",
+		Declaration: `#include <winternl.h>
+NTSTATUS NTAPI NTDLL$NtOpenDirectoryObject(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES);
+NTSTATUS NTAPI NTDLL$NtQueryDirectoryObject(HANDLE, PVOID, ULONG, BOOLEAN, BOOLEAN, PULONG, PULONG);
+VOID NTAPI NTDLL$RtlInitUnicodeString(PUNICODE_STRING, PCWSTR);
+BOOL WINAPI KERNEL32$CloseHandle(HANDLE);
+
+typedef struct _BOFBENCH_OBJECT_DIRECTORY_INFORMATION { UNICODE_STRING Name; UNICODE_STRING TypeName; } BOFBENCH_OBJECT_DIRECTORY_INFORMATION;
+static BYTE bofbench_object_buffer[4096];
+static char bofbench_object_entry_name[512];
+static char bofbench_object_entry_type[128];
+static void bofbench_object_text(PUNICODE_STRING source, char *target, DWORD capacity) { DWORD index = 0, count = source ? source->Length / 2 : 0; while (index < count && index + 1 < capacity) { target[index] = source->Buffer[index] < 128 ? (char)source->Buffer[index] : '?'; index++; } target[index] = 0; }
+static BOOL bofbench_object_prefix(const char *value, const char *prefix, int length) { int index = 0; if (!prefix || length <= 0) return TRUE; while (index < length && value[index]) { char a=value[index],b=prefix[index];if(a>='A'&&a<='Z')a+=32;if(b>='A'&&b<='Z')b+=32;if(a!=b)return FALSE;index++;}return index==length; }
+
+static void bofbench_feature_object_namespace_inventory(datap *parser) {
+    int directory_bytes=0,prefix_bytes=0; WCHAR *directory=(WCHAR *)BeaconDataExtract(parser,&directory_bytes); char *prefix=BeaconDataExtract(parser,&prefix_bytes); int requested=BeaconDataInt(parser);
+    DWORD limit=requested>0?(DWORD)requested:64,shown=0,context=0,returned=0; HANDLE handle=NULL; UNICODE_STRING name; OBJECT_ATTRIBUTES attributes; NTSTATUS status; BOFBENCH_OBJECT_DIRECTORY_INFORMATION *entry;
+    if(!directory||directory_bytes<2){BeaconPrintf(CALLBACK_ERROR,"[object-namespace-inventory] status=bad-arguments");return;}if(limit>512)limit=512;
+    NTDLL$RtlInitUnicodeString(&name,directory);InitializeObjectAttributes(&attributes,&name,OBJ_CASE_INSENSITIVE,NULL,NULL);
+    status=NTDLL$NtOpenDirectoryObject(&handle,0x0001,&attributes);if(status<0){BeaconPrintf(CALLBACK_ERROR,"[object-namespace-inventory] status=failed api=NtOpenDirectoryObject ntstatus=0x%08lx",status);return;}
+    while(shown<limit){status=NTDLL$NtQueryDirectoryObject(handle,bofbench_object_buffer,sizeof(bofbench_object_buffer),TRUE,FALSE,&context,&returned);if(status<0)break;entry=(BOFBENCH_OBJECT_DIRECTORY_INFORMATION *)bofbench_object_buffer;bofbench_object_text(&entry->Name,bofbench_object_entry_name,sizeof(bofbench_object_entry_name));bofbench_object_text(&entry->TypeName,bofbench_object_entry_type,sizeof(bofbench_object_entry_type));if(!bofbench_object_prefix(bofbench_object_entry_name,prefix,prefix_bytes>0?prefix_bytes-1:0))continue;BeaconPrintf(CALLBACK_OUTPUT,"[object-namespace-inventory] name=%s type=%s",bofbench_object_entry_name,bofbench_object_entry_type);shown++;}
+    KERNEL32$CloseHandle(handle);BeaconPrintf(CALLBACK_OUTPUT,"[object-namespace-inventory] status=complete shown=%lu limit=%lu",shown,limit);
+}`,
+		Call: "bofbench_feature_object_namespace_inventory($PARSER);",
+	},
+	{
 		Name:        "named-pipe-inventory",
 		Description: "enumerate bounded named-pipe entries with an optional prefix filter",
 		Declaration: `HANDLE WINAPI KERNEL32$FindFirstFileA(LPCSTR, LPWIN32_FIND_DATAA);

@@ -760,6 +760,42 @@ func builtins() []Resolved {
 	threadStarts.AnalysisSignatures = []AnalysisSignature{{ID: "thread_start_inventory", Name: "Thread start-address inventory", Summary: "Enumerate threads in one process and correlate their start addresses with containing regions and images.", Steps: []AnalysisStep{{Action: "enumerate process threads", APIs: []string{"CreateToolhelp32Snapshot", "Thread32First"}}, {Action: "query thread start address", APIs: []string{"NtQueryInformationThread"}}, {Action: "query containing memory region", APIs: []string{"VirtualQueryEx"}}}, Effects: []string{"reads thread and process memory metadata"}, Requirements: []string{"an exact target PID", "thread and process query access"}}}
 	threadStarts.ProofCases = []ProofCase{{ID: "target-starts", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID", "result_limit": "16"}, Expect: ProofExpectation{Tag: "thread-start-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
 	byID["thread-start-inventory"] = threadStarts
+	processImages := byID["process-image-inventory"]
+	processImages.Title = "Process Image Inventory"
+	processImages.Capabilities = []string{"bounded loaded-image inventory for one selected process", "module base, size, and path discovery"}
+	processImages.Arguments = []Argument{{Name: "target_pid", Type: "int", Description: "process identifier", Required: true}, {Name: "module_filter", Type: "string", Description: "case-insensitive module-name substring; empty matches all", Default: ""}, {Name: "result_limit", Type: "int", Description: "maximum images (1-512)", Default: "64"}}
+	processImages.ExpectedAnalysis = []string{"process_image_inventory"}
+	processImages.OutputFields = []string{"target_pid", "base", "size", "module", "path", "shown", "limit", "filter", "status", "error"}
+	processImages.AnalysisSignatures = []AnalysisSignature{{ID: "process_image_inventory", Name: "Process image inventory", Summary: "Enumerate modules loaded in one selected process and report base addresses, sizes, and paths.", Steps: []AnalysisStep{{Action: "open selected process module snapshot", APIs: []string{"CreateToolhelp32Snapshot"}}, {Action: "enumerate loaded images", APIs: []string{"Module32FirstW", "Module32NextW"}}}, RequiredStrings: []string{"[process-image-inventory]"}, Effects: []string{"reads process image metadata"}, Requirements: []string{"a process identifier", "module snapshot access"}}}
+	processImages.ProofCases = []ProofCase{{ID: "target-images", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID", "module_filter": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "process-image-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["process-image-inventory"] = processImages
+	threadStates := byID["thread-state-inventory"]
+	threadStates.Title = "Thread State Inventory"
+	threadStates.Capabilities = []string{"bounded thread scheduling-state inventory", "thread priority and execution-time discovery"}
+	threadStates.Arguments = []Argument{{Name: "target_pid", Type: "int", Description: "process identifier", Required: true}, {Name: "result_limit", Type: "int", Description: "maximum threads (1-512)", Default: "64"}}
+	threadStates.ExpectedAnalysis = []string{"thread_state_inventory"}
+	threadStates.OutputFields = []string{"target_pid", "tid", "state", "priority", "base_priority", "created", "kernel", "user", "shown", "limit", "status", "error"}
+	threadStates.AnalysisSignatures = []AnalysisSignature{{ID: "thread_state_inventory", Name: "Thread state inventory", Summary: "Enumerate threads for one selected process and inspect queryability, priority, and execution-time state.", Steps: []AnalysisStep{{Action: "enumerate selected process threads", APIs: []string{"CreateToolhelp32Snapshot", "Thread32First"}}, {Action: "inspect thread scheduling state", APIs: []string{"OpenThread", "GetThreadPriority", "GetThreadTimes"}}}, RequiredStrings: []string{"[thread-state-inventory]"}, Effects: []string{"reads thread scheduling metadata"}, Requirements: []string{"a process identifier", "thread query access"}}}
+	threadStates.ProofCases = []ProofCase{{ID: "target-thread-state", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID", "result_limit": "16"}, Expect: ProofExpectation{Tag: "thread-state-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["thread-state-inventory"] = threadStates
+	processJobs := byID["process-job-inventory"]
+	processJobs.Title = "Process Job Inventory"
+	processJobs.Capabilities = []string{"process job-object membership discovery"}
+	processJobs.Arguments = []Argument{{Name: "target_pid", Type: "int", Description: "process identifier", Required: true}}
+	processJobs.ExpectedAnalysis = []string{"process_job_inventory"}
+	processJobs.OutputFields = []string{"target_pid", "in_job", "status", "error"}
+	processJobs.AnalysisSignatures = []AnalysisSignature{{ID: "process_job_inventory", Name: "Process job membership", Summary: "Open one selected process and report whether Windows has assigned it to a job object.", Steps: []AnalysisStep{{Action: "open selected process", APIs: []string{"OpenProcess"}}, {Action: "query job membership", APIs: []string{"IsProcessInJob"}}}, RequiredStrings: []string{"[process-job-inventory]"}, Effects: []string{"reads process job metadata"}, Requirements: []string{"a process identifier", "process query access"}}}
+	processJobs.ProofCases = []ProofCase{{ID: "target-job", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID"}, Expect: ProofExpectation{Tag: "process-job-inventory", Fields: map[string]string{"status": "complete", "in_job": "*"}}}}
+	byID["process-job-inventory"] = processJobs
+	objectNamespace := byID["object-namespace-inventory"]
+	objectNamespace.Title = "Object Namespace Inventory"
+	objectNamespace.Capabilities = []string{"bounded Windows object-manager namespace inventory"}
+	objectNamespace.Arguments = []Argument{{Name: "directory", Type: "wstring", Description: `object-manager directory such as \BaseNamedObjects`, Default: `\BaseNamedObjects`}, {Name: "prefix", Type: "string", Description: "case-insensitive name prefix; empty matches all", Default: ""}, {Name: "result_limit", Type: "int", Description: "maximum objects (1-512)", Default: "64"}}
+	objectNamespace.ExpectedAnalysis = []string{"object_namespace_inventory"}
+	objectNamespace.OutputFields = []string{"name", "type", "shown", "limit", "status", "api", "ntstatus"}
+	objectNamespace.AnalysisSignatures = []AnalysisSignature{{ID: "object_namespace_inventory", Name: "Object namespace inventory", Summary: "Open one object-manager directory and enumerate bounded object names and types.", Steps: []AnalysisStep{{Action: "open object-manager directory", APIs: []string{"NtOpenDirectoryObject"}}, {Action: "enumerate namespace entries", APIs: []string{"NtQueryDirectoryObject"}}}, RequiredStrings: []string{"[object-namespace-inventory]"}, Effects: []string{"reads Windows object namespace metadata"}, Requirements: []string{"an object-manager directory path", "directory query access"}}}
+	objectNamespace.ProofCases = []ProofCase{{ID: "base-named-objects", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"directory": `\BaseNamedObjects`, "prefix": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "object-namespace-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["object-namespace-inventory"] = objectNamespace
 	pipeInventory := byID["named-pipe-inventory"]
 	pipeInventory.Title = "Named Pipe Inventory"
 	pipeInventory.Capabilities = []string{"bounded named-pipe discovery"}
@@ -806,6 +842,12 @@ func builtins() []Resolved {
 	byID["ldap-delegation-inventory"] = func(document Document) Document { document.ID = "ldap-delegation-inventory"; return document }(byID["ldap-delegation-inventory"])
 	byID["domain-trust-inventory"] = domainLDAP("domain_trust_inventory", "Domain Trust Inventory", "Enumerate bounded trusted-domain direction, type, and attribute metadata", "bounded domain trust inventory", "(objectClass=trustedDomain)", "name,trustDirection,trustType,trustAttributes")
 	byID["domain-trust-inventory"] = func(document Document) Document { document.ID = "domain-trust-inventory"; return document }(byID["domain-trust-inventory"])
+	byID["ldap-group-inventory"] = domainLDAP("ldap_group_inventory", "LDAP Group Inventory", "Enumerate bounded domain group identity, scope, and membership metadata", "bounded LDAP group inventory", "(objectCategory=group)", "sAMAccountName,groupType,member")
+	byID["ldap-group-inventory"] = func(document Document) Document { document.ID = "ldap-group-inventory"; return document }(byID["ldap-group-inventory"])
+	byID["ldap-computer-inventory"] = domainLDAP("ldap_computer_inventory", "LDAP Computer Inventory", "Enumerate bounded domain computer identity, operating-system, and account metadata", "bounded LDAP computer inventory", "(objectCategory=computer)", "dNSHostName,operatingSystem,operatingSystemVersion,userAccountControl")
+	byID["ldap-computer-inventory"] = func(document Document) Document { document.ID = "ldap-computer-inventory"; return document }(byID["ldap-computer-inventory"])
+	byID["ldap-gpo-inventory"] = domainLDAP("ldap_gpo_inventory", "LDAP GPO Inventory", "Enumerate bounded Group Policy object identity, version, and filesystem location metadata", "bounded LDAP GPO inventory", "(objectClass=groupPolicyContainer)", "displayName,name,versionNumber,gPCFileSysPath")
+	byID["ldap-gpo-inventory"] = func(document Document) Document { document.ID = "ldap-gpo-inventory"; return document }(byID["ldap-gpo-inventory"])
 	securityPackages := byID["security-package-inventory"]
 	securityPackages.Title = "Security Package Inventory"
 	securityPackages.Capabilities = []string{"Windows authentication package discovery", "SSPI capability inventory"}
