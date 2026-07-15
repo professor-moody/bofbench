@@ -79,6 +79,33 @@ func TestPackFileArgumentReadsBytesForNativeAndKeepsPathForC2(t *testing.T) {
 	if token != "x:deadbeef" || cli != path {
 		t.Fatalf("token=%q cli=%q", token, cli)
 	}
+	token, cli, err = packArgumentToken("file", "@file:"+path)
+	if err != nil || token != "x:deadbeef" || cli != path {
+		t.Fatalf("@file token=%q cli=%q err=%v", token, cli, err)
+	}
+}
+
+func TestSensitiveFileArgumentKeepsPathWhileRedactingReceiptMetadata(t *testing.T) {
+	project := t.TempDir()
+	lock := packsvc.Lock{Schema: packsvc.LockSchema, SchemaVersion: packsvc.LockSchemaVersion, Packs: []packsvc.LockRecord{{
+		ID: "mapper", Qualified: "internal/mapper", Catalog: "internal", Version: "1", SHA256: "sha",
+		Arguments: []packsvc.Argument{{Name: "payload", Type: "file", Required: true, Sensitive: true}},
+	}}}
+	data, _ := json.Marshal(lock)
+	if err := os.WriteFile(filepath.Join(project, packsvc.LockName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "payload.bin")
+	if err := os.WriteFile(path, []byte{0xc3}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := resolveRunArguments(project, []string{"payload=@file:" + path}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Tokens[0] != "x:c3" || resolved.CLIValues[0] != path || !resolved.Sensitive[0] {
+		t.Fatalf("resolved sensitive file = %+v", resolved)
+	}
 }
 
 func TestSensitivePackArgumentsResolveEnvironmentAndFileWithoutLosingMetadata(t *testing.T) {

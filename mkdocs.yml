@@ -42,6 +42,7 @@ nav:
       - External Catalogs: external-catalogs.md
       - Author an External Pack: pack-authoring.md
       - Test and Prove Packs: pack-testing.md
+      - Author Multi-Step Operations: operations.md
       - Build and Extend BOFs: development.md
       - Argument Packing: arg-packing.md
       - Generated Pack Reference: pack-reference.md
@@ -80,6 +81,7 @@ nav:
       - Operator TUI Workflow: scenarios/tui-workflow.md
       - Diagnose a Workflow: scenarios/diagnose-workflow.md
       - Reproducible Handoff: scenarios/release-handoff.md
+      - Multi-Step Operation Lifecycle: scenarios/operation-lifecycle.md
       - Operator Playbooks: playbooks.md
       - Deep Capability Workflows: deep-capabilities.md
       - Native Process Depth: native-process-depth.md
@@ -90,6 +92,7 @@ nav:
       - Live Capability Proof: live-proof.md
   - Reference:
       - Commands: commands.md
+      - Generated Operation Reference: operation-reference.md
       - Glossary: glossary.md
       - Documentation Conventions: documentation-conventions.md
       - Evidence Fixture Conventions: evidence/README.md

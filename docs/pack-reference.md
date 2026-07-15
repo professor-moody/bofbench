@@ -438,6 +438,25 @@ enumerate bounded exports from one selected process module
 | `module_base` | `string` | no | no | `` | optional exact hexadecimal module base |
 | `result_limit` | `int` | no | no | `64` | maximum export rows (1-512) |
 
+## `builtin/module-section-inventory`
+
+enumerate bounded PE sections from one selected process module
+
+- Can do: bounded PE section inventory for one selected process module
+- Effects: reads process module metadata; reads process memory
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `module_section_inventory`
+- Live proofs: target-module-sections (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` | exact process identifier |
+| `module_filter` | `string` | no | no | `` | case-insensitive module substring |
+| `module_base` | `string` | no | no | `` | optional exact module base |
+| `result_limit` | `int` | no | no | `32` | maximum section rows |
+
 ## `builtin/named-pipe-inventory`
 
 enumerate bounded named-pipe entries with an optional prefix filter
@@ -600,6 +619,23 @@ Enumerate a bounded local process snapshot
 | `process_filter` | `string` | no | no | `` | case-insensitive process image substring; empty matches all |
 | `result_limit` | `int` | no | no | `25` | maximum matching process rows (1-256) |
 
+## `builtin/process-heap-inventory`
+
+enumerate bounded heaps and entries for one selected process
+
+- Can do: bounded heap and heap-entry inventory for one process
+- Effects: reads process heap metadata
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `process_heap_inventory`
+- Live proofs: target-heaps (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` |  |
+| `result_limit` | `int` | no | no | `64` |  |
+
 ## `builtin/process-image-inventory`
 
 enumerate bounded loaded images for one explicitly selected process
@@ -686,6 +722,22 @@ enumerate local processes with a runtime name filter and result limit
 - Needs: privilege=user; network=none; platform=windows/x64,x86
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
+
+## `builtin/process-security-inventory`
+
+report owner, group, DACL, inheritance, and security-control metadata for one process
+
+- Can do: process owner, group, DACL, inheritance, and security-control inventory
+- Effects: reads process security metadata
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `process_security_inventory`
+- Live proofs: target-security (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` |  |
 
 ## `builtin/process-tree`
 

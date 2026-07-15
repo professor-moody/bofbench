@@ -29,6 +29,26 @@ func TestCLIWorkspaceBuildInspectStage(t *testing.T) {
 	mustExist(t, filepath.Join(tmp, "stage", "hello-cobaltstrike.zip"))
 }
 
+func TestCLIOperationCatalogSurface(t *testing.T) {
+	bin := buildTestBinary(t)
+	tmp := t.TempDir()
+	t.Setenv("BOFBENCH_CONFIG_HOME", filepath.Join(tmp, "config"))
+	listed := runOK(t, tmp, bin, "operation", "list")
+	if !strings.Contains(listed, "builtin/process-triage") {
+		t.Fatalf("builtin operation missing:\n%s", listed)
+	}
+	shown := runOK(t, tmp, bin, "operation", "show", "process-triage")
+	for _, want := range []string{"Process Triage", "target_pid", "process-security-inventory"} {
+		if !strings.Contains(shown, want) {
+			t.Fatalf("operation show missing %q:\n%s", want, shown)
+		}
+	}
+	validated := runOK(t, tmp, bin, "operation", "validate", "builtin/process-triage")
+	if !strings.Contains(validated, "OPERATION VALID") || !strings.Contains(validated, "steps      3") {
+		t.Fatalf("unexpected operation validation:\n%s", validated)
+	}
+}
+
 func TestCLIBuildFailurePrintsAndPersistsEvidence(t *testing.T) {
 	bin := buildTestBinary(t)
 	tmp := t.TempDir()

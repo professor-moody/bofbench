@@ -101,7 +101,7 @@ func resolveRunArguments(project string, named, legacy []string) (resolvedRunArg
 			}
 			value = emptyPackArgumentValue(definition.Type)
 		}
-		if definition.Sensitive && supplied {
+		if definition.Sensitive && supplied && normalizedPackArgumentType(definition.Type) != "file" {
 			value, err = resolveSensitiveArgument(definition.Name, value)
 			if err != nil {
 				return resolvedRunArguments{}, err
@@ -194,11 +194,13 @@ func packArgumentToken(argumentType, value string) (string, string, error) {
 		if value == "" {
 			return "x:", "", nil
 		}
-		data, err := os.ReadFile(value)
+		path := strings.TrimPrefix(value, "@file:")
+		path = strings.TrimPrefix(path, "@")
+		data, err := os.ReadFile(path)
 		if err != nil {
 			return "", "", err
 		}
-		return "x:" + hex.EncodeToString(data), value, nil
+		return "x:" + hex.EncodeToString(data), path, nil
 	default:
 		return "", "", fmt.Errorf("unsupported pack argument type %q", argumentType)
 	}

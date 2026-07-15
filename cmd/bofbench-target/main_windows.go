@@ -63,6 +63,7 @@ type targetState struct {
 	MemoryCanaryAddress  string `json:"memory_canary_address"`
 	MemoryCanarySize     int    `json:"memory_canary_size"`
 	MemoryCanarySHA256   string `json:"memory_canary_sha256"`
+	ExecutionAddress     string `json:"execution_address"`
 	MemoryWriteAddress   string `json:"memory_write_address,omitempty"`
 	MemoryWriteSize      int    `json:"memory_write_size,omitempty"`
 	MemoryWriteSHA256    string `json:"memory_write_sha256,omitempty"`
@@ -127,10 +128,17 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		return true, 1
 	}
 	canary := randomBytes(64)
+	copy(canary[24:], []byte("BOFBenchOperationNeedle"))
 	copy(memoryCanary, canary)
-	writeRegion, err := windows.VirtualAlloc(0, 4096, windows.MEM_COMMIT|windows.MEM_RESERVE, windows.PAGE_READWRITE)
+	executionRegion, err := windows.VirtualAlloc(0, 4096, windows.MEM_COMMIT|windows.MEM_RESERVE, windows.PAGE_EXECUTE_READWRITE)
 	if err != nil {
 		return true, 2
+	}
+	defer windows.VirtualFree(executionRegion, 0, windows.MEM_RELEASE)
+	*(*byte)(unsafe.Pointer(executionRegion)) = 0xc3
+	writeRegion, err := windows.VirtualAlloc(0, 4096, windows.MEM_COMMIT|windows.MEM_RESERVE, windows.PAGE_READWRITE)
+	if err != nil {
+		return true, 3
 	}
 	defer windows.VirtualFree(writeRegion, 0, windows.MEM_RELEASE)
 	writeCanary := randomBytes(18)
@@ -165,6 +173,7 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		CanaryFile:  canaryPath, CanaryFileSHA256: hashBytes(fileCanary),
 		MemoryCanaryAddress: fmt.Sprintf("0x%X", uintptr(unsafe.Pointer(&memoryCanary[0]))),
 		MemoryCanarySize:    len(canary), MemoryCanarySHA256: hashBytes(canary),
+		ExecutionAddress:   fmt.Sprintf("0x%X", executionRegion),
 		MemoryWriteAddress: fmt.Sprintf("0x%X", writeRegion), MemoryWriteSize: len(writeCanary), MemoryWriteSHA256: hashBytes(writeCanary),
 		MemoryProtectAddress: fmt.Sprintf("0x%X", protectRegion), MemoryProtectSize: 4096, MemoryProtection: "0x04",
 		StartedAt: time.Now().UTC().Format(time.RFC3339Nano),

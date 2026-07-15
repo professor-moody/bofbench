@@ -1365,6 +1365,64 @@ cleanup:
 		Call: "bofbench_feature_remote_task_inventory($PARSER);",
 	},
 	{
+		Name:        "module-section-inventory",
+		Description: "enumerate bounded PE sections from one selected process module",
+		Declaration: `HANDLE WINAPI KERNEL32$CreateToolhelp32Snapshot(DWORD, DWORD);
+BOOL WINAPI KERNEL32$Module32FirstW(HANDLE, LPMODULEENTRY32W);
+BOOL WINAPI KERNEL32$Module32NextW(HANDLE, LPMODULEENTRY32W);
+HANDLE WINAPI KERNEL32$OpenProcess(DWORD, BOOL, DWORD);
+BOOL WINAPI KERNEL32$ReadProcessMemory(HANDLE, LPCVOID, LPVOID, SIZE_T, SIZE_T *);
+BOOL WINAPI KERNEL32$CloseHandle(HANDLE);
+DWORD WINAPI KERNEL32$GetLastError(void);
+
+static ULONG_PTR bofbench_section_address(const char *value, int bytes) { ULONG_PTR result=0; int i=0,d; if(!value||bytes<=0)return 0; if(bytes>2&&value[0]=='0'&&(value[1]=='x'||value[1]=='X'))i=2; for(;i<bytes&&value[i];i++){char c=value[i];if(c>='0'&&c<='9')d=c-'0';else if(c>='a'&&c<='f')d=c-'a'+10;else if(c>='A'&&c<='F')d=c-'A'+10;else break;result=(result<<4)|(ULONG_PTR)d;}return result; }
+static int bofbench_section_lower(int value){return value>='A'&&value<='Z'?value+('a'-'A'):value;}
+static BOOL bofbench_section_contains(const char *value,const char *filter,int bytes){int i,j,limit=bytes>0?bytes-1:0;if(!filter||limit==0)return TRUE;for(i=0;value[i];i++){for(j=0;j<limit&&value[i+j]&&bofbench_section_lower(value[i+j])==bofbench_section_lower(filter[j]);j++){}if(j==limit)return TRUE;}return FALSE;}
+static void bofbench_section_text(const WCHAR *source,char *target,DWORD capacity){DWORD i=0;while(source&&source[i]&&i+1<capacity){target[i]=source[i]<128?(char)source[i]:'?';i++;}target[i]=0;}
+static BOOL bofbench_section_read(HANDLE process,ULONG_PTR address,void *buffer,SIZE_T size){SIZE_T read=0;return KERNEL32$ReadProcessMemory(process,(LPCVOID)address,buffer,size,&read)&&read==size;}
+static void bofbench_feature_module_section_inventory(datap *parser){
+ DWORD pid=(DWORD)BeaconDataInt(parser);int filter_bytes=0,base_bytes=0;char *filter=BeaconDataExtract(parser,&filter_bytes),*base_text=BeaconDataExtract(parser,&base_bytes);DWORD requested=(DWORD)BeaconDataInt(parser),limit=requested?requested:32,shown=0,index;ULONG_PTR selected=bofbench_section_address(base_text,base_bytes);HANDLE snapshot=INVALID_HANDLE_VALUE,process=NULL;MODULEENTRY32W module;BOOL found=FALSE;char module_name[260];IMAGE_DOS_HEADER dos;DWORD signature=0;IMAGE_FILE_HEADER file_header;ULONG_PTR section_table=0;
+ if(!pid){BeaconPrintf(CALLBACK_ERROR,"[module-section-inventory] status=bad-arguments");return;}if(limit>128)limit=128;
+ snapshot=KERNEL32$CreateToolhelp32Snapshot(TH32CS_SNAPMODULE|TH32CS_SNAPMODULE32,pid);if(snapshot==INVALID_HANDLE_VALUE)goto failed;module.dwSize=sizeof(module);
+ if(KERNEL32$Module32FirstW(snapshot,&module))do{bofbench_section_text(module.szModule,module_name,sizeof(module_name));if((selected==0||selected==(ULONG_PTR)module.modBaseAddr)&&bofbench_section_contains(module_name,filter,filter_bytes)){found=TRUE;break;}}while(KERNEL32$Module32NextW(snapshot,&module));
+ if(!found){BeaconPrintf(CALLBACK_ERROR,"[module-section-inventory] status=not-found target_pid=%lu",pid);goto cleanup;}process=KERNEL32$OpenProcess(PROCESS_QUERY_INFORMATION|PROCESS_VM_READ,FALSE,pid);if(!process)goto failed;
+ if(!bofbench_section_read(process,(ULONG_PTR)module.modBaseAddr,&dos,sizeof(dos))||dos.e_magic!=IMAGE_DOS_SIGNATURE)goto failed;if(!bofbench_section_read(process,(ULONG_PTR)module.modBaseAddr+dos.e_lfanew,&signature,sizeof(signature))||signature!=IMAGE_NT_SIGNATURE)goto failed;if(!bofbench_section_read(process,(ULONG_PTR)module.modBaseAddr+dos.e_lfanew+sizeof(DWORD),&file_header,sizeof(file_header)))goto failed;
+ section_table=(ULONG_PTR)module.modBaseAddr+dos.e_lfanew+sizeof(DWORD)+sizeof(file_header)+file_header.SizeOfOptionalHeader;
+ for(index=0;index<file_header.NumberOfSections&&shown<limit;index++){IMAGE_SECTION_HEADER section;char name[9];DWORD j;if(!bofbench_section_read(process,section_table+index*sizeof(section),&section,sizeof(section)))break;for(j=0;j<8;j++)name[j]=(char)section.Name[j];name[8]=0;BeaconPrintf(CALLBACK_OUTPUT,"[module-section-inventory] target_pid=%lu module=%s base=0x%llx section=%s rva=0x%08lx virtual_size=%lu raw_size=%lu characteristics=0x%08lx",pid,module_name,(unsigned long long)(ULONG_PTR)module.modBaseAddr,name,section.VirtualAddress,section.Misc.VirtualSize,section.SizeOfRawData,section.Characteristics);shown++;}
+ BeaconPrintf(CALLBACK_OUTPUT,"[module-section-inventory] status=complete target_pid=%lu module=%s base=0x%llx shown=%lu limit=%lu",pid,module_name,(unsigned long long)(ULONG_PTR)module.modBaseAddr,shown,limit);goto cleanup;
+failed:BeaconPrintf(CALLBACK_ERROR,"[module-section-inventory] status=failed target_pid=%lu error=%lu",pid,KERNEL32$GetLastError());
+cleanup:if(process)KERNEL32$CloseHandle(process);if(snapshot!=INVALID_HANDLE_VALUE)KERNEL32$CloseHandle(snapshot);
+}`,
+		Call: "bofbench_feature_module_section_inventory($PARSER);",
+	},
+	{
+		Name:        "process-heap-inventory",
+		Description: "enumerate bounded heaps and entries for one selected process",
+		Declaration: `HANDLE WINAPI KERNEL32$CreateToolhelp32Snapshot(DWORD, DWORD);
+BOOL WINAPI KERNEL32$Heap32ListFirst(HANDLE, LPHEAPLIST32);
+BOOL WINAPI KERNEL32$Heap32ListNext(HANDLE, LPHEAPLIST32);
+BOOL WINAPI KERNEL32$Heap32First(LPHEAPENTRY32, DWORD, ULONG_PTR);
+BOOL WINAPI KERNEL32$Heap32Next(LPHEAPENTRY32);
+BOOL WINAPI KERNEL32$CloseHandle(HANDLE);
+DWORD WINAPI KERNEL32$GetLastError(void);
+static void bofbench_feature_process_heap_inventory(datap *parser){DWORD pid=(DWORD)BeaconDataInt(parser),requested=(DWORD)BeaconDataInt(parser),limit=requested?requested:64,shown=0,heaps=0;HANDLE snapshot;HEAPLIST32 list;if(!pid){BeaconPrintf(CALLBACK_ERROR,"[process-heap-inventory] status=bad-arguments");return;}if(limit>512)limit=512;snapshot=KERNEL32$CreateToolhelp32Snapshot(TH32CS_SNAPHEAPLIST,pid);if(snapshot==INVALID_HANDLE_VALUE){BeaconPrintf(CALLBACK_ERROR,"[process-heap-inventory] status=failed target_pid=%lu error=%lu",pid,KERNEL32$GetLastError());return;}list.dwSize=sizeof(list);if(KERNEL32$Heap32ListFirst(snapshot,&list))do{HEAPENTRY32 entry;DWORD entries=0;heaps++;entry.dwSize=sizeof(entry);if(KERNEL32$Heap32First(&entry,pid,list.th32HeapID))do{BeaconPrintf(CALLBACK_OUTPUT,"[process-heap-inventory] target_pid=%lu heap=0x%llx flags=0x%08lx address=0x%llx size=%llu entry_flags=0x%08lx",pid,(unsigned long long)list.th32HeapID,list.dwFlags,(unsigned long long)entry.dwAddress,(unsigned long long)entry.dwBlockSize,entry.dwFlags);entries++;shown++;entry.dwSize=sizeof(entry);}while(shown<limit&&KERNEL32$Heap32Next(&entry));if(shown>=limit)break;}while(KERNEL32$Heap32ListNext(snapshot,&list));KERNEL32$CloseHandle(snapshot);BeaconPrintf(CALLBACK_OUTPUT,"[process-heap-inventory] status=complete target_pid=%lu heaps=%lu shown=%lu limit=%lu",pid,heaps,shown,limit);}`,
+		Call: "bofbench_feature_process_heap_inventory($PARSER);",
+	},
+	{
+		Name:        "process-security-inventory",
+		Description: "report owner, group, DACL, inheritance, and security-control metadata for one process",
+		Declaration: `#include <aclapi.h>
+HANDLE WINAPI KERNEL32$OpenProcess(DWORD, BOOL, DWORD);
+BOOL WINAPI KERNEL32$CloseHandle(HANDLE);
+HLOCAL WINAPI KERNEL32$LocalFree(HLOCAL);
+DWORD WINAPI KERNEL32$GetLastError(void);
+DWORD WINAPI ADVAPI32$GetSecurityInfo(HANDLE, SE_OBJECT_TYPE, SECURITY_INFORMATION, PSID *, PSID *, PACL *, PACL *, PSECURITY_DESCRIPTOR *);
+BOOL WINAPI ADVAPI32$ConvertSidToStringSidA(PSID, LPSTR *);
+BOOL WINAPI ADVAPI32$GetSecurityDescriptorControl(PSECURITY_DESCRIPTOR, PSECURITY_DESCRIPTOR_CONTROL, LPDWORD);
+static void bofbench_feature_process_security_inventory(datap *parser){DWORD pid=(DWORD)BeaconDataInt(parser),status;HANDLE process;PSID owner=NULL,group=NULL;PACL dacl=NULL;PSECURITY_DESCRIPTOR descriptor=NULL;LPSTR owner_text=NULL,group_text=NULL;SECURITY_DESCRIPTOR_CONTROL control=0;DWORD revision=0,aces=0;process=KERNEL32$OpenProcess(READ_CONTROL|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(!process){BeaconPrintf(CALLBACK_ERROR,"[process-security-inventory] status=failed target_pid=%lu error=%lu",pid,KERNEL32$GetLastError());return;}status=ADVAPI32$GetSecurityInfo(process,SE_KERNEL_OBJECT,OWNER_SECURITY_INFORMATION|GROUP_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,&owner,&group,&dacl,NULL,&descriptor);if(status!=ERROR_SUCCESS){BeaconPrintf(CALLBACK_ERROR,"[process-security-inventory] status=failed target_pid=%lu error=%lu",pid,status);KERNEL32$CloseHandle(process);return;}ADVAPI32$ConvertSidToStringSidA(owner,&owner_text);ADVAPI32$ConvertSidToStringSidA(group,&group_text);ADVAPI32$GetSecurityDescriptorControl(descriptor,&control,&revision);if(dacl)aces=dacl->AceCount;BeaconPrintf(CALLBACK_OUTPUT,"[process-security-inventory] target_pid=%lu owner=%s group=%s dacl_present=%lu ace_count=%lu protected=%lu auto_inherited=%lu control=0x%04x revision=%lu",pid,owner_text?owner_text:"-",group_text?group_text:"-",dacl?1UL:0UL,aces,(control&SE_DACL_PROTECTED)?1UL:0UL,(control&SE_DACL_AUTO_INHERITED)?1UL:0UL,control,revision);BeaconPrintf(CALLBACK_OUTPUT,"[process-security-inventory] status=complete target_pid=%lu",pid);if(owner_text)KERNEL32$LocalFree(owner_text);if(group_text)KERNEL32$LocalFree(group_text);if(descriptor)KERNEL32$LocalFree(descriptor);KERNEL32$CloseHandle(process);}`,
+		Call: "bofbench_feature_process_security_inventory($PARSER);",
+	},
+	{
 		Name:        "process-access-check",
 		Description: "test requested process access rights against one selected PID",
 		Declaration: `HANDLE WINAPI KERNEL32$OpenProcess(DWORD, BOOL, DWORD);

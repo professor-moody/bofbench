@@ -33,6 +33,7 @@ type TargetState struct {
 	MemoryCanaryAddress  string `json:"memory_canary_address,omitempty"`
 	MemoryCanarySize     int    `json:"memory_canary_size,omitempty"`
 	MemoryCanarySHA256   string `json:"memory_canary_sha256,omitempty"`
+	ExecutionAddress     string `json:"execution_address,omitempty"`
 	MemoryWriteAddress   string `json:"memory_write_address,omitempty"`
 	MemoryWriteSize      int    `json:"memory_write_size,omitempty"`
 	MemoryWriteSHA256    string `json:"memory_write_sha256,omitempty"`

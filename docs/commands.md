@@ -13,6 +13,7 @@
 | `run --via` | Execute through `native`, `lab`, `sliver`, or `cobaltstrike`. |
 | `export --for` | Produce raw, Sliver, or Cobalt Strike packages. |
 | `arsenal` | Acquire, index, search, compare, and operate on external BOFs. |
+| `operation` | Run, resume, inspect, and reverse-clean multi-step pack workflows. |
 | `lab` | Configure, bootstrap, run, snapshot, restore, and inspect Windows labs. |
 | `tui` | Run the action-oriented terminal workbench. |
 
@@ -43,6 +44,22 @@ bofbench add bofs/portable-survey internal/token-impersonation
 ```
 
 Use `--catalog path` for a one-command external catalog. The resolved root is retained in the lockfile for later commands.
+
+## Operations
+
+```bash
+bofbench operation list
+bofbench operation search process
+bofbench operation show internal/section-map-start-unmap
+bofbench operation validate operations/example/operation.json
+bofbench operation run internal/section-map-start-unmap \
+  --via lab --lab devbox --arg target_pid=1234 --arg payload=@file:/tmp/payload.bin
+bofbench operation resume runs/<run-id>/operation.json
+bofbench operation cleanup runs/<run-id>/operation.json
+bofbench operation docs --output docs/operation-reference.md
+```
+
+See [multi-step operations](operations.md) for captures, sensitive inputs, incomplete C2 tasks, and reverse cleanup.
 
 ## Build
 

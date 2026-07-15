@@ -16,39 +16,43 @@ import (
 
 	"bofbench/internal/arsenal"
 	"bofbench/internal/lab"
+	operationsvc "bofbench/internal/operation"
 	packsvc "bofbench/internal/pack"
 )
 
 type model struct {
-	tab             int
-	projectCursor   int
-	arsenalCursor   int
-	runCursor       int
-	labCursor       int
-	viaCursor       int
-	packCursor      int
-	topologyCursor  int
-	labProfile      int
-	argumentCursor  int
-	projects        []string
-	packs           []packsvc.Resolved
-	topologies      []string
-	labProfiles     []string
-	runArguments    []tuiArgument
-	argumentProject string
-	argumentEditing bool
-	argumentBuffer  string
-	arsenalRoot     string
-	arsenal         []arsenal.Entry
-	runs            []runEntry
-	statusFilter    int
-	runtimeFilter   int
-	artifactFilter  bool
-	width           int
-	height          int
-	message         string
-	commandOutput   string
-	running         bool
+	tab                int
+	projectCursor      int
+	arsenalCursor      int
+	runCursor          int
+	labCursor          int
+	viaCursor          int
+	packCursor         int
+	operationCursor    int
+	topologyCursor     int
+	labProfile         int
+	argumentCursor     int
+	projects           []string
+	packs              []packsvc.Resolved
+	operations         []operationsvc.Resolved
+	topologies         []string
+	labProfiles        []string
+	runArguments       []tuiArgument
+	operationArguments []tuiArgument
+	argumentProject    string
+	argumentEditing    bool
+	argumentBuffer     string
+	arsenalRoot        string
+	arsenal            []arsenal.Entry
+	runs               []runEntry
+	statusFilter       int
+	runtimeFilter      int
+	artifactFilter     bool
+	width              int
+	height             int
+	message            string
+	commandOutput      string
+	running            bool
 }
 
 type tuiArgument struct {
@@ -100,7 +104,7 @@ var (
 	statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("51"))
 )
 
-var tabs = []string{"build", "analyze", "arsenal", "run", "lab", "results", "packs", "prove", "topology", "help"}
+var tabs = []string{"build", "analyze", "arsenal", "run", "lab", "results", "packs", "prove", "topology", "operations", "help"}
 var runVias = []string{"native", "lab", "sliver", "cobaltstrike"}
 var labActions = [][]string{{"lab", "status"}, {"lab", "bootstrap"}, {"lab", "up"}, {"lab", "snapshot", "clean"}, {"lab", "restore", "clean"}}
 var statusFilters = []string{"all", "pass", "fail", "setup_error", "analysis", "analyze_pass", "mixed_pass"}
@@ -119,8 +123,12 @@ func initialModel() model {
 	runs := listRuns()
 	registry, _ := packsvc.Load(packsvc.LoadOptions{Project: "."})
 	var packs []packsvc.Resolved
+	var operations []operationsvc.Resolved
 	if registry != nil {
 		packs = registry.List()
+		if operationRegistry, err := operationsvc.Load(operationsvc.LoadOptions{Project: ".", PackRegistry: registry}); err == nil {
+			operations = operationRegistry.List()
+		}
 	}
 	profiles, _ := lab.LoadProfiles(lab.ProfilesPath())
 	labProfiles := lab.ProfileNames(profiles)
@@ -131,7 +139,7 @@ func initialModel() model {
 			break
 		}
 	}
-	return model{projects: listProjects(), arsenalRoot: root, arsenal: entries, runs: runs, packs: packs,
+	return model{projects: listProjects(), arsenalRoot: root, arsenal: entries, runs: runs, packs: packs, operations: operations,
 		topologies: lab.TopologyNames(profiles), labProfiles: labProfiles, labProfile: labProfile,
 		message: "new → add packs → build → analyze → run → export"}
 }
@@ -145,13 +153,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 	case tea.KeyMsg:
 		if m.argumentEditing {
+			arguments := &m.runArguments
+			if m.tab == 9 {
+				arguments = &m.operationArguments
+			}
 			switch msg.String() {
 			case "esc":
 				m.argumentEditing = false
 				m.argumentBuffer = ""
 			case "enter":
-				if m.argumentCursor >= 0 && m.argumentCursor < len(m.runArguments) {
-					m.runArguments[m.argumentCursor].Value = m.argumentBuffer
+				if m.argumentCursor >= 0 && m.argumentCursor < len(*arguments) {
+					(*arguments)[m.argumentCursor].Value = m.argumentBuffer
 				}
 				m.argumentEditing = false
 				m.argumentBuffer = ""
@@ -199,20 +211,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.runCursor = 0
 			}
 		case "v":
-			if m.tab == 3 || m.tab == 7 {
+			if m.tab == 3 || m.tab == 7 || m.tab == 9 {
 				m.viaCursor = (m.viaCursor + 1) % len(runVias)
 			}
 		case "l":
-			if (m.tab == 3 || m.tab == 7) && len(m.labProfiles) > 0 {
+			if (m.tab == 3 || m.tab == 7 || m.tab == 9) && len(m.labProfiles) > 0 {
 				m.labProfile = (m.labProfile + 1) % len(m.labProfiles)
 			}
 		case "[":
-			if m.tab == 3 && len(m.runArguments) > 0 {
-				m.argumentCursor = (m.argumentCursor + len(m.runArguments) - 1) % len(m.runArguments)
+			arguments := m.runArguments
+			if m.tab == 9 {
+				arguments = m.operationArguments
+			}
+			if (m.tab == 3 || m.tab == 9) && len(arguments) > 0 {
+				m.argumentCursor = (m.argumentCursor + len(arguments) - 1) % len(arguments)
 			}
 		case "]":
-			if m.tab == 3 && len(m.runArguments) > 0 {
-				m.argumentCursor = (m.argumentCursor + 1) % len(m.runArguments)
+			arguments := m.runArguments
+			if m.tab == 9 {
+				arguments = m.operationArguments
+			}
+			if (m.tab == 3 || m.tab == 9) && len(arguments) > 0 {
+				m.argumentCursor = (m.argumentCursor + 1) % len(arguments)
 			}
 		case "e":
 			if m.tab == 3 {
@@ -220,6 +240,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.runArguments) > 0 {
 					m.argumentEditing = true
 					m.argumentBuffer = m.runArguments[m.argumentCursor].Value
+				}
+			} else if m.tab == 9 {
+				m.refreshOperationArguments()
+				if len(m.operationArguments) > 0 {
+					m.argumentEditing = true
+					m.argumentBuffer = m.operationArguments[m.argumentCursor].Value
 				}
 			}
 		case "c":
@@ -299,6 +325,8 @@ func (m model) View() string {
 	case 8:
 		b.WriteString(m.viewTopologies())
 	case 9:
+		b.WriteString(m.viewOperations())
+	case 10:
 		b.WriteString(m.viewHelp())
 	}
 	if m.commandOutput != "" {
@@ -326,7 +354,7 @@ func (m model) renderTabs() string {
 
 func (m model) footer() string {
 	base := "tab switch  j/k select  enter run  r refresh  q quit"
-	if m.tab == 3 {
+	if m.tab == 3 || m.tab == 9 {
 		base += "  v runtime  l lab  [/] argument  e edit"
 	}
 	if m.tab == 6 {
@@ -355,6 +383,8 @@ func (m model) currentCount() int {
 		return len(m.packs)
 	case 8:
 		return len(m.topologies)
+	case 9:
+		return len(m.operations)
 	default:
 		return 0
 	}
@@ -388,6 +418,12 @@ func (m *model) moveCursor(delta int) {
 		if len(m.topologies) > 0 {
 			m.topologyCursor = clamp(m.topologyCursor+delta, 0, len(m.topologies)-1)
 		}
+	case 9:
+		if len(m.operations) > 0 {
+			m.operationCursor = clamp(m.operationCursor+delta, 0, len(m.operations)-1)
+			m.operationArguments = nil
+			m.argumentCursor = 0
+		}
 	}
 }
 
@@ -415,6 +451,12 @@ func (m *model) setCursor(value int) {
 	case 8:
 		if len(m.topologies) > 0 {
 			m.topologyCursor = clamp(value, 0, len(m.topologies)-1)
+		}
+	case 9:
+		if len(m.operations) > 0 {
+			m.operationCursor = clamp(value, 0, len(m.operations)-1)
+			m.operationArguments = nil
+			m.argumentCursor = 0
 		}
 	}
 }
@@ -485,6 +527,19 @@ func (m model) currentCommand() []string {
 	case 8:
 		if len(m.topologies) > 0 {
 			return []string{"lab", "topology", "status", m.topologies[m.topologyCursor]}
+		}
+	case 9:
+		if operation, ok := m.selectedOperation(); ok {
+			command := []string{"operation", "run", operation.Qualified, "--via", runVias[m.viaCursor]}
+			if (runVias[m.viaCursor] == "lab" || runVias[m.viaCursor] == "sliver") && len(m.labProfiles) > 0 {
+				command = append(command, "--lab", m.labProfiles[m.labProfile])
+			}
+			for _, argument := range m.operationArguments {
+				if argument.Value != "" {
+					command = append(command, "--arg", argument.Name+"="+argument.Value)
+				}
+			}
+			return command
 		}
 	}
 	return nil
@@ -710,6 +765,79 @@ func (m model) viewTopologies() string {
 	}
 	name := m.topologies[clamp(m.topologyCursor, 0, len(m.topologies)-1)]
 	fmt.Fprintf(&b, "\nAction  bofbench lab topology status %s\nProof   bofbench pack prove --all --via lab --topology %s\n", name, name)
+	return b.String()
+}
+
+func (m model) selectedOperation() (operationsvc.Resolved, bool) {
+	if len(m.operations) == 0 {
+		return operationsvc.Resolved{}, false
+	}
+	return m.operations[clamp(m.operationCursor, 0, len(m.operations)-1)], true
+}
+
+func (m *model) refreshOperationArguments() {
+	operation, ok := m.selectedOperation()
+	if !ok {
+		return
+	}
+	if len(m.operationArguments) > 0 {
+		return
+	}
+	for _, input := range operation.Document.Inputs {
+		m.operationArguments = append(m.operationArguments, tuiArgument{Name: input.Name, Type: input.Type, Sensitive: input.Sensitive, Required: input.Required, Value: input.Default})
+	}
+	m.argumentCursor = 0
+}
+
+func (m model) viewOperations() string {
+	if len(m.operations) == 0 {
+		return "OPERATIONS\n\nNo operation definitions are available."
+	}
+	var b strings.Builder
+	b.WriteString("MULTI-STEP OPERATIONS\n")
+	b.WriteString(mutedStyle.Render("Run linear pack workflows with typed inputs, persisted captures, resume, and reverse cleanup."))
+	b.WriteString("\n\n")
+	limit := visibleRows(m.height, 12, 16)
+	start, end := windowRange(len(m.operations), m.operationCursor, limit)
+	for index := start; index < end; index++ {
+		item := m.operations[index]
+		prefix := "  "
+		if index == m.operationCursor {
+			prefix = "> "
+		}
+		fmt.Fprintf(&b, "%s%-42s %d steps  %s\n", prefix, item.Qualified, len(item.Document.Steps), shorten(item.Document.Summary, 62))
+	}
+	if item, ok := m.selectedOperation(); ok {
+		labName := "active"
+		if len(m.labProfiles) > 0 {
+			labName = m.labProfiles[m.labProfile]
+		}
+		fmt.Fprintf(&b, "\nRuntime  %s  Lab %s\nRun      bofbench operation run %s --via %s\n", hotStyle.Render(runVias[m.viaCursor]), labName, item.Qualified, runVias[m.viaCursor])
+		fmt.Fprintf(&b, "Resume   bofbench operation resume runs/<id>/operation.json\nCleanup  bofbench operation cleanup runs/<id>/operation.json\n")
+		if len(m.operationArguments) == 0 {
+			b.WriteString("\nArguments  press e to load and edit typed operation inputs\n")
+		} else {
+			b.WriteString("\nArguments  [/] select, e edit\n")
+			for index, arg := range m.operationArguments {
+				prefix := "  "
+				if index == m.argumentCursor {
+					prefix = "> "
+				}
+				value := arg.Value
+				if arg.Sensitive && value != "" {
+					value = "<redacted>"
+				}
+				if value == "" {
+					value = "<unset>"
+				}
+				required := ""
+				if arg.Required {
+					required = " required"
+				}
+				fmt.Fprintf(&b, "%s%-24s %-8s%s %s\n", prefix, arg.Name, arg.Type, required, value)
+			}
+		}
+	}
 	return b.String()
 }
 

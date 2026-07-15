@@ -13,9 +13,11 @@ go run ./cmd/capgen -check -out native/loader/capabilities.generated.h
 
 "$BIN" pack docs --catalog-name builtin --output "$TMP/public-reference.md" >/dev/null
 cmp "$TMP/public-reference.md" docs/pack-reference.md
+"$BIN" operation docs --catalog-name builtin --output "$TMP/public-operation-reference.md" >/dev/null
+cmp "$TMP/public-operation-reference.md" docs/operation-reference.md
 
 mkdocs build --strict --site-dir "$TMP/public-site"
-for stem in build-analyze third-party-analysis arsenal-search lab-run runtime-tasks export-verify; do
+for stem in build-analyze third-party-analysis arsenal-search lab-run runtime-tasks export-verify operation-lifecycle; do
   test -s "$TMP/public-site/assets/media/$stem.webm"
   test -s "$TMP/public-site/assets/images/$stem.png"
 done
@@ -30,6 +32,9 @@ if [[ -d "$PRIVATE/.git" ]]; then
   "$BIN" pack docs --catalog "$PRIVATE" --catalog-name bofbench-packs-internal --output "$TMP/private-reference.md" >/dev/null
   cmp "$TMP/private-reference.md" "$PRIVATE/PACK_REFERENCE.md"
   cmp "$TMP/private-reference.md" "$PRIVATE/docs/pack-reference.md"
+  "$BIN" operation docs --catalog "$PRIVATE" --catalog-name bofbench-packs-internal --output "$TMP/private-operation-reference.md" >/dev/null
+  cmp "$TMP/private-operation-reference.md" "$PRIVATE/OPERATION_REFERENCE.md"
+  cmp "$TMP/private-operation-reference.md" "$PRIVATE/docs/operation-reference.md"
   mkdocs build --strict -f "$PRIVATE/mkdocs.yml" --site-dir "$TMP/private-site"
 fi
 

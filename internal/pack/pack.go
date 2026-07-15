@@ -814,6 +814,36 @@ func builtins() []Resolved {
 	moduleExports.AnalysisSignatures = []AnalysisSignature{{ID: "module_export_inventory", Name: "Selected module export inventory", Summary: "Select one loaded process module and enumerate bounded PE export names, ordinals, and addresses.", Steps: []AnalysisStep{{Action: "select a loaded process module", APIs: []string{"CreateToolhelp32Snapshot", "Module32FirstA", "Module32NextA"}}, {Action: "open and read the selected process image", APIs: []string{"OpenProcess", "ReadProcessMemory"}}}, RequiredStrings: []string{"[module-export-inventory]"}, Effects: []string{"reads process module metadata"}, Requirements: []string{"an exact target PID", "process query and VM-read access"}}}
 	moduleExports.ProofCases = []ProofCase{{ID: "target-module-exports", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID", "module_filter": "", "module_base": "$TARGET_MODULE_BASE", "result_limit": "16"}, Expect: ProofExpectation{Tag: "module-export-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
 	byID["module-export-inventory"] = moduleExports
+	moduleSections := byID["module-section-inventory"]
+	moduleSections.Title = "Module Section Inventory"
+	moduleSections.Capabilities = []string{"bounded PE section inventory for one selected process module"}
+	moduleSections.Effects = []string{"reads process module metadata", "reads process memory"}
+	moduleSections.Arguments = []Argument{{Name: "target_pid", Type: "int", Required: true, Description: "exact process identifier"}, {Name: "module_filter", Type: "string", Default: "", Description: "case-insensitive module substring"}, {Name: "module_base", Type: "string", Default: "", Description: "optional exact module base"}, {Name: "result_limit", Type: "int", Default: "32", Description: "maximum section rows"}}
+	moduleSections.ExpectedAnalysis = []string{"module_section_inventory"}
+	moduleSections.OutputFields = []string{"target_pid", "module", "base", "section", "rva", "virtual_size", "raw_size", "characteristics", "shown", "limit", "status"}
+	moduleSections.AnalysisSignatures = []AnalysisSignature{{ID: "module_section_inventory", Name: "Selected module PE section inventory", Summary: "Select one loaded process module and read its bounded PE section table.", Steps: []AnalysisStep{{Action: "select loaded process module", APIs: []string{"CreateToolhelp32Snapshot", "Module32FirstW", "Module32NextW"}}, {Action: "read PE section table", APIs: []string{"OpenProcess", "ReadProcessMemory"}}}, RequiredStrings: []string{"[module-section-inventory]"}, Effects: []string{"reads process module metadata", "reads process memory"}, Requirements: []string{"an exact target PID", "process query and VM-read access"}}}
+	moduleSections.ProofCases = []ProofCase{{ID: "target-module-sections", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID", "module_filter": "", "module_base": "$TARGET_MODULE_BASE", "result_limit": "16"}, Expect: ProofExpectation{Tag: "module-section-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["module-section-inventory"] = moduleSections
+	processHeaps := byID["process-heap-inventory"]
+	processHeaps.Title = "Process Heap Inventory"
+	processHeaps.Capabilities = []string{"bounded heap and heap-entry inventory for one process"}
+	processHeaps.Effects = []string{"reads process heap metadata"}
+	processHeaps.Arguments = []Argument{{Name: "target_pid", Type: "int", Required: true}, {Name: "result_limit", Type: "int", Default: "64"}}
+	processHeaps.ExpectedAnalysis = []string{"process_heap_inventory"}
+	processHeaps.OutputFields = []string{"target_pid", "heap", "flags", "address", "size", "entry_flags", "heaps", "shown", "limit", "status"}
+	processHeaps.AnalysisSignatures = []AnalysisSignature{{ID: "process_heap_inventory", Name: "Selected process heap inventory", Summary: "Snapshot one selected process and enumerate bounded heap and entry metadata.", Steps: []AnalysisStep{{Action: "snapshot process heaps", APIs: []string{"CreateToolhelp32Snapshot", "Heap32ListFirst", "Heap32ListNext"}}, {Action: "enumerate heap entries", APIs: []string{"Heap32First", "Heap32Next"}}}, RequiredStrings: []string{"[process-heap-inventory]"}, Effects: []string{"reads process heap metadata"}, Requirements: []string{"an exact target PID"}}}
+	processHeaps.ProofCases = []ProofCase{{ID: "target-heaps", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID", "result_limit": "32"}, Expect: ProofExpectation{Tag: "process-heap-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["process-heap-inventory"] = processHeaps
+	processSecurity := byID["process-security-inventory"]
+	processSecurity.Title = "Process Security Inventory"
+	processSecurity.Capabilities = []string{"process owner, group, DACL, inheritance, and security-control inventory"}
+	processSecurity.Effects = []string{"reads process security metadata"}
+	processSecurity.Arguments = []Argument{{Name: "target_pid", Type: "int", Required: true}}
+	processSecurity.ExpectedAnalysis = []string{"process_security_inventory"}
+	processSecurity.OutputFields = []string{"target_pid", "owner", "group", "dacl_present", "ace_count", "protected", "auto_inherited", "control", "revision", "status"}
+	processSecurity.AnalysisSignatures = []AnalysisSignature{{ID: "process_security_inventory", Name: "Selected process security inventory", Summary: "Open one selected process and read owner, group, DACL, inheritance, and security-control metadata.", Steps: []AnalysisStep{{Action: "open selected process security descriptor", APIs: []string{"OpenProcess", "GetSecurityInfo"}}, {Action: "render security principals and controls", APIs: []string{"ConvertSidToStringSidA", "GetSecurityDescriptorControl"}}}, RequiredStrings: []string{"[process-security-inventory]"}, Effects: []string{"reads process security metadata"}, Requirements: []string{"READ_CONTROL on the selected process"}}}
+	processSecurity.ProofCases = []ProofCase{{ID: "target-security", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID"}, Expect: ProofExpectation{Tag: "process-security-inventory", Fields: map[string]string{"status": "complete"}}}}
+	byID["process-security-inventory"] = processSecurity
 	accountPolicy := byID["local-account-policy-inventory"]
 	accountPolicy.Title = "Local Account Policy Inventory"
 	accountPolicy.Capabilities = []string{"local password policy inventory", "local lockout and authentication-role inventory"}
@@ -1149,6 +1179,8 @@ func validate(document Document, root string) error {
 	}
 	allowedPlaceholders := map[string]bool{
 		"$TARGET_PID": true, "$TARGET_TID": true, "$TARGET_HANDLE": true,
+		"$TARGET_ARCH": true, "$TARGET_MODULE_BASE": true, "$TARGET_MODULE_PATH": true, "$EXECUTION_ADDRESS": true,
+		"$X86_TARGET_PID": true, "$X86_TARGET_TID": true, "$X86_TARGET_MODULE_BASE": true, "$X86_TARGET_MODULE_PATH": true,
 		"$MEMORY_ADDRESS": true, "$MEMORY_SIZE": true, "$MEMORY_SHA256": true, "$CANARY_PATH": true, "$CANARY_SHA256": true,
 		"$MEMORY_WRITE_ADDRESS": true, "$MEMORY_WRITE_SIZE": true, "$MEMORY_WRITE_SHA256": true,
 		"$MEMORY_PROTECTION_ADDRESS": true, "$MEMORY_PROTECTION_SIZE": true, "$MEMORY_PROTECTION": true,
@@ -1161,7 +1193,7 @@ func validate(document Document, root string) error {
 		"$REMOTE_REGISTRY_HIVE": true, "$REMOTE_REGISTRY_PATH": true, "$REMOTE_REGISTRY_NAME": true, "$REMOTE_REGISTRY_SHA256": true, "$REMOTE_REGISTRY_SIZE": true,
 		"$REMOTE_STAGE_SHARE": true, "$REMOTE_STAGE_RELATIVE_ROOT": true, "$REMOTE_STAGE_LOCAL_ROOT": true,
 		"$REMOTE_STAGE_RELATIVE": true, "$REMOTE_STAGE_LOCAL_PATH": true, "$REMOTE_TASK_NAME": true, "$REMOTE_TASK_MARKER_PATH": true,
-		"$PAYLOAD_RET_PATH": true,
+		"$PAYLOAD_RET_PATH": true, "$PAYLOAD_RET_SHA256": true, "$MEMORY_NEEDLE_PATH": true,
 	}
 	seenProofs := map[string]bool{}
 	for _, proof := range document.ProofCases {

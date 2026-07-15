@@ -125,6 +125,7 @@ func rootCommand(stdout, stderr io.Writer) *cobra.Command {
 		commandGroup("analyze", analyzeCommand(stdout)),
 		commandGroup("analyze", preflightCommand(stdout)),
 		commandGroup("operate", runCommand(stdout)),
+		commandGroup("operate", operationCommand(stdout)),
 		commandGroup("operate", testCommand(stdout)),
 		commandGroup("operate", exportCommand(stdout)),
 		commandGroup("operate", sliverCommand(stdout)),

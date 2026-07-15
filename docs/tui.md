@@ -17,6 +17,7 @@ The terminal workbench invokes the same commands as the CLI; it does not use wra
 | Packs | Browse catalogs, inspect capabilities, and compose the selected pack into a project. |
 | Prove | Execute a declared native, lab, Sliver, or Cobalt Strike proof. |
 | Topology | Inspect execution, target, and domain-controller role mappings. |
+| Operations | Select a linear pack workflow, enter typed inputs, run it, and inspect resume/cleanup commands. |
 
 Controls:
 
@@ -25,9 +26,9 @@ Controls:
 | `tab`, arrows | Switch workspace or selection. |
 | `j`, `k` | Move within projects, objects, lab actions, or results. |
 | `enter` | Execute the selected BOFBench action. |
-| `v` | Cycle native, lab, Sliver, and Cobalt Strike in Run. |
-| `l` | Cycle configured lab profiles in Run and Prove. |
-| `[`, `]` | Select a typed project argument. |
+| `v` | Cycle native, lab, Sliver, and Cobalt Strike in Run, Prove, and Operations. |
+| `l` | Cycle configured lab profiles in Run, Prove, and Operations. |
+| `[`, `]` | Select a typed project or operation argument. |
 | `e` | Edit the selected argument; sensitive values are masked. |
 | `c` | Compose the selected pack into the selected project. |
 | `f`, `t`, `a` | Filter Results by status, runtime, or selected artifact. |

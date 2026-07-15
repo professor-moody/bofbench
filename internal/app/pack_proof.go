@@ -490,6 +490,10 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 	if err := os.WriteFile(retPayload, []byte{0xc3}, 0o600); err != nil {
 		return report, err
 	}
+	memoryNeedle := filepath.Join(work, "memory-needle.bin")
+	if err := os.WriteFile(memoryNeedle, []byte("BOFBenchOperationNeedle"), 0o600); err != nil {
+		return report, err
+	}
 	targets := map[string]lab.TargetReport{}
 	targetOwned := map[string]bool{}
 	proofWorkspaceReady := false
@@ -627,6 +631,7 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 			}
 			placeholders := proofPlaceholderValues(target, report.RunID, proofSecret)
 			placeholders["$PAYLOAD_RET_PATH"] = retPayload
+			placeholders["$MEMORY_NEEDLE_PATH"] = memoryNeedle
 			placeholders["$PROOF_SECRET_PATH"] = secretPath
 			expectation, err := resolveProofExpectation(proof.Expect, placeholders)
 			if err != nil {
@@ -876,7 +881,8 @@ func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) 
 	return map[string]string{
 		"$TARGET_PID": strconv.FormatUint(uint64(target.State.PID), 10), "$TARGET_TID": strconv.FormatUint(uint64(target.State.AlertableTID), 10), "$TARGET_HANDLE": target.State.KnownHandle,
 		"$TARGET_ARCH": target.State.Architecture, "$TARGET_MODULE_BASE": target.State.KnownModuleBase, "$TARGET_MODULE_PATH": target.State.KnownModulePath,
-		"$X86_TARGET_PID": strconv.Itoa(target.State.X86PID), "$X86_TARGET_TID": strconv.FormatUint(uint64(target.State.X86AlertableTID), 10), "$X86_TARGET_MODULE_BASE": target.State.X86KnownModuleBase, "$X86_TARGET_MODULE_PATH": target.State.X86KnownModulePath,
+		"$EXECUTION_ADDRESS": target.State.ExecutionAddress,
+		"$X86_TARGET_PID":    strconv.Itoa(target.State.X86PID), "$X86_TARGET_TID": strconv.FormatUint(uint64(target.State.X86AlertableTID), 10), "$X86_TARGET_MODULE_BASE": target.State.X86KnownModuleBase, "$X86_TARGET_MODULE_PATH": target.State.X86KnownModulePath,
 		"$MEMORY_ADDRESS": target.State.MemoryCanaryAddress, "$MEMORY_SIZE": strconv.FormatUint(uint64(target.State.MemoryCanarySize), 10),
 		"$MEMORY_SHA256":        target.State.MemoryCanarySHA256,
 		"$MEMORY_WRITE_ADDRESS": target.State.MemoryWriteAddress, "$MEMORY_WRITE_SIZE": strconv.Itoa(target.State.MemoryWriteSize), "$MEMORY_WRITE_SHA256": target.State.MemoryWriteSHA256,
