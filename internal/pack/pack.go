@@ -23,7 +23,7 @@ import (
 
 const (
 	Schema               = "bofbench.pack"
-	SchemaVersion        = 3
+	SchemaVersion        = 4
 	MinimumSchemaVersion = 1
 	LockSchema           = "bofbench.pack-lock"
 	LockSchemaVersion    = 1
@@ -34,12 +34,13 @@ var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 var placeholderPattern = regexp.MustCompile(`\$[A-Z][A-Z0-9_]*`)
 
 type Argument struct {
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-	Description string `json:"description,omitempty"`
-	Required    bool   `json:"required,omitempty"`
-	Default     string `json:"default,omitempty"`
-	Sensitive   bool   `json:"sensitive,omitempty"`
+	Name          string `json:"name"`
+	Type          string `json:"type"`
+	Description   string `json:"description,omitempty"`
+	Required      bool   `json:"required,omitempty"`
+	Default       string `json:"default,omitempty"`
+	Sensitive     bool   `json:"sensitive,omitempty"`
+	TopologyValue string `json:"topology_value,omitempty"`
 }
 
 type Source struct {
@@ -81,6 +82,12 @@ type ProofStateCheck struct {
 	Kind       string            `json:"kind"`
 	Expect     string            `json:"expect"`
 	Parameters map[string]string `json:"parameters"`
+	Role       string            `json:"role,omitempty"`
+}
+
+type ProofCapture struct {
+	Tag   string `json:"tag"`
+	Field string `json:"field"`
 }
 
 type ProofCleanupStep struct {
@@ -89,13 +96,15 @@ type ProofCleanupStep struct {
 }
 
 type ProofCase struct {
-	ID           string             `json:"id"`
-	Via          []string           `json:"via"`
-	Arguments    map[string]string  `json:"arguments,omitempty"`
-	Expect       ProofExpectation   `json:"expect"`
-	Cleanup      bool               `json:"cleanup,omitempty"`
-	CleanupSteps []ProofCleanupStep `json:"cleanup_steps,omitempty"`
-	StateChecks  []ProofStateCheck  `json:"state_checks,omitempty"`
+	ID           string                  `json:"id"`
+	Via          []string                `json:"via"`
+	Arguments    map[string]string       `json:"arguments,omitempty"`
+	Expect       ProofExpectation        `json:"expect"`
+	Cleanup      bool                    `json:"cleanup,omitempty"`
+	CleanupSteps []ProofCleanupStep      `json:"cleanup_steps,omitempty"`
+	StateChecks  []ProofStateCheck       `json:"state_checks,omitempty"`
+	Roles        []string                `json:"roles,omitempty"`
+	Captures     map[string]ProofCapture `json:"captures,omitempty"`
 }
 
 type Document struct {
@@ -724,6 +733,33 @@ func builtins() []Resolved {
 	threadInventory.AnalysisSignatures = []AnalysisSignature{{ID: "thread_inventory", Name: "Thread inventory", Summary: "Enumerate thread identifiers owned by one selected process.", Steps: []AnalysisStep{{Action: "create thread snapshot", APIs: []string{"CreateToolhelp32Snapshot"}}, {Action: "enumerate threads", APIs: []string{"Thread32First"}}}, Effects: []string{"reads process metadata"}, Requirements: []string{"an exact target PID"}}}
 	threadInventory.ProofCases = []ProofCase{{ID: "target-threads", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID", "result_limit": "16"}, Expect: ProofExpectation{Tag: "thread-inventory", Fields: map[string]string{"status": "complete", "pid": "*"}}}}
 	byID["thread-inventory"] = threadInventory
+	mitigations := byID["process-mitigation-inventory"]
+	mitigations.Title = "Process Mitigation Inventory"
+	mitigations.Capabilities = []string{"bounded process mitigation policy inventory", "DEP, ASLR, dynamic-code, CFG, signature, and child-process policy discovery"}
+	mitigations.Arguments = []Argument{{Name: "target_pid", Type: "int", Description: "exact process identifier", Required: true}}
+	mitigations.ExpectedAnalysis = []string{"process_mitigation_inventory"}
+	mitigations.OutputFields = []string{"target_pid", "dep", "aslr", "dynamic_code", "cfg", "signature", "child_process", "policies", "status"}
+	mitigations.AnalysisSignatures = []AnalysisSignature{{ID: "process_mitigation_inventory", Name: "Process mitigation inventory", Summary: "Open one selected process and inspect its configured mitigation policies.", Steps: []AnalysisStep{{Action: "open selected process", APIs: []string{"OpenProcess"}}, {Action: "read mitigation policies", APIs: []string{"GetProcessMitigationPolicy"}}}, Effects: []string{"reads process security metadata"}, Requirements: []string{"an exact target PID", "process query access"}}}
+	mitigations.ProofCases = []ProofCase{{ID: "target-policies", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID"}, Expect: ProofExpectation{Tag: "process-mitigation-inventory", Fields: map[string]string{"status": "complete", "target_pid": "*"}}}}
+	byID["process-mitigation-inventory"] = mitigations
+	memoryMap := byID["process-memory-map"]
+	memoryMap.Title = "Process Memory Map"
+	memoryMap.Capabilities = []string{"bounded committed-memory region inventory", "mapped image and protection discovery"}
+	memoryMap.Arguments = []Argument{{Name: "target_pid", Type: "int", Description: "exact process identifier", Required: true}, {Name: "result_limit", Type: "int", Description: "maximum committed regions (1-512)", Default: "64"}}
+	memoryMap.ExpectedAnalysis = []string{"process_memory_map"}
+	memoryMap.OutputFields = []string{"target_pid", "base", "size", "protect", "type", "mapped", "shown", "limit", "status"}
+	memoryMap.AnalysisSignatures = []AnalysisSignature{{ID: "process_memory_map", Name: "Process memory-map inventory", Summary: "Open one process and enumerate bounded committed regions with protection and mapped-image context.", Steps: []AnalysisStep{{Action: "open selected process", APIs: []string{"OpenProcess"}}, {Action: "query virtual-memory regions", APIs: []string{"VirtualQueryEx"}}, {Action: "resolve mapped images", APIs: []string{"GetMappedFileNameA", "GetMappedFileNameW"}}}, Effects: []string{"reads process memory metadata"}, Requirements: []string{"an exact target PID", "process query and VM-read access"}}}
+	memoryMap.ProofCases = []ProofCase{{ID: "target-map", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID", "result_limit": "16"}, Expect: ProofExpectation{Tag: "process-memory-map", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["process-memory-map"] = memoryMap
+	threadStarts := byID["thread-start-inventory"]
+	threadStarts.Title = "Thread Start Inventory"
+	threadStarts.Capabilities = []string{"bounded thread start-address inventory", "thread start region and mapped-image discovery"}
+	threadStarts.Arguments = []Argument{{Name: "target_pid", Type: "int", Description: "exact process identifier", Required: true}, {Name: "result_limit", Type: "int", Description: "maximum threads (1-512)", Default: "64"}}
+	threadStarts.ExpectedAnalysis = []string{"thread_start_inventory"}
+	threadStarts.OutputFields = []string{"target_pid", "tid", "start", "state", "protect", "type", "mapped", "shown", "limit", "status"}
+	threadStarts.AnalysisSignatures = []AnalysisSignature{{ID: "thread_start_inventory", Name: "Thread start-address inventory", Summary: "Enumerate threads in one process and correlate their start addresses with containing regions and images.", Steps: []AnalysisStep{{Action: "enumerate process threads", APIs: []string{"CreateToolhelp32Snapshot", "Thread32First"}}, {Action: "query thread start address", APIs: []string{"NtQueryInformationThread"}}, {Action: "query containing memory region", APIs: []string{"VirtualQueryEx"}}}, Effects: []string{"reads thread and process memory metadata"}, Requirements: []string{"an exact target PID", "thread and process query access"}}}
+	threadStarts.ProofCases = []ProofCase{{ID: "target-starts", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID", "result_limit": "16"}, Expect: ProofExpectation{Tag: "thread-start-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["thread-start-inventory"] = threadStarts
 	pipeInventory := byID["named-pipe-inventory"]
 	pipeInventory.Title = "Named Pipe Inventory"
 	pipeInventory.Capabilities = []string{"bounded named-pipe discovery"}
@@ -742,6 +778,34 @@ func builtins() []Resolved {
 	ldapQuery.OutputFields = []string{"row", "dn", "attribute", "value", "shown", "limit", "server", "base", "filter", "status"}
 	ldapQuery.AnalysisSignatures = []AnalysisSignature{{ID: "ldap_directory_query", Name: "LDAP directory query", Summary: "Discover a domain controller, authenticate with the current context, and issue a bounded LDAP search.", Steps: []AnalysisStep{{Action: "discover domain controller", APIs: []string{"DsGetDcNameA", "DsGetDcNameW"}}, {Action: "connect to LDAP", APIs: []string{"ldap_connect"}}, {Action: "bind current context", APIs: []string{"ldap_bind_sA", "ldap_bind_sW"}}, {Action: "search directory", APIs: []string{"ldap_search_sA", "ldap_search_sW", "ldap_search_ext_sA", "ldap_search_ext_sW"}}}, Effects: []string{"reaches a domain controller", "reads directory data"}, Requirements: []string{"domain connectivity", "directory read access"}}}
 	byID["ldap-query"] = ldapQuery
+	domainLDAP := func(id, title, summary, capability, filter, attributes string) Document {
+		document := baseBuiltin(id, title, summary, []string{"ldap-query"}, []string{"reads directory data", "reaches a domain controller"})
+		document.SchemaVersion = 4
+		document.Capabilities = []string{capability}
+		document.Network = "domain controller"
+		document.Arguments = []Argument{
+			{Name: "server", Type: "string", Description: "exact domain controller; topology supplies this when omitted", TopologyValue: "domain_controller.computer_name"},
+			{Name: "base_dn", Type: "string", Description: "LDAP search base; topology supplies the domain base DN when omitted", TopologyValue: "domain.base_dn"},
+			{Name: "filter", Type: "string", Description: "bounded LDAP filter", Default: filter},
+			{Name: "attributes", Type: "string", Description: "comma-separated attributes (maximum eight)", Default: attributes},
+			{Name: "result_limit", Type: "int", Description: "maximum directory entries (1-100)", Default: "25"},
+		}
+		document.ExpectedAnalysis = []string{id}
+		document.OutputFields = []string{"row", "dn", "attribute", "value", "shown", "limit", "server", "base", "filter", "status"}
+		document.AnalysisSignatures = []AnalysisSignature{{ID: id, Name: title, Summary: summary, Steps: []AnalysisStep{{Action: "connect and bind to LDAP", APIs: []string{"ldap_connect", "ldap_bind_sA", "ldap_bind_sW"}}, {Action: "search selected directory objects", APIs: []string{"ldap_search_sA", "ldap_search_sW", "ldap_search_ext_sA", "ldap_search_ext_sW"}}}, RequiredStrings: []string{"[ldap-query]"}, Effects: []string{"reaches a domain controller", "reads directory data"}, Requirements: []string{"domain connectivity", "directory read access"}}}
+		document.ProofCases = []ProofCase{{ID: "domain-topology", Via: []string{"lab", "sliver"}, Roles: []string{"execution", "domain_controller"}, Arguments: map[string]string{"filter": filter, "attributes": attributes, "result_limit": "25"}, Expect: ProofExpectation{Tag: "ldap-query", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+		return document
+	}
+	byID["domain-controller-inventory"] = domainLDAP("domain_controller_inventory", "Domain Controller Inventory", "Enumerate bounded domain-controller computer accounts and operating-system metadata", "bounded domain-controller inventory", "(&(objectCategory=computer)(userAccountControl:1.2.840.113556.1.4.803:=8192))", "dNSHostName,operatingSystem,operatingSystemVersion")
+	byID["domain-controller-inventory"] = func(document Document) Document { document.ID = "domain-controller-inventory"; return document }(byID["domain-controller-inventory"])
+	byID["ldap-account-inventory"] = domainLDAP("ldap_account_inventory", "LDAP Account Inventory", "Enumerate bounded domain account identity and control metadata", "bounded LDAP account inventory", "(&(objectCategory=person)(objectClass=user))", "sAMAccountName,userPrincipalName,userAccountControl")
+	byID["ldap-account-inventory"] = func(document Document) Document { document.ID = "ldap-account-inventory"; return document }(byID["ldap-account-inventory"])
+	byID["ldap-spn-inventory"] = domainLDAP("ldap_spn_inventory", "LDAP SPN Inventory", "Enumerate bounded accounts and their registered service-principal names", "bounded LDAP SPN inventory", "(servicePrincipalName=*)", "sAMAccountName,servicePrincipalName")
+	byID["ldap-spn-inventory"] = func(document Document) Document { document.ID = "ldap-spn-inventory"; return document }(byID["ldap-spn-inventory"])
+	byID["ldap-delegation-inventory"] = domainLDAP("ldap_delegation_inventory", "LDAP Delegation Inventory", "Enumerate bounded constrained, resource-based, and unconstrained delegation metadata", "bounded LDAP delegation inventory", "(|(msDS-AllowedToDelegateTo=*)(msDS-AllowedToActOnBehalfOfOtherIdentity=*)(userAccountControl:1.2.840.113556.1.4.803:=524288))", "sAMAccountName,userAccountControl,msDS-AllowedToDelegateTo,msDS-AllowedToActOnBehalfOfOtherIdentity")
+	byID["ldap-delegation-inventory"] = func(document Document) Document { document.ID = "ldap-delegation-inventory"; return document }(byID["ldap-delegation-inventory"])
+	byID["domain-trust-inventory"] = domainLDAP("domain_trust_inventory", "Domain Trust Inventory", "Enumerate bounded trusted-domain direction, type, and attribute metadata", "bounded domain trust inventory", "(objectClass=trustedDomain)", "name,trustDirection,trustType,trustAttributes")
+	byID["domain-trust-inventory"] = func(document Document) Document { document.ID = "domain-trust-inventory"; return document }(byID["domain-trust-inventory"])
 	securityPackages := byID["security-package-inventory"]
 	securityPackages.Title = "Security Package Inventory"
 	securityPackages.Capabilities = []string{"Windows authentication package discovery", "SSPI capability inventory"}
@@ -910,14 +974,23 @@ func validate(document Document, root string) error {
 		problems = append(problems, "analysis_signatures and proof_cases require schema version 2")
 	}
 	usesV3 := len(document.SensitiveOutputFields) > 0 || len(document.CleanupArguments) > 0
+	usesV4 := false
 	for _, argument := range document.Arguments {
 		usesV3 = usesV3 || argument.Sensitive
+		usesV4 = usesV4 || argument.TopologyValue != ""
 	}
 	for _, proof := range document.ProofCases {
 		usesV3 = usesV3 || proof.Expect.Payload != nil || len(proof.StateChecks) > 0 || len(proof.CleanupSteps) > 0
+		usesV4 = usesV4 || len(proof.Roles) > 0 || len(proof.Captures) > 0
+		for _, check := range proof.StateChecks {
+			usesV4 = usesV4 || check.Role != ""
+		}
 	}
 	if document.SchemaVersion < 3 && usesV3 {
 		problems = append(problems, "sensitive fields, cleanup mappings, payload expectations, state checks, and cleanup steps require schema version 3")
+	}
+	if document.SchemaVersion < 4 && usesV4 {
+		problems = append(problems, "topology defaults, proof roles, captures, and role-specific state checks require schema version 4")
 	}
 	if !idPattern.MatchString(document.ID) {
 		problems = append(problems, "id must contain lowercase letters, numbers, dot, underscore, or hyphen")
@@ -945,6 +1018,11 @@ func validate(document Document, root string) error {
 		seenArgs[argument.Name] = true
 		if !contains([]string{"string", "wstring", "int", "short", "bytes", "file"}, argument.Type) {
 			problems = append(problems, fmt.Sprintf("argument %s has unsupported type %q", argument.Name, argument.Type))
+		}
+		if argument.TopologyValue != "" && !contains([]string{
+			"execution.computer_name", "target.computer_name", "domain_controller.computer_name", "domain.name", "domain.base_dn",
+		}, argument.TopologyValue) {
+			problems = append(problems, fmt.Sprintf("argument %s has unsupported topology_value %q", argument.Name, argument.TopologyValue))
 		}
 	}
 	for _, relative := range document.Source.HeaderFragments {
@@ -994,23 +1072,18 @@ func validate(document Document, root string) error {
 	allowedPlaceholders := map[string]bool{
 		"$TARGET_PID": true, "$TARGET_TID": true, "$TARGET_HANDLE": true,
 		"$MEMORY_ADDRESS": true, "$MEMORY_SIZE": true, "$MEMORY_SHA256": true, "$CANARY_PATH": true, "$CANARY_SHA256": true,
+		"$MEMORY_WRITE_ADDRESS": true, "$MEMORY_WRITE_SIZE": true, "$MEMORY_WRITE_SHA256": true,
+		"$MEMORY_PROTECTION_ADDRESS": true, "$MEMORY_PROTECTION_SIZE": true, "$MEMORY_PROTECTION": true,
 		"$CREDENTIAL_TARGET": true, "$CREDENTIAL_SHA256": true, "$CREDENTIAL_SIZE": true,
 		"$DPAPI_USER_PATH": true, "$DPAPI_USER_SHA256": true, "$DPAPI_MACHINE_PATH": true, "$DPAPI_MACHINE_SHA256": true,
 		"$VAULT_GUID": true, "$VAULT_RESOURCE": true, "$VAULT_IDENTITY": true, "$VAULT_SHA256": true, "$VAULT_SIZE": true,
 		"$CERT_THUMBPRINT": true, "$CERT_STORE": true, "$CERT_SUBJECT": true,
 		"$LAB_HOST": true, "$SERVICE_BINARY": true, "$WMI_MARKER_PATH": true, "$TEMP": true, "$RUN_ID": true, "$PROOF_SECRET": true,
-		"$PROOF_SECRET_SHA256": true, "$PROOF_SECRET_PATH": true,
+		"$PROOF_SECRET_SHA256": true, "$PROOF_SECRET_CRLF_SHA256": true, "$PROOF_SECRET_PATH": true,
 		"$REMOTE_REGISTRY_HIVE": true, "$REMOTE_REGISTRY_PATH": true, "$REMOTE_REGISTRY_NAME": true, "$REMOTE_REGISTRY_SHA256": true, "$REMOTE_REGISTRY_SIZE": true,
 		"$REMOTE_STAGE_SHARE": true, "$REMOTE_STAGE_RELATIVE_ROOT": true, "$REMOTE_STAGE_LOCAL_ROOT": true,
 		"$REMOTE_STAGE_RELATIVE": true, "$REMOTE_STAGE_LOCAL_PATH": true, "$REMOTE_TASK_NAME": true, "$REMOTE_TASK_MARKER_PATH": true,
 		"$PAYLOAD_RET_PATH": true,
-	}
-	validatePlaceholders := func(proofID, value string) {
-		for _, placeholder := range placeholderPattern.FindAllString(value, -1) {
-			if !allowedPlaceholders[placeholder] {
-				problems = append(problems, fmt.Sprintf("proof case %s uses unsupported placeholder %q", proofID, placeholder))
-			}
-		}
 	}
 	seenProofs := map[string]bool{}
 	for _, proof := range document.ProofCases {
@@ -1018,6 +1091,37 @@ func validate(document Document, root string) error {
 			problems = append(problems, fmt.Sprintf("invalid or duplicate proof case id %q", proof.ID))
 		}
 		seenProofs[proof.ID] = true
+		proofPlaceholders := make(map[string]bool, len(allowedPlaceholders)+len(proof.Captures))
+		for key, value := range allowedPlaceholders {
+			proofPlaceholders[key] = value
+		}
+		seenRoles := map[string]bool{}
+		for _, role := range proof.Roles {
+			if !contains([]string{"execution", "target", "domain_controller"}, role) || seenRoles[role] {
+				problems = append(problems, fmt.Sprintf("proof case %s has invalid or duplicate role %q", proof.ID, role))
+			}
+			seenRoles[role] = true
+		}
+		for placeholder, capture := range proof.Captures {
+			if !placeholderPattern.MatchString(placeholder) || placeholderPattern.FindString(placeholder) != placeholder || !strings.HasPrefix(placeholder, "$") {
+				problems = append(problems, fmt.Sprintf("proof case %s has invalid capture placeholder %q", proof.ID, placeholder))
+				continue
+			}
+			if proofPlaceholders[placeholder] {
+				problems = append(problems, fmt.Sprintf("proof case %s capture %q conflicts with a built-in placeholder", proof.ID, placeholder))
+			}
+			if !idPattern.MatchString(capture.Tag) || !idPattern.MatchString(capture.Field) {
+				problems = append(problems, fmt.Sprintf("proof case %s capture %s requires a valid tag and field", proof.ID, placeholder))
+			}
+			proofPlaceholders[placeholder] = true
+		}
+		validateProofPlaceholders := func(value string) {
+			for _, placeholder := range placeholderPattern.FindAllString(value, -1) {
+				if !proofPlaceholders[placeholder] {
+					problems = append(problems, fmt.Sprintf("proof case %s uses unsupported placeholder %q", proof.ID, placeholder))
+				}
+			}
+		}
 		if len(proof.Via) == 0 || !idPattern.MatchString(proof.Expect.Tag) {
 			problems = append(problems, fmt.Sprintf("proof case %s requires via and a valid expected tag", proof.ID))
 		}
@@ -1030,7 +1134,7 @@ func validate(document Document, root string) error {
 			if !seenArgs[name] {
 				problems = append(problems, fmt.Sprintf("proof case %s uses unknown argument %q", proof.ID, name))
 			}
-			validatePlaceholders(proof.ID, value)
+			validateProofPlaceholders(value)
 		}
 		if proof.Cleanup && document.CleanupPack == "" {
 			problems = append(problems, fmt.Sprintf("proof case %s requests cleanup but the pack has no cleanup companion", proof.ID))
@@ -1042,20 +1146,22 @@ func validate(document Document, root string) error {
 			if !idPattern.MatchString(payload.Tag) || !idPattern.MatchString(payload.Field) || !contains([]string{"hex", "base64"}, payload.Encoding) || strings.TrimSpace(payload.SHA256) == "" {
 				problems = append(problems, fmt.Sprintf("proof case %s has an invalid payload expectation", proof.ID))
 			}
-			validatePlaceholders(proof.ID, payload.SHA256)
+			validateProofPlaceholders(payload.SHA256)
 		}
 		for _, step := range proof.CleanupSteps {
 			if strings.TrimSpace(step.Pack) == "" {
 				problems = append(problems, fmt.Sprintf("proof case %s cleanup step requires pack", proof.ID))
 			}
 			for _, value := range step.Arguments {
-				validatePlaceholders(proof.ID, value)
+				validateProofPlaceholders(value)
 			}
 		}
 		stateParameters := map[string][]string{
 			"file": {"path"}, "startup_file": {"name"}, "registry_value": {"hive", "path", "name"}, "service": {"name"},
 			"scheduled_task": {"name"}, "credential": {"target"}, "certificate": {"scope", "store", "thumbprint"},
 			"dpapi_file": {"path", "sha256"}, "pfx": {"path", "password", "thumbprint"},
+			"process_memory": {"pid", "address", "size", "sha256"}, "process_protection": {"pid", "address", "protection"},
+			"process": {"pid", "image", "marker"},
 		}
 		for _, check := range proof.StateChecks {
 			required, ok := stateParameters[check.Kind]
@@ -1063,13 +1169,16 @@ func validate(document Document, root string) error {
 				problems = append(problems, fmt.Sprintf("proof case %s has an invalid state check", proof.ID))
 				continue
 			}
+			if check.Role != "" && !contains([]string{"execution", "target", "domain_controller"}, check.Role) {
+				problems = append(problems, fmt.Sprintf("proof case %s state check has invalid role %q", proof.ID, check.Role))
+			}
 			for _, key := range required {
 				if strings.TrimSpace(check.Parameters[key]) == "" {
 					problems = append(problems, fmt.Sprintf("proof case %s state check %s requires %s", proof.ID, check.Kind, key))
 				}
 			}
 			for _, value := range check.Parameters {
-				validatePlaceholders(proof.ID, value)
+				validateProofPlaceholders(value)
 			}
 		}
 	}

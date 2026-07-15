@@ -147,6 +147,39 @@ func TestPackSchemaV3SensitiveCleanupAndProofContracts(t *testing.T) {
 	}
 }
 
+func TestPackSchemaV4TopologyRolesCapturesAndStateChecks(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "pack.h"), []byte("static void pack(void) {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	document := Document{
+		Schema: Schema, SchemaVersion: 3, ID: "topology-proof", Version: "1.0.0", Title: "Topology Proof", Summary: "Schema v4 contract", Tier: "internal",
+		Capabilities: []string{"exact-host proof"}, Effects: []string{"reaches a supplied host"}, Platforms: []string{"windows"}, Architecture: []string{"x64"}, Privilege: "user", Network: "explicit host",
+		Arguments: []Argument{{Name: "target_host", Type: "wstring", TopologyValue: "target.computer_name"}}, Source: Source{HeaderFragments: []string{"pack.h"}}, OutputFields: []string{"pid", "status"}, TargetSupport: []string{"lab"},
+		ProofCases: []ProofCase{{
+			ID: "cross-host", Via: []string{"lab"}, Roles: []string{"execution", "target"}, Arguments: map[string]string{},
+			Expect:      ProofExpectation{Tag: "topology-proof", Fields: map[string]string{"status": "complete"}},
+			Captures:    map[string]ProofCapture{"$SPAWNED_PID": {Tag: "topology-proof", Field: "pid"}},
+			StateChecks: []ProofStateCheck{{Phase: "after_cleanup", Kind: "process", Expect: "absent", Role: "target", Parameters: map[string]string{"pid": "$SPAWNED_PID", "image": "cmd.exe", "marker": "BOFBench-$RUN_ID"}}},
+		}},
+	}
+	path := filepath.Join(root, "pack.json")
+	writeTestJSON(t, path, document)
+	if _, err := ValidateFile(path); err == nil || !strings.Contains(err.Error(), "require schema version 4") {
+		t.Fatalf("schema v3 accepted v4 fields: %v", err)
+	}
+	document.SchemaVersion = 4
+	writeTestJSON(t, path, document)
+	if _, err := ValidateFile(path); err != nil {
+		t.Fatalf("schema v4 contract rejected: %v", err)
+	}
+	document.ProofCases[0].StateChecks[0].Role = "directory_server"
+	writeTestJSON(t, path, document)
+	if _, err := ValidateFile(path); err == nil || !strings.Contains(err.Error(), "invalid role") {
+		t.Fatalf("invalid state-check role accepted: %v", err)
+	}
+}
+
 func TestConfiguredCatalogLifecycle(t *testing.T) {
 	configRoot := t.TempDir()
 	t.Setenv("BOFBENCH_CONFIG_HOME", configRoot)

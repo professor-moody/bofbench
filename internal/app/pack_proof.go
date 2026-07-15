@@ -73,6 +73,7 @@ type packProofReport struct {
 	evidence.Header
 	Status       string            `json:"status"`
 	Lab          string            `json:"lab,omitempty"`
+	Topology     string            `json:"topology,omitempty"`
 	Runtime      string            `json:"runtime"`
 	GeneratedAt  string            `json:"generated_at"`
 	Results      []packProofResult `json:"results"`
@@ -139,7 +140,7 @@ func packTestCommand(stdout io.Writer, load func() (*packsvc.Registry, error), c
 
 func packProveCommand(stdout io.Writer, load func() (*packsvc.Registry, error), catalogSelectors func() []string) *cobra.Command {
 	var all bool
-	var via, labName, format string
+	var via, labName, topologyName, format string
 	cmd := &cobra.Command{
 		Use: "prove [pack]", Short: "Run declared capability proofs and cleanup through a selected runtime", Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -157,7 +158,16 @@ func packProveCommand(stdout io.Writer, load func() (*packsvc.Registry, error), 
 			if err != nil {
 				return err
 			}
-			report, proofErr := provePacks(cmd.Context(), stdout, registry, items, via, labName)
+			var topology *resolvedTopologyValues
+			if topologyName != "" {
+				resolved, topologyErr := resolveTopologyRuntimeValues(cmd.Context(), topologyName, lab.ProfilesPath())
+				if topologyErr != nil {
+					return topologyErr
+				}
+				topology = &resolved
+				labName = resolved.Topology.Execution.Name
+			}
+			report, proofErr := provePacks(cmd.Context(), stdout, registry, items, via, labName, topology)
 			if format == "json" {
 				if err := printJSON(stdout, report); err != nil {
 					return err
@@ -171,7 +181,9 @@ func packProveCommand(stdout io.Writer, load func() (*packsvc.Registry, error), 
 	cmd.Flags().BoolVar(&all, "all", false, "prove every resolved pack with a matching proof case")
 	cmd.Flags().StringVar(&via, "via", "lab", "runtime: native, lab, sliver, or cobaltstrike")
 	cmd.Flags().StringVar(&labName, "lab", "", "named lab profile for lab or Sliver proof")
+	cmd.Flags().StringVar(&topologyName, "topology", "", "named execution, target, and optional domain-controller role mapping")
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	cmd.MarkFlagsMutuallyExclusive("lab", "topology")
 	return cmd
 }
 
@@ -362,8 +374,11 @@ func unavailableCoverage(err error) bool {
 	return strings.Contains(value, "not found") || strings.Contains(value, "unavailable") || strings.Contains(value, "requires windows") || strings.Contains(value, "could not resolve compiler") || strings.Contains(value, "currently supports x64 only") || strings.Contains(value, "no live sliver session") || strings.Contains(value, "sliver session matched")
 }
 
-func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registry, items []packsvc.Resolved, via, labName string) (packProofReport, error) {
+func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registry, items []packsvc.Resolved, via, labName string, topology *resolvedTopologyValues) (packProofReport, error) {
 	report := packProofReport{Header: evidence.New("bofbench.pack-proof", "", ""), Status: "pass", Lab: labName, Runtime: via, GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
+	if topology != nil {
+		report.Topology = topology.Topology.Name
+	}
 	runDir, err := runlog.NewDir("pack-proof")
 	if err != nil {
 		return report, err
@@ -378,8 +393,9 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 	if err := os.WriteFile(retPayload, []byte{0xc3}, 0o600); err != nil {
 		return report, err
 	}
-	var target lab.TargetReport
-	targetReady, targetOwned, proofWorkspaceReady := false, false, false
+	targets := map[string]lab.TargetReport{}
+	targetOwned := map[string]bool{}
+	proofWorkspaceReady := false
 	ensureProofWorkspace := func() error {
 		if proofWorkspaceReady || (via != "lab" && via != "sliver") {
 			return nil
@@ -401,41 +417,45 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 		proofWorkspaceReady = true
 		return nil
 	}
-	ensureTarget := func() error {
+	ensureTarget := func(profileName string) (lab.TargetReport, error) {
 		if via != "lab" && via != "sliver" {
-			return nil
+			return lab.TargetReport{}, nil
 		}
-		if targetReady {
-			return ensureProofWorkspace()
+		if target, ok := targets[profileName]; ok {
+			return target, ensureProofWorkspace()
 		}
 		var output bytes.Buffer
 		statusArgs := []string{"lab", "target", "status", "--format", "json"}
-		if labName != "" {
-			statusArgs = append(statusArgs, "--lab", labName)
+		if profileName != "" {
+			statusArgs = append(statusArgs, "--lab", profileName)
 		}
+		var target lab.TargetReport
 		if statusErr := Run(statusArgs, &output, &output); statusErr == nil && json.Unmarshal(output.Bytes(), &target) == nil && target.Status == "pass" {
-			targetReady = true
-			return ensureProofWorkspace()
+			targets[profileName] = target
+			return target, ensureProofWorkspace()
 		}
 		output.Reset()
 		deployArgs := []string{"lab", "target", "deploy", "--format", "json"}
-		if labName != "" {
-			deployArgs = append(deployArgs, "--lab", labName)
+		if profileName != "" {
+			deployArgs = append(deployArgs, "--lab", profileName)
 		}
 		if err := Run(deployArgs, &output, &output); err != nil {
-			return fmt.Errorf("deploy proof target: %w: %s", err, strings.TrimSpace(output.String()))
+			return lab.TargetReport{}, fmt.Errorf("deploy proof target: %w: %s", err, strings.TrimSpace(output.String()))
 		}
 		if err := json.Unmarshal(output.Bytes(), &target); err != nil {
-			return fmt.Errorf("decode proof target: %w", err)
+			return lab.TargetReport{}, fmt.Errorf("decode proof target: %w", err)
 		}
-		targetReady, targetOwned = true, true
-		return ensureProofWorkspace()
+		targets[profileName], targetOwned[profileName] = target, true
+		return target, ensureProofWorkspace()
 	}
 	defer func() {
-		if targetOwned {
+		for profileName, owned := range targetOwned {
+			if !owned {
+				continue
+			}
 			args := []string{"lab", "target", "remove", "--format", "json"}
-			if labName != "" {
-				args = append(args, "--lab", labName)
+			if profileName != "" {
+				args = append(args, "--lab", profileName)
 			}
 			_ = Run(args, io.Discard, io.Discard)
 		}
@@ -449,9 +469,30 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 			matchedProof = true
 			report.Declared++
 			result := packProofResult{Pack: item.Qualified, Case: proof.ID, Runtime: via, Status: "pass"}
+			if containsString(proof.Roles, "domain_controller") && (topology == nil || topology.Topology.DomainController == nil) {
+				result.Status, result.Error, report.Status = "unavailable", "proof requires a domain_controller role; select a topology with a domain-controller profile", "pass_with_unavailable"
+				report.Unavailable++
+				report.Results = append(report.Results, result)
+				continue
+			}
+			fixtureProfile := labName
+			if containsString(proof.Roles, "target") {
+				if topology != nil && topology.Topology.Target == nil {
+					result.Status, result.Error, report.Status = "unavailable", "proof requires a target role; select a topology with a target profile", "pass_with_unavailable"
+					report.Unavailable++
+					report.Results = append(report.Results, result)
+					continue
+				}
+				if topology != nil {
+					fixtureProfile = topology.Topology.Target.Name
+				}
+			}
+			var target lab.TargetReport
 			if proofUsesTarget(proof) {
-				if err := ensureTarget(); err != nil {
-					result.Status, result.Error, report.Status = "unavailable", err.Error(), "pass_with_unavailable"
+				var targetErr error
+				target, targetErr = ensureTarget(fixtureProfile)
+				if targetErr != nil {
+					result.Status, result.Error, report.Status = "unavailable", targetErr.Error(), "pass_with_unavailable"
 					report.Unavailable++
 					report.Results = append(report.Results, result)
 					continue
@@ -494,7 +535,11 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 				report.Results = append(report.Results, result)
 				continue
 			}
-			arguments, err := resolveProofValues(proof.Arguments, placeholders)
+			proofArguments := proof.Arguments
+			if topology != nil {
+				proofArguments = topologyProofArguments(item.Document, proofArguments, topology.Values)
+			}
+			arguments, err := resolveProofValues(proofArguments, placeholders)
 			if err != nil {
 				result.Status, result.Error, report.Status = "fail", err.Error(), "fail"
 				report.Failed++
@@ -545,8 +590,15 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 					result.PayloadVerified = true
 				}
 			}
+			if actionSucceeded && len(proof.Captures) > 0 {
+				if err := applyProofCaptures(result.Output, proof.Captures, placeholders); err != nil {
+					result.Status, result.Error, report.Status = "fail", "capture: "+err.Error(), "fail"
+					report.Failed++
+					actionSucceeded = false
+				}
+			}
 			if actionSucceeded {
-				if count, err := verifyProofStateChecks(ctx, via, labName, proof.StateChecks, "after_run", placeholders); err != nil {
+				if count, err := verifyProofStateChecks(ctx, via, labName, topology, proof.StateChecks, "after_run", placeholders); err != nil {
 					if result.Status != "fail" {
 						result.Status, result.Error, report.Status = "fail", "state verification: "+err.Error(), "fail"
 						report.Failed++
@@ -576,7 +628,7 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 				}
 			}
 			if actionSucceeded && (proof.Cleanup || len(proof.CleanupSteps) > 0) {
-				if count, err := verifyProofStateChecks(ctx, via, labName, proof.StateChecks, "after_cleanup", placeholders); err != nil {
+				if count, err := verifyProofStateChecks(ctx, via, labName, topology, proof.StateChecks, "after_cleanup", placeholders); err != nil {
 					if result.Status != "fail" {
 						result.Status, result.Error, report.Status = "fail", "cleanup verification: "+err.Error(), "fail"
 						report.Failed++
@@ -711,6 +763,7 @@ func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) 
 		secretBytes = []byte(proofSecret)
 	}
 	secretHash := sha256.Sum256(secretBytes)
+	secretCRLFHash := sha256.Sum256([]byte(proofSecret + "\r\n"))
 	remoteRelative := strings.TrimRight(target.Fixtures.RemoteStageRelative, `\`) + `\remote-stage-` + runID + `.bin`
 	remoteLocalPath := strings.TrimRight(target.Fixtures.RemoteStageLocal, `\`) + `\remote-stage-` + runID + `.bin`
 	remoteTaskName := "BOFBench-Remote-" + runID
@@ -722,8 +775,10 @@ func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) 
 	return map[string]string{
 		"$TARGET_PID": strconv.FormatUint(uint64(target.State.PID), 10), "$TARGET_TID": strconv.FormatUint(uint64(target.State.AlertableTID), 10), "$TARGET_HANDLE": target.State.KnownHandle,
 		"$MEMORY_ADDRESS": target.State.MemoryCanaryAddress, "$MEMORY_SIZE": strconv.FormatUint(uint64(target.State.MemoryCanarySize), 10),
-		"$MEMORY_SHA256": target.State.MemoryCanarySHA256,
-		"$CANARY_PATH":   target.State.CanaryFile, "$CANARY_SHA256": target.State.CanaryFileSHA256,
+		"$MEMORY_SHA256":        target.State.MemoryCanarySHA256,
+		"$MEMORY_WRITE_ADDRESS": target.State.MemoryWriteAddress, "$MEMORY_WRITE_SIZE": strconv.Itoa(target.State.MemoryWriteSize), "$MEMORY_WRITE_SHA256": target.State.MemoryWriteSHA256,
+		"$MEMORY_PROTECTION_ADDRESS": target.State.MemoryProtectAddress, "$MEMORY_PROTECTION_SIZE": strconv.Itoa(target.State.MemoryProtectSize), "$MEMORY_PROTECTION": target.State.MemoryProtection,
+		"$CANARY_PATH": target.State.CanaryFile, "$CANARY_SHA256": target.State.CanaryFileSHA256,
 		"$CREDENTIAL_TARGET": target.Fixtures.CredentialTarget, "$CREDENTIAL_SHA256": target.Fixtures.CredentialSHA256, "$CREDENTIAL_SIZE": strconv.Itoa(target.Fixtures.CredentialSize),
 		"$DPAPI_USER_PATH": target.Fixtures.DPAPIUserPath, "$DPAPI_USER_SHA256": target.Fixtures.DPAPIUserSHA256,
 		"$DPAPI_MACHINE_PATH": target.Fixtures.DPAPIMachinePath, "$DPAPI_MACHINE_SHA256": target.Fixtures.DPAPIMachineSHA256,
@@ -732,8 +787,9 @@ func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) 
 		"$CERT_THUMBPRINT": target.Fixtures.CertificateThumbprint, "$CERT_STORE": target.Fixtures.CertificateStore, "$CERT_SUBJECT": target.Fixtures.CertificateSubject,
 		"$LAB_HOST": labHost, "$SERVICE_BINARY": target.ServiceBinary, "$WMI_MARKER_PATH": target.Fixtures.WMIMarkerPath,
 		"$TEMP": `C:\bofbench\proof\` + runID, "$RUN_ID": runID, "$PROOF_SECRET": proofSecret,
-		"$PROOF_SECRET_SHA256":  hex.EncodeToString(secretHash[:]),
-		"$REMOTE_REGISTRY_HIVE": target.Fixtures.RemoteRegistryHive, "$REMOTE_REGISTRY_PATH": target.Fixtures.RemoteRegistryPath,
+		"$PROOF_SECRET_SHA256":      hex.EncodeToString(secretHash[:]),
+		"$PROOF_SECRET_CRLF_SHA256": hex.EncodeToString(secretCRLFHash[:]),
+		"$REMOTE_REGISTRY_HIVE":     target.Fixtures.RemoteRegistryHive, "$REMOTE_REGISTRY_PATH": target.Fixtures.RemoteRegistryPath,
 		"$REMOTE_REGISTRY_NAME": target.Fixtures.RemoteRegistryName, "$REMOTE_REGISTRY_SHA256": target.Fixtures.RemoteRegistrySHA256,
 		"$REMOTE_REGISTRY_SIZE": strconv.Itoa(target.Fixtures.RemoteRegistrySize),
 		"$REMOTE_STAGE_SHARE":   target.Fixtures.RemoteStageShare, "$REMOTE_STAGE_RELATIVE_ROOT": target.Fixtures.RemoteStageRelative,
@@ -752,6 +808,22 @@ func resolveProofValues(input map[string]string, placeholders map[string]string)
 		resolved[name] = value
 	}
 	return resolved, nil
+}
+
+func topologyProofArguments(document packsvc.Document, input map[string]string, values map[string]string) map[string]string {
+	resolved := make(map[string]string, len(input)+len(document.Arguments))
+	for name, value := range input {
+		resolved[name] = value
+	}
+	for _, argument := range document.Arguments {
+		if argument.TopologyValue == "" || resolved[argument.Name] != "" {
+			continue
+		}
+		if value := values[argument.TopologyValue]; value != "" {
+			resolved[argument.Name] = value
+		}
+	}
+	return resolved
 }
 
 func resolveProofExpectation(input packsvc.ProofExpectation, placeholders map[string]string) (packsvc.ProofExpectation, error) {
@@ -778,7 +850,7 @@ func resolveProofString(value string, placeholders map[string]string) (string, e
 		if !strings.Contains(value, placeholder) {
 			continue
 		}
-		if replacement == "" || ((placeholder == "$TARGET_PID" || placeholder == "$TARGET_TID" || placeholder == "$MEMORY_SIZE" || placeholder == "$CREDENTIAL_SIZE" || placeholder == "$VAULT_SIZE") && replacement == "0") {
+		if replacement == "" || ((placeholder == "$TARGET_PID" || placeholder == "$TARGET_TID" || placeholder == "$MEMORY_SIZE" || placeholder == "$MEMORY_WRITE_SIZE" || placeholder == "$MEMORY_PROTECTION_SIZE" || placeholder == "$CREDENTIAL_SIZE" || placeholder == "$VAULT_SIZE") && replacement == "0") {
 			return "", fmt.Errorf("proof placeholder %s is unavailable", placeholder)
 		}
 		value = strings.ReplaceAll(value, placeholder, replacement)
@@ -836,7 +908,34 @@ func structuredFieldValue(line, field string) (string, bool) {
 	return strings.TrimSpace(value), value != ""
 }
 
-func verifyProofStateChecks(ctx context.Context, via, labName string, checks []packsvc.ProofStateCheck, phase string, placeholders map[string]string) (int, error) {
+func applyProofCaptures(lines []string, captures map[string]packsvc.ProofCapture, placeholders map[string]string) error {
+	keys := make([]string, 0, len(captures))
+	for placeholder := range captures {
+		keys = append(keys, placeholder)
+	}
+	sort.Strings(keys)
+	for _, placeholder := range keys {
+		capture := captures[placeholder]
+		prefix := "[" + capture.Tag + "]"
+		captured := ""
+		for _, line := range lines {
+			if !strings.Contains(line, prefix) {
+				continue
+			}
+			if value, ok := structuredFieldValue(line, capture.Field); ok && value != "<redacted>" {
+				captured = value
+				break
+			}
+		}
+		if captured == "" {
+			return fmt.Errorf("%s did not find %s=%s", placeholder, capture.Tag, capture.Field)
+		}
+		placeholders[placeholder] = captured
+	}
+	return nil
+}
+
+func verifyProofStateChecks(ctx context.Context, via, labName string, topology *resolvedTopologyValues, checks []packsvc.ProofStateCheck, phase string, placeholders map[string]string) (int, error) {
 	var selected []packsvc.ProofStateCheck
 	for _, check := range checks {
 		if check.Phase == phase {
@@ -849,15 +948,31 @@ func verifyProofStateChecks(ctx context.Context, via, labName string, checks []p
 	if via != "lab" && via != "sliver" {
 		return 0, fmt.Errorf("independent state checks require a lab profile")
 	}
-	resolved, err := lab.ResolveProfile(labName, "", lab.ProfilesPath())
-	if err != nil {
-		return 0, err
-	}
-	remote, err := lab.ResolveRemoteOptions(ctx, resolved.Name, resolved.Profile)
-	if err != nil {
-		return 0, err
-	}
 	for _, check := range selected {
+		profileName := labName
+		switch check.Role {
+		case "", "execution":
+		case "target":
+			if topology != nil {
+				if topology.Topology.Target == nil {
+					return 0, fmt.Errorf("state check requires a target role")
+				}
+				profileName = topology.Topology.Target.Name
+			}
+		case "domain_controller":
+			if topology == nil || topology.Topology.DomainController == nil {
+				return 0, fmt.Errorf("state check requires a domain_controller role")
+			}
+			profileName = topology.Topology.DomainController.Name
+		}
+		resolved, err := lab.ResolveProfile(profileName, "", lab.ProfilesPath())
+		if err != nil {
+			return 0, err
+		}
+		remote, err := lab.ResolveRemoteOptions(ctx, resolved.Name, resolved.Profile)
+		if err != nil {
+			return 0, err
+		}
 		parameters, err := resolveProofValues(check.Parameters, placeholders)
 		if err != nil {
 			return 0, err
@@ -895,7 +1010,7 @@ func proofStateCheckScript(kind, expect string, parameters map[string]string) (s
 		if prefix == "" {
 			return "", fmt.Errorf("registry_value hive must be HKCU or HKLM")
 		}
-		probe = `$key=Join-Path ` + q(prefix) + ` ` + q(parameters["path"]) + `; $present=$false; if(Test-Path -LiteralPath $key){$property=Get-ItemProperty -LiteralPath $key -Name ` + q(parameters["name"]) + ` -ErrorAction SilentlyContinue; $present=$null -ne $property}`
+		probe = `$key=Join-Path ` + q(prefix) + ` ` + q(parameters["path"]) + `; $present=$false; $matches=$false; if(Test-Path -LiteralPath $key){$property=Get-ItemProperty -LiteralPath $key -Name ` + q(parameters["name"]) + ` -ErrorAction SilentlyContinue; $present=$null -ne $property; if($present -and ` + q(parameters["sha256"]) + `){$value=$property.PSObject.Properties[` + q(parameters["name"]) + `].Value; if($value -is [byte[]]){$bytes=$value}else{$bytes=[Text.Encoding]::Unicode.GetBytes([string]$value)}; $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)); $kind=(Get-Item -LiteralPath $key).GetValueKind(` + q(parameters["name"]) + `); $type=@{String=1;ExpandString=2;Binary=3;DWord=4;MultiString=7;QWord=11}[[string]$kind]; $matches=($hash -ieq ` + q(parameters["sha256"]) + `) -and ((-not ` + q(parameters["type"]) + `) -or ([int]$type -eq [int]` + q(parameters["type"]) + `))}}`
 	case "service":
 		probe = `$present=$null -ne (Get-Service -Name ` + q(parameters["name"]) + ` -ErrorAction SilentlyContinue)`
 	case "scheduled_task":
@@ -913,6 +1028,12 @@ func proofStateCheckScript(kind, expect string, parameters map[string]string) (s
 		probe = `$path=` + q(parameters["path"]) + `; $present=Test-Path -LiteralPath $path; $matches=$false; if($present){$blob=[IO.File]::ReadAllBytes($path); foreach($scope in @([Security.Cryptography.DataProtectionScope]::CurrentUser,[Security.Cryptography.DataProtectionScope]::LocalMachine)){try{$plain=[Security.Cryptography.ProtectedData]::Unprotect($blob,$null,$scope); $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($plain)); if($hash -ieq ` + q(parameters["sha256"]) + `){$matches=$true; break}}catch{}}}`
 	case "pfx":
 		probe = `$path=` + q(parameters["path"]) + `; $present=Test-Path -LiteralPath $path; $matches=$false; if($present){$secure=ConvertTo-SecureString ` + q(parameters["password"]) + ` -AsPlainText -Force; $pfx=Get-PfxData -FilePath $path -Password $secure; $matches=@($pfx.EndEntityCertificates | Where-Object {$_.Thumbprint -ieq ` + q(strings.ReplaceAll(parameters["thumbprint"], " ", "")) + `}).Count -gt 0}`
+	case "process_memory":
+		probe = `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class BOFBenchMemoryCheck{[DllImport("kernel32.dll",SetLastError=true)]public static extern IntPtr OpenProcess(uint a,bool i,uint p);[DllImport("kernel32.dll",SetLastError=true)]public static extern bool ReadProcessMemory(IntPtr p,UInt64 a,byte[] b,UIntPtr s,out UIntPtr r);[DllImport("kernel32.dll")]public static extern bool CloseHandle(IntPtr h);}' -ErrorAction SilentlyContinue; $handle=[BOFBenchMemoryCheck]::OpenProcess(0x1010,$false,[uint32]` + q(parameters["pid"]) + `); if($handle -eq [IntPtr]::Zero){throw 'OpenProcess failed'}; try{$bytes=New-Object byte[] ([int]` + q(parameters["size"]) + `); $read=[UIntPtr]::Zero; $addressText=(` + q(parameters["address"]) + ` -replace '^0x',''); $ok=[BOFBenchMemoryCheck]::ReadProcessMemory($handle,[Convert]::ToUInt64($addressText,16),$bytes,[UIntPtr]$bytes.Length,[ref]$read); $present=$ok; $matches=$ok -and ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)) -ieq ` + q(parameters["sha256"]) + `)}finally{[void][BOFBenchMemoryCheck]::CloseHandle($handle)}`
+	case "process_protection":
+		probe = `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class BOFBenchProtectCheck{[StructLayout(LayoutKind.Sequential)]public struct MBI{public IntPtr BaseAddress;public IntPtr AllocationBase;public uint AllocationProtect;public UIntPtr RegionSize;public uint State;public uint Protect;public uint Type;}[DllImport("kernel32.dll",SetLastError=true)]public static extern IntPtr OpenProcess(uint a,bool i,uint p);[DllImport("kernel32.dll",SetLastError=true)]public static extern UIntPtr VirtualQueryEx(IntPtr p,UInt64 a,out MBI m,UIntPtr s);[DllImport("kernel32.dll")]public static extern bool CloseHandle(IntPtr h);}' -ErrorAction SilentlyContinue; $handle=[BOFBenchProtectCheck]::OpenProcess(0x1000,$false,[uint32]` + q(parameters["pid"]) + `); if($handle -eq [IntPtr]::Zero){throw 'OpenProcess failed'}; try{$mbi=New-Object BOFBenchProtectCheck+MBI; $size=[Runtime.InteropServices.Marshal]::SizeOf($mbi); $addressText=(` + q(parameters["address"]) + ` -replace '^0x',''); $got=[BOFBenchProtectCheck]::VirtualQueryEx($handle,[Convert]::ToUInt64($addressText,16),[ref]$mbi,[UIntPtr]$size); $present=$got.ToUInt64() -gt 0; $expected=[Convert]::ToUInt32(` + q(parameters["protection"]) + `,16); $matches=$present -and (($mbi.Protect -band 0xff) -eq $expected)}finally{[void][BOFBenchProtectCheck]::CloseHandle($handle)}`
+	case "process":
+		probe = `Add-Type -TypeDefinition 'using System;using System.Text;using System.Runtime.InteropServices;public static class BOFBenchProcessCheck{[StructLayout(LayoutKind.Sequential)]struct US{public ushort Length;public ushort MaximumLength;public IntPtr Buffer;}[DllImport("kernel32.dll",SetLastError=true)]static extern IntPtr OpenProcess(uint a,bool i,uint p);[DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)]static extern bool QueryFullProcessImageName(IntPtr p,uint f,StringBuilder n,ref uint s);[DllImport("ntdll.dll")]static extern int NtQueryInformationProcess(IntPtr p,int c,IntPtr b,uint s,out uint r);[DllImport("kernel32.dll")]static extern bool CloseHandle(IntPtr h);public static string[] Inspect(uint pid){IntPtr h=OpenProcess(0x1000,false,pid);if(h==IntPtr.Zero)return null;try{var image=new StringBuilder(1024);uint chars=1024;if(!QueryFullProcessImageName(h,0,image,ref chars))return null;IntPtr buffer=Marshal.AllocHGlobal(8192);try{uint returned;int status=NtQueryInformationProcess(h,60,buffer,8192,out returned);if(status<0)return null;US value=(US)Marshal.PtrToStructure(buffer,typeof(US));string command=Marshal.PtrToStringUni(value.Buffer,value.Length/2);return new[]{image.ToString(),command};}finally{Marshal.FreeHGlobal(buffer);}}finally{CloseHandle(h);}}}' -ErrorAction SilentlyContinue; $info=[BOFBenchProcessCheck]::Inspect([uint32]` + q(parameters["pid"]) + `); $present=$null -ne $info; $matches=$present -and ([IO.Path]::GetFileName([string]$info[0]) -ieq ` + q(parameters["image"]) + `) -and ([string]$info[1] -like ('*'+` + q(parameters["marker"]) + `+'*'))`
 	default:
 		return "", fmt.Errorf("unsupported state check kind %q", kind)
 	}
@@ -1031,6 +1152,9 @@ func printPackTestReport(w io.Writer, report packTestReport) {
 
 func printPackProofReport(w io.Writer, report packProofReport) {
 	fmt.Fprintf(w, "PACK PROOF %s\n", strings.ToUpper(report.Status))
+	if report.Topology != "" {
+		fmt.Fprintf(w, "topology  %s execution=%s\n", report.Topology, report.Lab)
+	}
 	fmt.Fprintf(w, "coverage  declared=%d passed=%d unavailable=%d failed=%d without-proof=%d\n", report.Declared, report.Passed, report.Unavailable, report.Failed, report.WithoutProof)
 	for _, result := range report.Results {
 		fmt.Fprintf(w, "%s/%s via=%s %s\n", result.Pack, result.Case, result.Runtime, result.Status)

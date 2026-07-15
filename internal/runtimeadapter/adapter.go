@@ -10,7 +10,7 @@ import (
 
 const (
 	ReceiptSchema        = "bofbench.runtime-receipt"
-	ReceiptSchemaVersion = 3
+	ReceiptSchemaVersion = 4
 )
 
 type Availability struct {
@@ -61,6 +61,8 @@ type Receipt struct {
 	Runtime              string   `json:"runtime"`
 	RuntimeVersion       string   `json:"runtime_version,omitempty"`
 	Status               string   `json:"status"`
+	ExecutionState       string   `json:"execution_state,omitempty"`
+	OutputComplete       bool     `json:"output_complete"`
 	Profile              string   `json:"profile,omitempty"`
 	Transport            string   `json:"transport,omitempty"`
 	RemoteHost           string   `json:"remote_host,omitempty"`

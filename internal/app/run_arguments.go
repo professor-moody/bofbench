@@ -71,8 +71,21 @@ func resolveRunArguments(project string, named, legacy []string) (resolvedRunArg
 		}
 		values[name] = raw
 	}
+	// BOF arguments are positional. Optional arguments may be omitted at the
+	// end of the contract, but an omitted optional value before a later value
+	// still needs an empty typed slot or every following argument shifts left.
+	// This matters in particular for optional authentication context followed
+	// by the operation's required target and action arguments.
+	lastEmitted := -1
+	for index, name := range names {
+		definition := definitions[name]
+		_, supplied := values[name]
+		if supplied || definition.Default != "" || definition.Required {
+			lastEmitted = index
+		}
+	}
 	result := resolvedRunArguments{}
-	for _, name := range names {
+	for index, name := range names {
 		definition := definitions[name]
 		value, supplied := values[name]
 		if !supplied && definition.Default != "" {
@@ -83,9 +96,12 @@ func resolveRunArguments(project string, named, legacy []string) (resolvedRunArg
 			if definition.Required {
 				return resolvedRunArguments{}, fmt.Errorf("missing required pack argument %q", definition.Name)
 			}
-			continue
+			if index > lastEmitted {
+				continue
+			}
+			value = emptyPackArgumentValue(definition.Type)
 		}
-		if definition.Sensitive {
+		if definition.Sensitive && supplied {
 			value, err = resolveSensitiveArgument(definition.Name, value)
 			if err != nil {
 				return resolvedRunArguments{}, err
@@ -102,6 +118,15 @@ func resolveRunArguments(project string, named, legacy []string) (resolvedRunArg
 		result.Sensitive = append(result.Sensitive, definition.Sensitive)
 	}
 	return result, nil
+}
+
+func emptyPackArgumentValue(argumentType string) string {
+	switch normalizedPackArgumentType(argumentType) {
+	case "integer", "short":
+		return "0"
+	default:
+		return ""
+	}
 }
 
 func resolveSensitiveArgument(name, value string) (string, error) {
@@ -166,6 +191,9 @@ func packArgumentToken(argumentType, value string) (string, string, error) {
 		}
 		return "b:" + raw, value, nil
 	case "file":
+		if value == "" {
+			return "x:", "", nil
+		}
 		data, err := os.ReadFile(value)
 		if err != nil {
 			return "", "", err

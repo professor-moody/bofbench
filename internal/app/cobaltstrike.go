@@ -103,7 +103,7 @@ func executeCobaltStrike(parent context.Context, stdout io.Writer, opts cobaltSt
 	started := time.Now()
 	receipt := runtimeadapter.Receipt{
 		Schema: runtimeadapter.ReceiptSchema, SchemaVersion: runtimeadapter.ReceiptSchemaVersion,
-		Runtime: "cobaltstrike", Status: "fail", Transport: "agscript", RemoteHost: host + ":" + port,
+		Runtime: "cobaltstrike", Status: "fail", ExecutionState: "failed", Transport: "agscript", RemoteHost: host + ":" + port,
 		Session: beacon, Object: object, Entrypoint: manifest.Entrypoint, Arguments: argumentTypes,
 		TimeoutMS: 90000, StartedAt: started.UTC().Format(time.RFC3339Nano), ReceiptPath: filepath.Join(runDir, "result.json"),
 	}
@@ -119,7 +119,9 @@ func executeCobaltStrike(parent context.Context, stdout io.Writer, opts cobaltSt
 		receipt.TimedOut = true
 	}
 	if runErr == nil && strings.Contains(clean, "BOFBENCH_TASK_SUBMITTED") {
-		receipt.Status = "pass"
+		receipt.Status = "submitted"
+		receipt.ExecutionState = "submitted"
+		receipt.OutputComplete = false
 		receipt.ExitState = "submitted"
 	} else if runErr == nil {
 		runErr = fmt.Errorf("agscript exited without confirming BOF task submission")
@@ -127,6 +129,9 @@ func executeCobaltStrike(parent context.Context, stdout io.Writer, opts cobaltSt
 	if runErr != nil {
 		receipt.Error = runErr.Error()
 		receipt.ExitState = "error"
+		if receipt.TimedOut {
+			receipt.ExecutionState = "timeout"
+		}
 	}
 	receipt.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	receipt.DurationMS = time.Since(started).Milliseconds()

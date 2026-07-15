@@ -172,3 +172,37 @@ func TestProfileValidationRejectsSecretsAndBadValues(t *testing.T) {
 		t.Fatalf("transport field error = %v", err)
 	}
 }
+
+func TestTopologyLifecycleResolutionAndProfileProtection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "labs.json")
+	config := NewProfilesConfig()
+	for _, name := range []string{"execution", "target", "dc"} {
+		profile := DefaultProfile("existing")
+		profile.Host = name + ".example"
+		if err := AddProfile(&config, name, profile, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := AddTopology(&config, "domain", ProfileTopology{Execution: "execution", Target: "target", DomainController: "dc"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := UseTopology(&config, "domain"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveProfiles(path, config); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := ResolveTopology("", path)
+	if err != nil || resolved.Name != "domain" || resolved.Execution.Name != "execution" || resolved.Target == nil || resolved.Target.Name != "target" || resolved.DomainController == nil || resolved.DomainController.Name != "dc" {
+		t.Fatalf("resolved topology = %+v, %v", resolved, err)
+	}
+	if err := RemoveProfile(&config, "target"); err == nil || !strings.Contains(err.Error(), "topology") {
+		t.Fatalf("referenced profile removal error = %v", err)
+	}
+	if err := RemoveTopology(&config, "domain"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveProfile(&config, "target"); err != nil {
+		t.Fatal(err)
+	}
+}

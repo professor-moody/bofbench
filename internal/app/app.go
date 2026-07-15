@@ -128,6 +128,7 @@ func rootCommand(stdout, stderr io.Writer) *cobra.Command {
 		commandGroup("operate", testCommand(stdout)),
 		commandGroup("operate", exportCommand(stdout)),
 		commandGroup("operate", sliverCommand(stdout)),
+		commandGroup("operate", runtimeCommand(stdout)),
 		commandGroup("operate", labCommand(stdout, stderr)),
 		commandGroup("arsenal", fetchCommand(stdout)),
 		commandGroup("arsenal", listCommand(stdout)),
@@ -981,6 +982,7 @@ func runCommand(stdout io.Writer) *cobra.Command {
 	var transportTimeout time.Duration
 	var bootstrapMode string
 	var cleanup bool
+	var topologyName string
 	cmd := &cobra.Command{
 		Use:   "run <project|artifact> [--via native|lab|sliver|cobaltstrike] [--arg name=value]",
 		Short: "Build if needed and execute a BOF through the selected runtime",
@@ -1005,6 +1007,20 @@ func runCommand(stdout io.Writer) *cobra.Command {
 				return fmt.Errorf("unexpected trailing args; put BOF args after --args")
 			}
 			projectInput := sourceaudit.IsSourceInput(args[0])
+			if topologyName != "" {
+				if !projectInput {
+					return fmt.Errorf("--topology requires a BOF project with pack metadata")
+				}
+				topology, err := resolveTopologyRuntimeValues(cmd.Context(), topologyName, labProfiles)
+				if err != nil {
+					return err
+				}
+				labName = topology.Topology.Execution.Name
+				namedArgs, err = topologyNamedArguments(cmd.Context(), args[0], topology, namedArgs)
+				if err != nil {
+					return err
+				}
+			}
 			if projectInput && len(namedArgs) == 0 && len(argTokens) == 0 {
 				cfg, _, err := config.LoadFor(args[0])
 				if err != nil {
@@ -1078,6 +1094,7 @@ func runCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&sliverClient, "sliver-client", "", "Sliver client binary; discovered automatically when omitted")
 	cmd.Flags().StringVar(&sliverSession, "session", "", "Sliver session ID, name, or filter; defaults to the selected lab profile")
 	cmd.Flags().StringVar(&labName, "lab", "", "named lab profile for lab or Sliver execution")
+	cmd.Flags().StringVar(&topologyName, "topology", "", "named multi-host topology; its execution role selects the lab")
 	cmd.Flags().StringVar(&labProfiles, "profiles", lab.ProfilesPath(), "global lab profiles file")
 	cmd.Flags().StringVar(&labHost, "host", "", "compatibility lab host override; prefer --lab")
 	cmd.Flags().StringVar(&labRoot, "remote-root", "", "compatibility remote-root override; prefer the lab profile")
@@ -1085,6 +1102,7 @@ func runCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().DurationVar(&transportTimeout, "transport-timeout", 3*time.Minute, "lab operation timeout")
 	cmd.Flags().StringVar(&bootstrapMode, "bootstrap", "auto", "lab runtime bootstrap: auto, always, or never")
 	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "run the cleanup companion packs instead of the project's action packs")
+	cmd.MarkFlagsMutuallyExclusive("lab", "topology")
 	return cmd
 }
 
@@ -1382,6 +1400,7 @@ func labCommand(stdout, stderr io.Writer) *cobra.Command {
 		labRemoveCommand(stdout),
 		labImportCommand(stdout),
 		labSetupScriptCommand(stdout),
+		labTopologyCommand(stdout),
 		labTargetCommand(stdout),
 		labInitCommand(stdout),
 		labBootstrapCommand(stdout),

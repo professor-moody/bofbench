@@ -37,6 +37,36 @@ func TestResolveNamedPackArgumentsPreservesContractOrder(t *testing.T) {
 	}
 }
 
+func TestResolveNamedPackArgumentsPadsOptionalPositionalGaps(t *testing.T) {
+	project := t.TempDir()
+	lock := packsvc.Lock{Schema: packsvc.LockSchema, SchemaVersion: packsvc.LockSchemaVersion, Packs: []packsvc.LockRecord{{
+		ID: "remote", Qualified: "internal/remote", Catalog: "internal", Version: "1", SHA256: "sha",
+		Arguments: []packsvc.Argument{
+			{Name: "auth_mode", Type: "string", Default: "current"},
+			{Name: "domain", Type: "wstring"},
+			{Name: "username", Type: "wstring", Sensitive: true},
+			{Name: "password", Type: "wstring", Sensitive: true},
+			{Name: "target_host", Type: "wstring", Required: true},
+			{Name: "limit", Type: "integer"},
+		},
+	}}}
+	data, _ := json.Marshal(lock)
+	if err := os.WriteFile(filepath.Join(project, packsvc.LockName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := resolveRunArguments(project, []string{"target_host=DEVBOX"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"z:current", "Z:", "Z:", "Z:", "Z:DEVBOX"}
+	if !reflect.DeepEqual(resolved.Tokens, want) {
+		t.Fatalf("tokens = %v want %v", resolved.Tokens, want)
+	}
+	if len(resolved.Sensitive) != len(want) || !resolved.Sensitive[2] || !resolved.Sensitive[3] {
+		t.Fatalf("sensitive metadata = %v", resolved.Sensitive)
+	}
+}
+
 func TestPackFileArgumentReadsBytesForNativeAndKeepsPathForC2(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "payload.bin")
 	if err := os.WriteFile(path, []byte{0xde, 0xad, 0xbe, 0xef}, 0o600); err != nil {

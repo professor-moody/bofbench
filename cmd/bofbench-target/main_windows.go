@@ -42,21 +42,27 @@ var (
 )
 
 type targetState struct {
-	Schema              string `json:"schema"`
-	SchemaVersion       int    `json:"schema_version"`
-	Service             string `json:"service"`
-	PID                 int    `json:"pid"`
-	AlertableTID        uint32 `json:"alertable_tid"`
-	NamedPipe           string `json:"named_pipe,omitempty"`
-	KnownHandle         string `json:"known_handle,omitempty"`
-	User                string `json:"user"`
-	CanaryFile          string `json:"canary_file"`
-	CanaryFileSHA256    string `json:"canary_file_sha256"`
-	MemoryCanaryAddress string `json:"memory_canary_address"`
-	MemoryCanarySize    int    `json:"memory_canary_size"`
-	MemoryCanarySHA256  string `json:"memory_canary_sha256"`
-	FixtureError        string `json:"fixture_error,omitempty"`
-	StartedAt           string `json:"started_at"`
+	Schema               string `json:"schema"`
+	SchemaVersion        int    `json:"schema_version"`
+	Service              string `json:"service"`
+	PID                  int    `json:"pid"`
+	AlertableTID         uint32 `json:"alertable_tid"`
+	NamedPipe            string `json:"named_pipe,omitempty"`
+	KnownHandle          string `json:"known_handle,omitempty"`
+	User                 string `json:"user"`
+	CanaryFile           string `json:"canary_file"`
+	CanaryFileSHA256     string `json:"canary_file_sha256"`
+	MemoryCanaryAddress  string `json:"memory_canary_address"`
+	MemoryCanarySize     int    `json:"memory_canary_size"`
+	MemoryCanarySHA256   string `json:"memory_canary_sha256"`
+	MemoryWriteAddress   string `json:"memory_write_address,omitempty"`
+	MemoryWriteSize      int    `json:"memory_write_size,omitempty"`
+	MemoryWriteSHA256    string `json:"memory_write_sha256,omitempty"`
+	MemoryProtectAddress string `json:"memory_protection_address,omitempty"`
+	MemoryProtectSize    int    `json:"memory_protection_size,omitempty"`
+	MemoryProtection     string `json:"memory_protection,omitempty"`
+	FixtureError         string `json:"fixture_error,omitempty"`
+	StartedAt            string `json:"started_at"`
 }
 
 type fixtureState struct {
@@ -114,6 +120,19 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	}
 	canary := randomBytes(64)
 	copy(memoryCanary, canary)
+	writeRegion, err := windows.VirtualAlloc(0, 4096, windows.MEM_COMMIT|windows.MEM_RESERVE, windows.PAGE_READWRITE)
+	if err != nil {
+		return true, 2
+	}
+	defer windows.VirtualFree(writeRegion, 0, windows.MEM_RELEASE)
+	writeCanary := randomBytes(18)
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(writeRegion)), 18), writeCanary)
+	protectRegion, err := windows.VirtualAlloc(0, 4096, windows.MEM_COMMIT|windows.MEM_RESERVE, windows.PAGE_READWRITE)
+	if err != nil {
+		return true, 2
+	}
+	defer windows.VirtualFree(protectRegion, 0, windows.MEM_RELEASE)
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(protectRegion)), 64), randomBytes(64))
 	fileCanary := append([]byte("BOFBENCH-TARGET-FILE-CANARY\n"), randomBytes(32)...)
 	canaryPath := filepath.Join(service.root, "canary.txt")
 	if err := os.WriteFile(canaryPath, fileCanary, 0o600); err != nil {
@@ -132,12 +151,14 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	pipe := <-pipeReady
 	fixtureErr := launchFixtureInConsoleSession(service.root, "deploy")
 	state := targetState{
-		Schema: "bofbench.target", SchemaVersion: 3, Service: service.name,
+		Schema: "bofbench.target", SchemaVersion: 4, Service: service.name,
 		PID: os.Getpid(), AlertableTID: <-threadID, NamedPipe: pipe.Name, User: `NT AUTHORITY\SYSTEM`,
 		KnownHandle: fmt.Sprintf("0x%X", knownFile.Fd()),
 		CanaryFile:  canaryPath, CanaryFileSHA256: hashBytes(fileCanary),
 		MemoryCanaryAddress: fmt.Sprintf("0x%X", uintptr(unsafe.Pointer(&memoryCanary[0]))),
 		MemoryCanarySize:    len(canary), MemoryCanarySHA256: hashBytes(canary),
+		MemoryWriteAddress: fmt.Sprintf("0x%X", writeRegion), MemoryWriteSize: len(writeCanary), MemoryWriteSHA256: hashBytes(writeCanary),
+		MemoryProtectAddress: fmt.Sprintf("0x%X", protectRegion), MemoryProtectSize: 4096, MemoryProtection: "0x04",
 		StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	if fixtureErr != nil {

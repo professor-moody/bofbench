@@ -546,6 +546,142 @@ static void bofbench_feature_thread_inventory(datap *parser) {
 		Call: "bofbench_feature_thread_inventory($PARSER);",
 	},
 	{
+		Name:        "process-mitigation-inventory",
+		Description: "report bounded mitigation-policy flags for one explicitly selected process",
+		Declaration: `BOOL WINAPI KERNEL32$GetProcessMitigationPolicy(HANDLE, PROCESS_MITIGATION_POLICY, PVOID, SIZE_T);
+HANDLE WINAPI KERNEL32$OpenProcess(DWORD, BOOL, DWORD);
+BOOL WINAPI KERNEL32$CloseHandle(HANDLE);
+
+static void bofbench_feature_process_mitigation_inventory(datap *parser) {
+    DWORD target_pid = (DWORD)BeaconDataInt(parser);
+    HANDLE process;
+    DWORD dep[2] = {0, 0};
+    DWORD aslr = 0, dynamic_code = 0, cfg = 0, signature = 0, child = 0;
+    DWORD available = 0;
+    process = KERNEL32$OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, target_pid);
+    if (process == NULL) {
+        BeaconPrintf(CALLBACK_ERROR, "[process-mitigation-inventory] status=failed target_pid=%lu error=%lu", target_pid, KERNEL32$GetLastError());
+        return;
+    }
+    if (KERNEL32$GetProcessMitigationPolicy(process, (PROCESS_MITIGATION_POLICY)0, dep, sizeof(dep))) available++;
+    if (KERNEL32$GetProcessMitigationPolicy(process, (PROCESS_MITIGATION_POLICY)1, &aslr, sizeof(aslr))) available++;
+    if (KERNEL32$GetProcessMitigationPolicy(process, (PROCESS_MITIGATION_POLICY)2, &dynamic_code, sizeof(dynamic_code))) available++;
+    if (KERNEL32$GetProcessMitigationPolicy(process, (PROCESS_MITIGATION_POLICY)7, &cfg, sizeof(cfg))) available++;
+    if (KERNEL32$GetProcessMitigationPolicy(process, (PROCESS_MITIGATION_POLICY)8, &signature, sizeof(signature))) available++;
+    if (KERNEL32$GetProcessMitigationPolicy(process, (PROCESS_MITIGATION_POLICY)13, &child, sizeof(child))) available++;
+    BeaconPrintf(CALLBACK_OUTPUT, "[process-mitigation-inventory] target_pid=%lu dep=0x%08lx aslr=0x%08lx dynamic_code=0x%08lx cfg=0x%08lx signature=0x%08lx child_process=0x%08lx",
+        target_pid, dep[0], aslr, dynamic_code, cfg, signature, child);
+    BeaconPrintf(CALLBACK_OUTPUT, "[process-mitigation-inventory] status=complete target_pid=%lu policies=%lu", target_pid, available);
+    KERNEL32$CloseHandle(process);
+}`,
+		Call: "bofbench_feature_process_mitigation_inventory($PARSER);",
+	},
+	{
+		Name:        "process-memory-map",
+		Description: "enumerate bounded committed virtual-memory regions for one explicitly selected process",
+		Declaration: `#include <psapi.h>
+HANDLE WINAPI KERNEL32$OpenProcess(DWORD, BOOL, DWORD);
+SIZE_T WINAPI KERNEL32$VirtualQueryEx(HANDLE, LPCVOID, PMEMORY_BASIC_INFORMATION, SIZE_T);
+BOOL WINAPI KERNEL32$CloseHandle(HANDLE);
+DWORD WINAPI PSAPI$GetMappedFileNameA(HANDLE, LPVOID, LPSTR, DWORD);
+
+static void bofbench_feature_process_memory_map(datap *parser) {
+    DWORD target_pid = (DWORD)BeaconDataInt(parser);
+    int requested = BeaconDataInt(parser);
+    DWORD limit = requested > 0 ? (DWORD)requested : 64;
+    DWORD shown = 0;
+    HANDLE process;
+    ULONG_PTR cursor = 0;
+    MEMORY_BASIC_INFORMATION region;
+    if (limit > 512) limit = 512;
+    process = KERNEL32$OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, target_pid);
+    if (process == NULL) {
+        BeaconPrintf(CALLBACK_ERROR, "[process-memory-map] status=failed target_pid=%lu error=%lu", target_pid, KERNEL32$GetLastError());
+        return;
+    }
+    while (shown < limit && KERNEL32$VirtualQueryEx(process, (LPCVOID)cursor, &region, sizeof(region)) == sizeof(region)) {
+        ULONG_PTR next = (ULONG_PTR)region.BaseAddress + (ULONG_PTR)region.RegionSize;
+        if (region.State == MEM_COMMIT) {
+            char mapped[MAX_PATH + 1];
+            DWORD mapped_length;
+            mapped[0] = '\0';
+            mapped_length = PSAPI$GetMappedFileNameA(process, region.BaseAddress, mapped, MAX_PATH);
+            if (mapped_length >= MAX_PATH) mapped[MAX_PATH] = '\0';
+            BeaconPrintf(CALLBACK_OUTPUT, "[process-memory-map] target_pid=%lu base=0x%llx size=%llu protect=0x%08lx type=0x%08lx mapped=%s",
+                target_pid, (unsigned long long)(ULONG_PTR)region.BaseAddress, (unsigned long long)region.RegionSize,
+                region.Protect, region.Type, mapped_length > 0 ? mapped : "-");
+            shown++;
+        }
+        if (next <= cursor) break;
+        cursor = next;
+    }
+    KERNEL32$CloseHandle(process);
+    BeaconPrintf(CALLBACK_OUTPUT, "[process-memory-map] status=complete target_pid=%lu shown=%lu limit=%lu", target_pid, shown, limit);
+}`,
+		Call: "bofbench_feature_process_memory_map($PARSER);",
+	},
+	{
+		Name:        "thread-start-inventory",
+		Description: "enumerate bounded thread start addresses and containing process regions for one selected process",
+		Declaration: `#include <psapi.h>
+HANDLE WINAPI KERNEL32$CreateToolhelp32Snapshot(DWORD, DWORD);
+BOOL WINAPI KERNEL32$Thread32First(HANDLE, LPTHREADENTRY32);
+BOOL WINAPI KERNEL32$Thread32Next(HANDLE, LPTHREADENTRY32);
+HANDLE WINAPI KERNEL32$OpenThread(DWORD, BOOL, DWORD);
+HANDLE WINAPI KERNEL32$OpenProcess(DWORD, BOOL, DWORD);
+SIZE_T WINAPI KERNEL32$VirtualQueryEx(HANDLE, LPCVOID, PMEMORY_BASIC_INFORMATION, SIZE_T);
+BOOL WINAPI KERNEL32$CloseHandle(HANDLE);
+DWORD WINAPI PSAPI$GetMappedFileNameA(HANDLE, LPVOID, LPSTR, DWORD);
+NTSTATUS NTAPI NTDLL$NtQueryInformationThread(HANDLE, ULONG, PVOID, ULONG, PULONG);
+
+static void bofbench_feature_thread_start_inventory(datap *parser) {
+    DWORD target_pid = (DWORD)BeaconDataInt(parser);
+    int requested = BeaconDataInt(parser);
+    DWORD limit = requested > 0 ? (DWORD)requested : 64;
+    DWORD shown = 0;
+    HANDLE snapshot, process;
+    THREADENTRY32 entry;
+    if (limit > 512) limit = 512;
+    process = KERNEL32$OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, target_pid);
+    snapshot = KERNEL32$CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (process == NULL || snapshot == INVALID_HANDLE_VALUE) {
+        if (process != NULL) KERNEL32$CloseHandle(process);
+        if (snapshot != INVALID_HANDLE_VALUE) KERNEL32$CloseHandle(snapshot);
+        BeaconPrintf(CALLBACK_ERROR, "[thread-start-inventory] status=failed target_pid=%lu error=%lu", target_pid, KERNEL32$GetLastError());
+        return;
+    }
+    entry.dwSize = sizeof(entry);
+    if (KERNEL32$Thread32First(snapshot, &entry)) do {
+        HANDLE thread;
+        PVOID start = NULL;
+        MEMORY_BASIC_INFORMATION region;
+        char mapped[MAX_PATH + 1];
+        DWORD mapped_length = 0;
+        NTSTATUS status;
+        if (entry.th32OwnerProcessID != target_pid) continue;
+        thread = KERNEL32$OpenThread(THREAD_QUERY_INFORMATION, FALSE, entry.th32ThreadID);
+        if (thread == NULL) continue;
+        status = NTDLL$NtQueryInformationThread(thread, 9, &start, sizeof(start), NULL);
+        mapped[0] = '\0';
+        if (status >= 0 && KERNEL32$VirtualQueryEx(process, start, &region, sizeof(region)) == sizeof(region)) {
+            mapped_length = PSAPI$GetMappedFileNameA(process, region.BaseAddress, mapped, MAX_PATH);
+        } else {
+            region.Protect = 0;
+            region.Type = 0;
+        }
+        BeaconPrintf(CALLBACK_OUTPUT, "[thread-start-inventory] target_pid=%lu tid=%lu start=0x%llx state=%s protect=0x%08lx type=0x%08lx mapped=%s",
+            target_pid, entry.th32ThreadID, (unsigned long long)(ULONG_PTR)start, status >= 0 ? "queryable" : "unavailable",
+            region.Protect, region.Type, mapped_length > 0 ? mapped : "-");
+        KERNEL32$CloseHandle(thread);
+        shown++;
+    } while (shown < limit && KERNEL32$Thread32Next(snapshot, &entry));
+    KERNEL32$CloseHandle(snapshot);
+    KERNEL32$CloseHandle(process);
+    BeaconPrintf(CALLBACK_OUTPUT, "[thread-start-inventory] status=complete target_pid=%lu shown=%lu limit=%lu", target_pid, shown, limit);
+}`,
+		Call: "bofbench_feature_thread_start_inventory($PARSER);",
+	},
+	{
 		Name:        "named-pipe-inventory",
 		Description: "enumerate bounded named-pipe entries with an optional prefix filter",
 		Declaration: `HANDLE WINAPI KERNEL32$FindFirstFileA(LPCSTR, LPWIN32_FIND_DATAA);

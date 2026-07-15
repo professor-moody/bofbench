@@ -13,21 +13,27 @@ import (
 const TargetServiceName = "BOFBenchTarget"
 
 type TargetState struct {
-	Schema              string `json:"schema"`
-	SchemaVersion       int    `json:"schema_version"`
-	Service             string `json:"service"`
-	PID                 int    `json:"pid"`
-	AlertableTID        uint32 `json:"alertable_tid"`
-	NamedPipe           string `json:"named_pipe,omitempty"`
-	KnownHandle         string `json:"known_handle,omitempty"`
-	User                string `json:"user"`
-	CanaryFile          string `json:"canary_file"`
-	CanaryFileSHA256    string `json:"canary_file_sha256,omitempty"`
-	MemoryCanaryAddress string `json:"memory_canary_address,omitempty"`
-	MemoryCanarySize    int    `json:"memory_canary_size,omitempty"`
-	MemoryCanarySHA256  string `json:"memory_canary_sha256,omitempty"`
-	FixtureError        string `json:"fixture_error,omitempty"`
-	StartedAt           string `json:"started_at"`
+	Schema               string `json:"schema"`
+	SchemaVersion        int    `json:"schema_version"`
+	Service              string `json:"service"`
+	PID                  int    `json:"pid"`
+	AlertableTID         uint32 `json:"alertable_tid"`
+	NamedPipe            string `json:"named_pipe,omitempty"`
+	KnownHandle          string `json:"known_handle,omitempty"`
+	User                 string `json:"user"`
+	CanaryFile           string `json:"canary_file"`
+	CanaryFileSHA256     string `json:"canary_file_sha256,omitempty"`
+	MemoryCanaryAddress  string `json:"memory_canary_address,omitempty"`
+	MemoryCanarySize     int    `json:"memory_canary_size,omitempty"`
+	MemoryCanarySHA256   string `json:"memory_canary_sha256,omitempty"`
+	MemoryWriteAddress   string `json:"memory_write_address,omitempty"`
+	MemoryWriteSize      int    `json:"memory_write_size,omitempty"`
+	MemoryWriteSHA256    string `json:"memory_write_sha256,omitempty"`
+	MemoryProtectAddress string `json:"memory_protection_address,omitempty"`
+	MemoryProtectSize    int    `json:"memory_protection_size,omitempty"`
+	MemoryProtection     string `json:"memory_protection,omitempty"`
+	FixtureError         string `json:"fixture_error,omitempty"`
+	StartedAt            string `json:"started_at"`
 }
 
 type TargetFixtureState struct {
@@ -224,7 +230,7 @@ func targetRemoteFixtureScript(targetDirectory string) string {
 
 func targetCleanupScript(targetDirectory string) string {
 	fixturePath := windowsJoin(targetDirectory, "remote-fixture.json")
-	return fmt.Sprintf(`$ErrorActionPreference='Continue'; $fixture=$null; if(Test-Path -LiteralPath %s){try{$fixture=Get-Content -LiteralPath %s -Raw|ConvertFrom-Json}catch{}}; $service=Get-Service -Name %s -ErrorAction SilentlyContinue; if($service -and $service.Status -ne 'Stopped'){Stop-Service -Name %s -Force}; if($service){sc.exe delete %s|Out-Null}; Start-Sleep -Milliseconds 500; if($fixture){$key='HKLM:\'+[string]$fixture.remote_registry_path; Remove-ItemProperty -LiteralPath $key -Name ([string]$fixture.remote_registry_name) -Force -ErrorAction SilentlyContinue; if([bool]$fixture.remote_registry_key_created){Remove-Item -LiteralPath $key -Force -ErrorAction SilentlyContinue}; Remove-Item -LiteralPath ([string]$fixture.remote_stage_local_root) -Recurse -Force -ErrorAction SilentlyContinue; $remote=Get-Service -Name 'RemoteRegistry' -ErrorAction SilentlyContinue; if($remote){if($remote.Status -ne 'Stopped'){Stop-Service -Name 'RemoteRegistry' -Force -ErrorAction SilentlyContinue}; switch([string]$fixture.remote_registry_previous_start_type){'Automatic'{Set-Service -Name 'RemoteRegistry' -StartupType Automatic};'Manual'{Set-Service -Name 'RemoteRegistry' -StartupType Manual};'Disabled'{Set-Service -Name 'RemoteRegistry' -StartupType Disabled}}; if([string]$fixture.remote_registry_previous_status -eq 'Running'){Start-Service -Name 'RemoteRegistry'}else{Stop-Service -Name 'RemoteRegistry' -Force -ErrorAction SilentlyContinue}; $after=Get-Service -Name 'RemoteRegistry'; if([string]$after.Status -ne [string]$fixture.remote_registry_previous_status){throw 'RemoteRegistry status was not restored'}; if([string]$after.StartType -ne [string]$fixture.remote_registry_previous_start_type){throw 'RemoteRegistry start type was not restored'}}}; Remove-Item -LiteralPath %s -Recurse -Force -ErrorAction SilentlyContinue; if(Get-Service -Name %s -ErrorAction SilentlyContinue){throw 'target service still exists'}; if(Test-Path -LiteralPath %s){throw 'target directory still exists'}; Write-Output 'removed'`, powerShellQuote(fixturePath), powerShellQuote(fixturePath), powerShellQuote(TargetServiceName), powerShellQuote(TargetServiceName), TargetServiceName, powerShellQuote(targetDirectory), powerShellQuote(TargetServiceName), powerShellQuote(targetDirectory))
+	return fmt.Sprintf(`$ErrorActionPreference='Continue'; $fixture=$null; if(Test-Path -LiteralPath %s){try{$fixture=Get-Content -LiteralPath %s -Raw|ConvertFrom-Json}catch{}}; $service=Get-Service -Name %s -ErrorAction SilentlyContinue; if($service -and $service.Status -ne 'Stopped'){Stop-Service -Name %s -Force}; if($service){sc.exe delete %s|Out-Null}; Start-Sleep -Milliseconds 500; if($fixture){$key='HKLM:\'+[string]$fixture.remote_registry_path; $keyItem=Get-Item -LiteralPath $key -ErrorAction SilentlyContinue; if($keyItem){foreach($valueName in @($keyItem.GetValueNames()|Where-Object{$_ -like 'BOFBench-Remote-*'})){Remove-ItemProperty -LiteralPath $key -Name $valueName -Force -ErrorAction SilentlyContinue}}; Remove-ItemProperty -LiteralPath $key -Name ([string]$fixture.remote_registry_name) -Force -ErrorAction SilentlyContinue; if([bool]$fixture.remote_registry_key_created){Remove-Item -LiteralPath $key -Force -ErrorAction SilentlyContinue}; Remove-Item -LiteralPath ([string]$fixture.remote_stage_local_root) -Recurse -Force -ErrorAction SilentlyContinue; $remote=Get-Service -Name 'RemoteRegistry' -ErrorAction SilentlyContinue; if($remote){if($remote.Status -ne 'Stopped'){Stop-Service -Name 'RemoteRegistry' -Force -ErrorAction SilentlyContinue}; switch([string]$fixture.remote_registry_previous_start_type){'Automatic'{Set-Service -Name 'RemoteRegistry' -StartupType Automatic};'Manual'{Set-Service -Name 'RemoteRegistry' -StartupType Manual};'Disabled'{Set-Service -Name 'RemoteRegistry' -StartupType Disabled}}; if([string]$fixture.remote_registry_previous_status -eq 'Running'){Start-Service -Name 'RemoteRegistry'}else{Stop-Service -Name 'RemoteRegistry' -Force -ErrorAction SilentlyContinue}; $after=Get-Service -Name 'RemoteRegistry'; if([string]$after.Status -ne [string]$fixture.remote_registry_previous_status){throw 'RemoteRegistry status was not restored'}; if([string]$after.StartType -ne [string]$fixture.remote_registry_previous_start_type){throw 'RemoteRegistry start type was not restored'}}}; Remove-Item -LiteralPath %s -Recurse -Force -ErrorAction SilentlyContinue; if(Get-Service -Name %s -ErrorAction SilentlyContinue){throw 'target service still exists'}; if(Test-Path -LiteralPath %s){throw 'target directory still exists'}; Write-Output 'removed'`, powerShellQuote(fixturePath), powerShellQuote(fixturePath), powerShellQuote(TargetServiceName), powerShellQuote(TargetServiceName), TargetServiceName, powerShellQuote(targetDirectory), powerShellQuote(TargetServiceName), powerShellQuote(targetDirectory))
 }
 
 func mergeRemoteFixtures(target *TargetFixtureState, remote TargetFixtureState) {
@@ -248,7 +254,7 @@ func TargetReportText(report TargetReport) string {
 		if computer == "" {
 			computer = report.Host
 		}
-		text := fmt.Sprintf("BOFBench target %s\nprofile     %s\ncomputer    %s\nservice     %s\npid         %d\nalertable   tid=%d\nknown handle %s\nnamed pipe  %s\nmemory      address=%s bytes=%d sha256=%s\nfile        %s\ncredential  %s user=%s bytes=%d\ndpapi user  %s\ndpapi host  %s\nvault       %s resource=%s identity=%s bytes=%d\ncertificate store=%s thumbprint=%s subject=%s\nwmi marker  %s\nremote reg  %s\\%s\\%s bytes=%d sha256=%s previous=%s/%s\nremote file share=%s root=%s local=%s\n", strings.ToUpper(report.Status), report.Profile, computer, report.Service, report.State.PID, report.State.AlertableTID, report.State.KnownHandle, report.State.NamedPipe, report.State.MemoryCanaryAddress, report.State.MemoryCanarySize, report.State.MemoryCanarySHA256, report.State.CanaryFile, report.Fixtures.CredentialTarget, report.Fixtures.User, report.Fixtures.CredentialSize, report.Fixtures.DPAPIUserPath, report.Fixtures.DPAPIMachinePath, report.Fixtures.VaultGUID, report.Fixtures.VaultResource, report.Fixtures.VaultIdentity, report.Fixtures.VaultSize, report.Fixtures.CertificateStore, report.Fixtures.CertificateThumbprint, report.Fixtures.CertificateSubject, report.Fixtures.WMIMarkerPath, report.Fixtures.RemoteRegistryHive, report.Fixtures.RemoteRegistryPath, report.Fixtures.RemoteRegistryName, report.Fixtures.RemoteRegistrySize, report.Fixtures.RemoteRegistrySHA256, report.Fixtures.RemoteRegistryStatus, report.Fixtures.RemoteRegistryStart, report.Fixtures.RemoteStageShare, report.Fixtures.RemoteStageRelative, report.Fixtures.RemoteStageLocal)
+		text := fmt.Sprintf("BOFBench target %s\nprofile     %s\ncomputer    %s\nservice     %s\npid         %d\nalertable   tid=%d\nknown handle %s\nnamed pipe  %s\nmemory      address=%s bytes=%d sha256=%s\nwrite test  address=%s bytes=%d sha256=%s\nprotect test address=%s bytes=%d protection=%s\nfile        %s\ncredential  %s user=%s bytes=%d\ndpapi user  %s\ndpapi host  %s\nvault       %s resource=%s identity=%s bytes=%d\ncertificate store=%s thumbprint=%s subject=%s\nwmi marker  %s\nremote reg  %s\\%s\\%s bytes=%d sha256=%s previous=%s/%s\nremote file share=%s root=%s local=%s\n", strings.ToUpper(report.Status), report.Profile, computer, report.Service, report.State.PID, report.State.AlertableTID, report.State.KnownHandle, report.State.NamedPipe, report.State.MemoryCanaryAddress, report.State.MemoryCanarySize, report.State.MemoryCanarySHA256, report.State.MemoryWriteAddress, report.State.MemoryWriteSize, report.State.MemoryWriteSHA256, report.State.MemoryProtectAddress, report.State.MemoryProtectSize, report.State.MemoryProtection, report.State.CanaryFile, report.Fixtures.CredentialTarget, report.Fixtures.User, report.Fixtures.CredentialSize, report.Fixtures.DPAPIUserPath, report.Fixtures.DPAPIMachinePath, report.Fixtures.VaultGUID, report.Fixtures.VaultResource, report.Fixtures.VaultIdentity, report.Fixtures.VaultSize, report.Fixtures.CertificateStore, report.Fixtures.CertificateThumbprint, report.Fixtures.CertificateSubject, report.Fixtures.WMIMarkerPath, report.Fixtures.RemoteRegistryHive, report.Fixtures.RemoteRegistryPath, report.Fixtures.RemoteRegistryName, report.Fixtures.RemoteRegistrySize, report.Fixtures.RemoteRegistrySHA256, report.Fixtures.RemoteRegistryStatus, report.Fixtures.RemoteRegistryStart, report.Fixtures.RemoteStageShare, report.Fixtures.RemoteStageRelative, report.Fixtures.RemoteStageLocal)
 		if report.State.FixtureError != "" {
 			text += fmt.Sprintf("fixtures    unavailable: %s\n", report.State.FixtureError)
 		}

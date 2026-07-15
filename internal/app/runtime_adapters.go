@@ -343,13 +343,17 @@ func (run *runtimeRunContext) executeNative(_ context.Context, _ runtimeadapter.
 func persistNativeRuntimeReceipt(runDir string, started time.Time, result runtimesvc.Result, arguments []argpack.Item, operationErr error, run *runtimeRunContext) runtimeadapter.Receipt {
 	receipt := runtimeadapter.Receipt{
 		Schema: runtimeadapter.ReceiptSchema, SchemaVersion: runtimeadapter.ReceiptSchemaVersion,
-		Runtime: "native", Status: "fail", Object: result.Object, Entrypoint: result.Entry,
+		Runtime: "native", Status: "fail", ExecutionState: "failed", Object: result.Object, Entrypoint: result.Entry,
 		Output: cleanRuntimeOutput(result.Output), ExitState: result.ExitState,
 		StartedAt: started.UTC().Format(time.RFC3339Nano), CompletedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		DurationMS: result.DurationMS, TimedOut: result.ExitState == "timeout", ReceiptPath: filepath.Join(runDir, "result.json"),
 	}
 	if result.Status == "pass" && operationErr == nil {
 		receipt.Status = "pass"
+		receipt.ExecutionState = "completed"
+		receipt.OutputComplete = true
+	} else if result.ExitState == "timeout" {
+		receipt.ExecutionState = "timeout"
 	}
 	if result.ObjectFingerprint != nil {
 		receipt.ObjectSHA256 = result.ObjectFingerprint.SHA256

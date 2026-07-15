@@ -131,10 +131,13 @@ func packCommand(stdout io.Writer) *cobra.Command {
 }
 
 func packDocsCommand(stdout io.Writer, load func() (*packsvc.Registry, error), catalogSelectors func() []string) *cobra.Command {
-	var output string
+	var output, catalogName, tier string
 	cmd := &cobra.Command{
 		Use: "docs", Short: "Generate Markdown reference from resolved pack manifests", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if tier != "" && tier != "public" && tier != "internal" {
+				return fmt.Errorf("--tier must be public or internal")
+			}
 			registry, err := load()
 			if err != nil {
 				return err
@@ -142,6 +145,19 @@ func packDocsCommand(stdout io.Writer, load func() (*packsvc.Registry, error), c
 			items, err := selectedPacks(registry, nil, true, catalogSelectors())
 			if err != nil {
 				return err
+			}
+			if catalogName != "" || tier != "" {
+				filtered := items[:0]
+				for _, item := range items {
+					if catalogName != "" && item.Catalog != catalogName {
+						continue
+					}
+					if tier != "" && item.Document.Tier != tier {
+						continue
+					}
+					filtered = append(filtered, item)
+				}
+				items = filtered
 			}
 			body := packReferenceMarkdown(items)
 			if output == "" || output == "-" {
@@ -159,6 +175,8 @@ func packDocsCommand(stdout io.Writer, load func() (*packsvc.Registry, error), c
 		},
 	}
 	cmd.Flags().StringVar(&output, "output", "", "Markdown output path; default stdout")
+	cmd.Flags().StringVar(&catalogName, "catalog-name", "", "include only one resolved catalog name, such as builtin")
+	cmd.Flags().StringVar(&tier, "tier", "", "include only public or internal packs")
 	return cmd
 }
 
@@ -167,7 +185,7 @@ func packReferenceMarkdown(items []packsvc.Resolved) string {
 	sort.Slice(items, func(i, j int) bool { return items[i].Qualified < items[j].Qualified })
 	var b strings.Builder
 	b.WriteString("# Capability Pack Reference\n\n")
-	b.WriteString("This page is generated from the resolved `pack.json` contracts. Use `bofbench pack docs --output docs/pack-reference.md` to refresh it.\n\n")
+	b.WriteString("This page is generated from resolved `pack.json` contracts. Use `bofbench pack docs --catalog-name builtin --output docs/pack-reference.md` for the public catalog, or select another configured catalog explicitly.\n\n")
 	for _, item := range items {
 		document := item.Document
 		fmt.Fprintf(&b, "## `%s`\n\n%s\n\n", item.Qualified, document.Summary)
@@ -227,7 +245,7 @@ func packReferenceMarkdown(items []packsvc.Resolved) string {
 		}
 		b.WriteString("\n")
 	}
-	return b.String()
+	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
 func packShowCommand(stdout io.Writer, load func() (*packsvc.Registry, error)) *cobra.Command {

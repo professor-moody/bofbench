@@ -201,7 +201,7 @@ func executeSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath,
 		return runtimeadapter.Receipt{}, receiptErr
 	}
 	receipt := runtimeadapter.Receipt{
-		Schema: runtimeadapter.ReceiptSchema, SchemaVersion: runtimeadapter.ReceiptSchemaVersion, Runtime: "sliver", Status: "fail", Profile: opts.ProfileName,
+		Schema: runtimeadapter.ReceiptSchema, SchemaVersion: runtimeadapter.ReceiptSchemaVersion, Runtime: "sliver", Status: "fail", ExecutionState: "failed", Profile: opts.ProfileName,
 		Transport: "sliver", RemoteHost: opts.RemoteHost, Session: session, Entrypoint: "go", TimeoutMS: 90000, StartedAt: started.UTC().Format(time.RFC3339Nano),
 		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), DurationMS: time.Since(started).Milliseconds(),
 		ReceiptPath: filepath.Join(runDir, "result.json"),
@@ -223,11 +223,16 @@ func executeSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath,
 	}
 	if runErr == nil {
 		receipt.Status = "pass"
+		receipt.ExecutionState = "completed"
+		receipt.OutputComplete = true
 		receipt.ExitState = "success"
 	} else {
 		receipt.Error = runErr.Error()
 		receipt.ExitState = "error"
 		receipt.TimedOut = strings.Contains(strings.ToLower(receipt.Error), "timed out")
+		if receipt.TimedOut {
+			receipt.ExecutionState = "timeout"
+		}
 	}
 	receipt = redactReceiptValues(receipt, opts.SensitiveOutputFields, opts.SensitiveArgumentNames, opts.SensitiveValues)
 	if err := writeJSON(receipt.ReceiptPath, receipt); err != nil {
@@ -537,7 +542,7 @@ func verifyActiveState(ctx context.Context, stdout io.Writer, opts lab.RemoteOpt
 }
 
 func verifyCleanState(ctx context.Context, stdout io.Writer, opts lab.RemoteOptions) error {
-	script := `$ProgressPreference='SilentlyContinue'; $run=Get-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -ErrorAction SilentlyContinue; $remoteCanary=Get-ItemProperty -Path HKLM:\Software\BOFBench -Name RemoteCanary -ErrorAction SilentlyContinue; $services=@(Get-Service -Name 'BOFBench-*' -ErrorAction SilentlyContinue); $tasks=@(Get-ScheduledTask -TaskName 'BOFBench-*' -ErrorAction SilentlyContinue); $bad=(Test-Path "$env:TEMP\bofbench-active-marker.txt") -or (Test-Path "$env:TEMP\bofbench-process-marker.txt") -or ($null -ne (Get-ItemProperty -Path HKCU:\Software\BOFBench -ErrorAction SilentlyContinue)) -or ($null -ne $run.BOFBenchLab) -or ($null -ne $remoteCanary) -or (Test-Path 'C:\bofbench\target') -or (Test-Path 'C:\bofbench\proof') -or ($services.Count -gt 0) -or ($tasks.Count -gt 0); if($bad){Write-Error "BOFBench-managed state remains";exit 1}; Write-Output "LAB STATE PASS  expected=clean artifacts=0"`
+	script := `$ProgressPreference='SilentlyContinue'; $run=Get-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -ErrorAction SilentlyContinue; $remoteKey=Get-Item -Path HKLM:\Software\BOFBench -ErrorAction SilentlyContinue; $remoteCanary=Get-ItemProperty -Path HKLM:\Software\BOFBench -Name RemoteCanary -ErrorAction SilentlyContinue; $remoteValues=@(); if($remoteKey){$remoteValues=@($remoteKey.GetValueNames()|Where-Object{$_ -like 'BOFBench-Remote-*'})}; $services=@(Get-Service -Name 'BOFBench-*' -ErrorAction SilentlyContinue); $tasks=@(Get-ScheduledTask -TaskName 'BOFBench-*' -ErrorAction SilentlyContinue); $bad=(Test-Path "$env:TEMP\bofbench-active-marker.txt") -or (Test-Path "$env:TEMP\bofbench-process-marker.txt") -or ($null -ne (Get-ItemProperty -Path HKCU:\Software\BOFBench -ErrorAction SilentlyContinue)) -or ($null -ne $run.BOFBenchLab) -or ($null -ne $remoteCanary) -or ($remoteValues.Count -gt 0) -or (Test-Path 'C:\bofbench\target') -or (Test-Path 'C:\bofbench\proof') -or ($services.Count -gt 0) -or ($tasks.Count -gt 0); if($bad){Write-Error "BOFBench-managed state remains";exit 1}; Write-Output "LAB STATE PASS  expected=clean artifacts=0"`
 	return runRemotePowerShell(ctx, stdout, opts, script)
 }
 

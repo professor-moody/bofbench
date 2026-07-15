@@ -557,7 +557,7 @@ func persistRemoteRuntimeReceipt(report *RemoteRunReport, runDir string, operati
 	}
 	receipt := runtimeadapter.Receipt{
 		Schema: runtimeadapter.ReceiptSchema, SchemaVersion: runtimeadapter.ReceiptSchemaVersion,
-		Runtime: "lab", Status: report.Status, Profile: report.LabProfile,
+		Runtime: "lab", Status: report.Status, ExecutionState: "failed", Profile: report.LabProfile,
 		Transport: reportTransport(report), RemoteHost: report.Host, RemoteComputer: report.RemoteComputer,
 		StartedAt: report.StartedAt, CompletedAt: report.CompletedAt, DurationMS: report.DurationMS,
 		ReceiptPath: filepath.Join(runDir, "result.json"), Arguments: runtimeArgumentTypes(report.Arguments), TimeoutMS: report.TimeoutMS,
@@ -572,6 +572,12 @@ func persistRemoteRuntimeReceipt(report *RemoteRunReport, runDir string, operati
 		receipt.Output = cleanReceiptOutput(result.Output)
 		receipt.ExitState = result.ExitState
 		receipt.TimedOut = result.ExitState == "timeout"
+		if result.Status == "pass" && operationErr == nil {
+			receipt.ExecutionState = "completed"
+			receipt.OutputComplete = true
+		} else if receipt.TimedOut {
+			receipt.ExecutionState = "timeout"
+		}
 		if result.LoaderProcess != nil {
 			receipt.ExitCode = result.LoaderProcess.ExitCode
 		}

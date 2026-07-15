@@ -75,3 +75,19 @@ func TestProofPayloadVerifiesBeforeSensitiveOutputRedaction(t *testing.T) {
 		t.Fatalf("redacted output = %q", redacted[0])
 	}
 }
+
+func TestProofCapturesAndTopologyDefaults(t *testing.T) {
+	placeholders := map[string]string{}
+	captures := map[string]packsvc.ProofCapture{"$SPAWNED_PID": {Tag: "spawn", Field: "pid"}}
+	if err := applyProofCaptures([]string{"[spawn] status=complete pid=4242"}, captures, placeholders); err != nil {
+		t.Fatal(err)
+	}
+	if placeholders["$SPAWNED_PID"] != "4242" {
+		t.Fatalf("capture = %#v", placeholders)
+	}
+	document := packsvc.Document{Arguments: []packsvc.Argument{{Name: "target_host", TopologyValue: "target.computer_name"}, {Name: "domain", TopologyValue: "domain.name"}}}
+	arguments := topologyProofArguments(document, map[string]string{"domain": "explicit.example"}, map[string]string{"target.computer_name": "TARGET", "domain.name": "LAB"})
+	if arguments["target_host"] != "TARGET" || arguments["domain"] != "explicit.example" {
+		t.Fatalf("topology arguments = %#v", arguments)
+	}
+}

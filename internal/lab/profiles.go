@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	ProfilesSchema        = "bofbench.labs"
-	ProfilesSchemaVersion = 2
-	SelectionSchema       = "bofbench.lab-selection"
-	SelectionVersion      = 1
+	ProfilesSchema                = "bofbench.labs"
+	ProfilesSchemaVersion         = 3
+	PreviousProfilesSchemaVersion = 2
+	SelectionSchema               = "bofbench.lab-selection"
+	SelectionVersion              = 1
 )
 
 var validProfileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -44,11 +45,29 @@ type Profile struct {
 }
 
 type ProfilesConfig struct {
-	Schema        string             `json:"schema"`
-	SchemaVersion int                `json:"schema_version"`
-	Active        string             `json:"active,omitempty"`
-	Profiles      map[string]Profile `json:"profiles"`
-	UpdatedAt     string             `json:"updated_at,omitempty"`
+	Schema         string                     `json:"schema"`
+	SchemaVersion  int                        `json:"schema_version"`
+	Active         string                     `json:"active,omitempty"`
+	Profiles       map[string]Profile         `json:"profiles"`
+	ActiveTopology string                     `json:"active_topology,omitempty"`
+	Topologies     map[string]ProfileTopology `json:"topologies,omitempty"`
+	UpdatedAt      string                     `json:"updated_at,omitempty"`
+}
+
+// ProfileTopology gives multi-host proofs stable role names without copying
+// host or authentication details out of the referenced profiles.
+type ProfileTopology struct {
+	Execution        string `json:"execution"`
+	Target           string `json:"target,omitempty"`
+	DomainController string `json:"domain_controller,omitempty"`
+}
+
+type ResolvedTopology struct {
+	Name             string           `json:"name"`
+	Source           string           `json:"source"`
+	Execution        ResolvedProfile  `json:"execution"`
+	Target           *ResolvedProfile `json:"target,omitempty"`
+	DomainController *ResolvedProfile `json:"domain_controller,omitempty"`
 }
 
 type ProjectSelection struct {
@@ -87,7 +106,7 @@ func DefaultProfile(provider string) Profile {
 }
 
 func NewProfilesConfig() ProfilesConfig {
-	return ProfilesConfig{Schema: ProfilesSchema, SchemaVersion: ProfilesSchemaVersion, Profiles: map[string]Profile{}}
+	return ProfilesConfig{Schema: ProfilesSchema, SchemaVersion: ProfilesSchemaVersion, Profiles: map[string]Profile{}, Topologies: map[string]ProfileTopology{}}
 }
 
 func ProfilesPath() string {
@@ -124,6 +143,12 @@ func LoadProfiles(path string) (ProfilesConfig, error) {
 	if err := decodeStrict(data, &config); err != nil {
 		return ProfilesConfig{}, fmt.Errorf("parse %s: %w", path, err)
 	}
+	if config.Schema == ProfilesSchema && config.SchemaVersion == PreviousProfilesSchemaVersion {
+		config.SchemaVersion = ProfilesSchemaVersion
+		if config.Topologies == nil {
+			config.Topologies = map[string]ProfileTopology{}
+		}
+	}
 	if err := ValidateProfiles(config); err != nil {
 		return ProfilesConfig{}, fmt.Errorf("%s: %w", path, err)
 	}
@@ -136,6 +161,9 @@ func SaveProfiles(path string, config ProfilesConfig) error {
 	}
 	if config.Profiles == nil {
 		config.Profiles = map[string]Profile{}
+	}
+	if config.Topologies == nil {
+		config.Topologies = map[string]ProfileTopology{}
 	}
 	config.Schema = ProfilesSchema
 	config.SchemaVersion = ProfilesSchemaVersion
@@ -165,9 +193,30 @@ func ValidateProfiles(config ProfilesConfig) error {
 			return fmt.Errorf("profile %q: %w", name, err)
 		}
 	}
+	for name, topology := range config.Topologies {
+		if err := ValidateProfileName(name); err != nil {
+			return fmt.Errorf("topology: %w", err)
+		}
+		if strings.TrimSpace(topology.Execution) == "" {
+			return fmt.Errorf("topology %q requires an execution profile", name)
+		}
+		for role, profileName := range map[string]string{"execution": topology.Execution, "target": topology.Target, "domain_controller": topology.DomainController} {
+			if profileName == "" {
+				continue
+			}
+			if _, ok := config.Profiles[profileName]; !ok {
+				return fmt.Errorf("topology %q role %s references missing profile %q", name, role, profileName)
+			}
+		}
+	}
 	if config.Active != "" {
 		if _, ok := config.Profiles[config.Active]; !ok {
 			return fmt.Errorf("active profile %q does not exist", config.Active)
+		}
+	}
+	if config.ActiveTopology != "" {
+		if _, ok := config.Topologies[config.ActiveTopology]; !ok {
+			return fmt.Errorf("active topology %q does not exist", config.ActiveTopology)
 		}
 	}
 	return nil
@@ -298,6 +347,11 @@ func RemoveProfile(config *ProfilesConfig, name string) error {
 	if _, ok := config.Profiles[name]; !ok {
 		return fmt.Errorf("profile %q does not exist", name)
 	}
+	for topologyName, topology := range config.Topologies {
+		if topology.Execution == name || topology.Target == name || topology.DomainController == name {
+			return fmt.Errorf("profile %q is used by topology %q; remove or update the topology first", name, topologyName)
+		}
+	}
 	delete(config.Profiles, name)
 	if config.Active == name {
 		config.Active = ""
@@ -323,6 +377,127 @@ func ProfileNames(config ProfilesConfig) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func TopologyNames(config ProfilesConfig) []string {
+	names := make([]string, 0, len(config.Topologies))
+	for name := range config.Topologies {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func AddTopology(config *ProfilesConfig, name string, topology ProfileTopology, replace bool) error {
+	if config == nil {
+		return fmt.Errorf("profiles config is nil")
+	}
+	if err := ValidateProfileName(name); err != nil {
+		return err
+	}
+	if config.Topologies == nil {
+		config.Topologies = map[string]ProfileTopology{}
+	}
+	if _, exists := config.Topologies[name]; exists && !replace {
+		return fmt.Errorf("topology %q already exists; use --replace to update it", name)
+	}
+	if strings.TrimSpace(topology.Execution) == "" {
+		return fmt.Errorf("topology %q requires an execution profile", name)
+	}
+	for role, profileName := range map[string]string{"execution": topology.Execution, "target": topology.Target, "domain_controller": topology.DomainController} {
+		if profileName == "" {
+			continue
+		}
+		if _, ok := config.Profiles[profileName]; !ok {
+			return fmt.Errorf("topology %q role %s references missing profile %q; available: %s", name, role, profileName, strings.Join(ProfileNames(*config), ", "))
+		}
+	}
+	config.Topologies[name] = topology
+	if config.ActiveTopology == "" && len(config.Topologies) == 1 {
+		config.ActiveTopology = name
+	}
+	return nil
+}
+
+func RemoveTopology(config *ProfilesConfig, name string) error {
+	if config == nil {
+		return fmt.Errorf("profiles config is nil")
+	}
+	if _, ok := config.Topologies[name]; !ok {
+		return fmt.Errorf("topology %q does not exist", name)
+	}
+	delete(config.Topologies, name)
+	if config.ActiveTopology == name {
+		config.ActiveTopology = ""
+	}
+	return nil
+}
+
+func UseTopology(config *ProfilesConfig, name string) error {
+	if config == nil {
+		return fmt.Errorf("profiles config is nil")
+	}
+	if _, ok := config.Topologies[name]; !ok {
+		return fmt.Errorf("topology %q does not exist; available: %s", name, strings.Join(TopologyNames(*config), ", "))
+	}
+	config.ActiveTopology = name
+	return nil
+}
+
+// ResolveTopology selects a reusable role mapping. Profiles remain the only
+// place that contains connection details.
+func ResolveTopology(explicit, profilesPath string) (ResolvedTopology, error) {
+	if strings.TrimSpace(profilesPath) == "" {
+		profilesPath = ProfilesPath()
+	}
+	config, err := LoadProfiles(profilesPath)
+	if err != nil {
+		return ResolvedTopology{}, err
+	}
+	selected := strings.TrimSpace(explicit)
+	source := "--topology"
+	if selected == "" {
+		selected = strings.TrimSpace(os.Getenv("BOFBENCH_TOPOLOGY"))
+		source = "BOFBENCH_TOPOLOGY"
+	}
+	if selected == "" {
+		selected = config.ActiveTopology
+		source = "active"
+	}
+	if selected == "" {
+		return ResolvedTopology{}, fmt.Errorf("select a topology with --topology, BOFBENCH_TOPOLOGY, or 'bofbench lab topology use'; available: %s", strings.Join(TopologyNames(config), ", "))
+	}
+	topology, ok := config.Topologies[selected]
+	if !ok {
+		return ResolvedTopology{}, fmt.Errorf("topology %q selected by %s does not exist; available: %s", selected, source, strings.Join(TopologyNames(config), ", "))
+	}
+	resolveRole := func(name, role string) (*ResolvedProfile, error) {
+		if name == "" {
+			return nil, nil
+		}
+		profile, ok := config.Profiles[name]
+		if !ok {
+			return nil, fmt.Errorf("topology %q role %s references missing profile %q", selected, role, name)
+		}
+		resolved := &ResolvedProfile{Name: name, Source: "topology:" + selected + "/" + role, Profile: NormalizeProfile(profile)}
+		return resolved, nil
+	}
+	execution, err := resolveRole(topology.Execution, "execution")
+	if err != nil || execution == nil {
+		if err == nil {
+			err = fmt.Errorf("topology %q has no execution profile", selected)
+		}
+		return ResolvedTopology{}, err
+	}
+	target, err := resolveRole(topology.Target, "target")
+	if err != nil {
+		return ResolvedTopology{}, err
+	}
+	dc, err := resolveRole(topology.DomainController, "domain_controller")
+	if err != nil {
+		return ResolvedTopology{}, err
+	}
+	return ResolvedTopology{Name: selected, Source: source, Execution: *execution, Target: target, DomainController: dc}, nil
 }
 
 func SaveProjectSelection(path, profile string) error {
