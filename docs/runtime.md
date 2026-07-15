@@ -8,6 +8,15 @@ bofbench run <project-or-object> --via native|lab|sliver|cobaltstrike
 
 All four paths implement the same runtime-adapter contract: detect, prepare, execute, optional cleanup, and receipt generation.
 
+Before running, get a concise readiness view instead of a long diagnostic report:
+
+```bash
+bofbench runtime status --lab devbox
+bofbench runtime sessions --via sliver --lab devbox
+```
+
+The first command shows the native loader, remote lab, Sliver configuration/session match, and licensed Cobalt Strike availability. The second lists selectable Sliver sessions for the named profile.
+
 ## Native Windows
 
 On Windows, `native` launches the selected COFF loader in a child process with timeout, output limits, exception reporting, and per-section memory protections. x64 and x86 objects dispatch to separate helpers.
@@ -55,7 +64,7 @@ The licensed adapter generates an ephemeral Aggressor script, uses `agscript`, p
 
 ## One receipt schema
 
-Every adapter writes `runs/<id>/result.json` using `bofbench.runtime-receipt` version 3. Receipts include:
+Every adapter writes `runs/<id>/result.json` using `bofbench.runtime-receipt` version 4. Receipts include:
 
 - selected profile and remote computer identity;
 - runtime, session, and task identifier when present;
@@ -64,7 +73,9 @@ Every adapter writes `runs/<id>/result.json` using `bofbench.runtime-receipt` ve
 - captured output, timeout, exit state, duration, and error;
 - cleanup invocation and result when requested.
 
-Version 3 records the names of sensitive arguments and redacted output fields, never their values. Remote-lab runs apply that policy to the remote developer report, collected lab report, event stream, final receipt, and proof report. Credential Manager packs automatically use the existing interactive Windows session because the SSH transport has a different logon-session credential context.
+Version 4 distinguishes `submitted`, `running`, `completed`, `failed`, and `timeout`, and records whether task output is complete. A C2 task is never reported as passed merely because it was submitted.
+
+Sensitive receipts record the names of protected arguments and redacted output fields, never their values. Remote-lab runs apply that policy to the remote developer report, collected lab report, event stream, final receipt, and proof report. Credential Manager packs automatically use the existing interactive Windows session because the SSH transport has a different logon-session credential context.
 
 Runtime output becomes **Observed** analysis evidence only when the receipt object hash exactly matches the analyzed object.
 

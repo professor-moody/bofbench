@@ -100,7 +100,7 @@ Profiles then live in `$BOFBENCH_CONFIG_HOME/labs.json`. Without that variable, 
 ```json
 {
   "schema": "bofbench.labs",
-  "schema_version": 2,
+  "schema_version": 3,
   "active": "dedicated",
   "profiles": {
     "dedicated": {
@@ -116,11 +116,45 @@ Profiles then live in `$BOFBENCH_CONFIG_HOME/labs.json`. Without that variable, 
       "build_mode": "auto",
       "sliver_session": "DEDICATED-BOF"
     }
+  },
+  "active_topology": "dedicated-standalone",
+  "topologies": {
+    "dedicated-standalone": {
+      "execution": "development",
+      "target": "dedicated"
+    }
   }
 }
 ```
 
 The file is written with user-only permissions. Passwords and private-key contents are rejected by design because the schema has no fields for them.
+
+## Reuse named multi-host topologies
+
+Topologies contain profile names only. They let the same proof contract select an execution host, target host, and optional domain controller without copying any host or authentication data into a BOF project:
+
+```bash
+bofbench lab topology add dedicated-standalone \
+  --execution devbox \
+  --target dedicated
+
+bofbench lab topology add dedicated-domain \
+  --execution devbox \
+  --target domain-member \
+  --domain-controller domain-dc
+
+bofbench lab topology list
+bofbench lab topology status dedicated-domain
+```
+
+Run topology-aware proofs directly:
+
+```bash
+bofbench pack prove --all --catalog internal \
+  --via lab --topology dedicated-domain
+```
+
+Pack schema version 4 can fill omitted values from `target.computer_name`, `domain_controller.computer_name`, `domain.name`, and `domain.base_dn`. State checks run on the role named by the pack, so a remote action is verified on the target rather than on the execution host.
 
 ## Prepare a fresh machine
 

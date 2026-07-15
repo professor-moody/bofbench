@@ -1,6 +1,6 @@
 # Capability Pack Reference
 
-This page is generated from the resolved `pack.json` contracts. Use `bofbench pack docs --output docs/pack-reference.md` to refresh it.
+This page is generated from resolved `pack.json` contracts. Use `bofbench pack docs --catalog-name builtin --output docs/pack-reference.md` for the public catalog, or select another configured catalog explicitly.
 
 ## `builtin/active-actions`
 
@@ -92,6 +92,26 @@ report local workgroup or domain join context
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
 
+## `builtin/domain-controller-inventory`
+
+Enumerate bounded domain-controller computer accounts and operating-system metadata
+
+- Can do: bounded domain-controller inventory
+- Effects: reaches a domain controller; reads directory data
+- Needs: privilege=user; network=domain controller; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `domain_controller_inventory`
+- Live proofs: domain-topology (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `server` | `string` | no | no | `` | exact domain controller; topology supplies this when omitted |
+| `base_dn` | `string` | no | no | `` | LDAP search base; topology supplies the domain base DN when omitted |
+| `filter` | `string` | no | no | `(&(objectCategory=computer)(userAccountControl:1.2.840.113556.1.4.803:=8192))` | bounded LDAP filter |
+| `attributes` | `string` | no | no | `dNSHostName,operatingSystem,operatingSystemVersion` | comma-separated attributes (maximum eight) |
+| `result_limit` | `int` | no | no | `25` | maximum directory entries (1-100) |
+
 ## `builtin/domain-discovery`
 
 Report domain join state and the local join name
@@ -101,6 +121,26 @@ Report domain join state and the local join name
 - Needs: privilege=user; network=local; platform=windows/x64,x86
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
+
+## `builtin/domain-trust-inventory`
+
+Enumerate bounded trusted-domain direction, type, and attribute metadata
+
+- Can do: bounded domain trust inventory
+- Effects: reaches a domain controller; reads directory data
+- Needs: privilege=user; network=domain controller; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `domain_trust_inventory`
+- Live proofs: domain-topology (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `server` | `string` | no | no | `` | exact domain controller; topology supplies this when omitted |
+| `base_dn` | `string` | no | no | `` | LDAP search base; topology supplies the domain base DN when omitted |
+| `filter` | `string` | no | no | `(objectClass=trustedDomain)` | bounded LDAP filter |
+| `attributes` | `string` | no | no | `name,trustDirection,trustType,trustAttributes` | comma-separated attributes (maximum eight) |
+| `result_limit` | `int` | no | no | `25` | maximum directory entries (1-100) |
 
 ## `builtin/filesystem`
 
@@ -228,6 +268,46 @@ install an inert current-user Run-key persistence proof for the authorized lab
 - Version: `1.0.0`
 - Analyzer signatures: `run_key_persistence`
 
+## `builtin/ldap-account-inventory`
+
+Enumerate bounded domain account identity and control metadata
+
+- Can do: bounded LDAP account inventory
+- Effects: reaches a domain controller; reads directory data
+- Needs: privilege=user; network=domain controller; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `ldap_account_inventory`
+- Live proofs: domain-topology (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `server` | `string` | no | no | `` | exact domain controller; topology supplies this when omitted |
+| `base_dn` | `string` | no | no | `` | LDAP search base; topology supplies the domain base DN when omitted |
+| `filter` | `string` | no | no | `(&(objectCategory=person)(objectClass=user))` | bounded LDAP filter |
+| `attributes` | `string` | no | no | `sAMAccountName,userPrincipalName,userAccountControl` | comma-separated attributes (maximum eight) |
+| `result_limit` | `int` | no | no | `25` | maximum directory entries (1-100) |
+
+## `builtin/ldap-delegation-inventory`
+
+Enumerate bounded constrained, resource-based, and unconstrained delegation metadata
+
+- Can do: bounded LDAP delegation inventory
+- Effects: reaches a domain controller; reads directory data
+- Needs: privilege=user; network=domain controller; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `ldap_delegation_inventory`
+- Live proofs: domain-topology (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `server` | `string` | no | no | `` | exact domain controller; topology supplies this when omitted |
+| `base_dn` | `string` | no | no | `` | LDAP search base; topology supplies the domain base DN when omitted |
+| `filter` | `string` | no | no | `(|(msDS-AllowedToDelegateTo=*)(msDS-AllowedToActOnBehalfOfOtherIdentity=*)(userAccountControl:1.2.840.113556.1.4.803:=524288))` | bounded LDAP filter |
+| `attributes` | `string` | no | no | `sAMAccountName,userAccountControl,msDS-AllowedToDelegateTo,msDS-AllowedToActOnBehalfOfOtherIdentity` | comma-separated attributes (maximum eight) |
+| `result_limit` | `int` | no | no | `25` | maximum directory entries (1-100) |
+
 ## `builtin/ldap-query`
 
 run a bounded LDAP query with an explicit base, filter, and attribute list
@@ -245,6 +325,26 @@ run a bounded LDAP query with an explicit base, filter, and attribute list
 | `base_dn` | `string` | no | no | `` | LDAP base DN; empty derives the current domain |
 | `filter` | `string` | no | no | `(objectClass=*)` | LDAP filter |
 | `attributes` | `string` | no | no | `distinguishedName` | comma-separated attributes (maximum eight) |
+| `result_limit` | `int` | no | no | `25` | maximum directory entries (1-100) |
+
+## `builtin/ldap-spn-inventory`
+
+Enumerate bounded accounts and their registered service-principal names
+
+- Can do: bounded LDAP SPN inventory
+- Effects: reaches a domain controller; reads directory data
+- Needs: privilege=user; network=domain controller; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `ldap_spn_inventory`
+- Live proofs: domain-topology (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `server` | `string` | no | no | `` | exact domain controller; topology supplies this when omitted |
+| `base_dn` | `string` | no | no | `` | LDAP search base; topology supplies the domain base DN when omitted |
+| `filter` | `string` | no | no | `(servicePrincipalName=*)` | bounded LDAP filter |
+| `attributes` | `string` | no | no | `sAMAccountName,servicePrincipalName` | comma-separated attributes (maximum eight) |
 | `result_limit` | `int` | no | no | `25` | maximum directory entries (1-100) |
 
 ## `builtin/named-pipe-inventory`
@@ -365,6 +465,39 @@ enumerate a bounded snapshot of local processes
 - Needs: privilege=user; network=none; platform=windows/x64,x86
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
+
+## `builtin/process-memory-map`
+
+enumerate bounded committed virtual-memory regions for one explicitly selected process
+
+- Can do: bounded committed-memory region inventory; mapped image and protection discovery
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `process_memory_map`
+- Live proofs: target-map (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` | exact process identifier |
+| `result_limit` | `int` | no | no | `64` | maximum committed regions (1-512) |
+
+## `builtin/process-mitigation-inventory`
+
+report bounded mitigation-policy flags for one explicitly selected process
+
+- Can do: bounded process mitigation policy inventory; DEP, ASLR, dynamic-code, CFG, signature, and child-process policy discovery
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `process_mitigation_inventory`
+- Live proofs: target-policies (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` | exact process identifier |
 
 ## `builtin/process-search`
 
@@ -566,6 +699,23 @@ enumerate bounded thread identifiers and priorities for one process
 | `target_pid` | `int` | yes | no | `` | exact process identifier |
 | `result_limit` | `int` | no | no | `64` | maximum rows (1-512) |
 
+## `builtin/thread-start-inventory`
+
+enumerate bounded thread start addresses and containing process regions for one selected process
+
+- Can do: bounded thread start-address inventory; thread start region and mapped-image discovery
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `thread_start_inventory`
+- Live proofs: target-starts (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` | exact process identifier |
+| `result_limit` | `int` | no | no | `64` | maximum threads (1-512) |
+
 ## `builtin/token-context`
 
 report token elevation and integrity context
@@ -575,4 +725,3 @@ report token elevation and integrity context
 - Needs: privilege=user; network=none; platform=windows/x64,x86
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
-

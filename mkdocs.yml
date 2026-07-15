@@ -52,7 +52,9 @@ nav:
       - Export: staging.md
       - Operator Playbooks: playbooks.md
       - Deep Capability Workflows: deep-capabilities.md
+      - Native Process Depth: native-process-depth.md
       - Standalone Remote Operations: remote-operations.md
+      - Cross-Host and Domain Topologies: cross-host-domain.md
       - Live Capability Proof: live-proof.md
   - Reference:
       - Operator TUI: tui.md

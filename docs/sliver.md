@@ -21,7 +21,8 @@ This stores only the selector. Sliver client configuration and authentication st
 
 ```bash
 bofbench sliver setup --lab dedicated
-bofbench sliver sessions --lab dedicated
+bofbench runtime status --lab dedicated
+bofbench runtime sessions --via sliver --lab dedicated
 ```
 
 Setup discovers the client and configuration, checks connectivity, and verifies `coff-loader`. It never installs a dependency implicitly. Use `--install` only when you explicitly want setup to install it:
@@ -46,6 +47,8 @@ The adapter:
 4. selects the exact live session;
 5. loads and executes the extension with typed values;
 6. captures full output, task/session identifiers, timeout, and exit state in `runs/<id>/result.json`.
+
+The receipt is complete only after Sliver reports task completion and BOFBench captures the task output. A submitted task with no completed output remains `submitted`; it is not converted into a pass.
 
 Use `--session <id-or-name>` for a one-command override. Otherwise `--lab`, `BOFBENCH_LAB`, project default, and active-profile selection apply in that order.
 
