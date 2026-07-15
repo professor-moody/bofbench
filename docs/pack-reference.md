@@ -288,6 +288,26 @@ Enumerate bounded domain account identity and control metadata
 | `attributes` | `string` | no | no | `sAMAccountName,userPrincipalName,userAccountControl` | comma-separated attributes (maximum eight) |
 | `result_limit` | `int` | no | no | `25` | maximum directory entries (1-100) |
 
+## `builtin/ldap-computer-inventory`
+
+Enumerate bounded domain computer identity, operating-system, and account metadata
+
+- Can do: bounded LDAP computer inventory
+- Effects: reaches a domain controller; reads directory data
+- Needs: privilege=user; network=domain controller; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `ldap_computer_inventory`
+- Live proofs: domain-topology (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `server` | `string` | no | no | `` | exact domain controller; topology supplies this when omitted |
+| `base_dn` | `string` | no | no | `` | LDAP search base; topology supplies the domain base DN when omitted |
+| `filter` | `string` | no | no | `(objectCategory=computer)` | bounded LDAP filter |
+| `attributes` | `string` | no | no | `dNSHostName,operatingSystem,operatingSystemVersion,userAccountControl` | comma-separated attributes (maximum eight) |
+| `result_limit` | `int` | no | no | `25` | maximum directory entries (1-100) |
+
 ## `builtin/ldap-delegation-inventory`
 
 Enumerate bounded constrained, resource-based, and unconstrained delegation metadata
@@ -306,6 +326,46 @@ Enumerate bounded constrained, resource-based, and unconstrained delegation meta
 | `base_dn` | `string` | no | no | `` | LDAP search base; topology supplies the domain base DN when omitted |
 | `filter` | `string` | no | no | `(|(msDS-AllowedToDelegateTo=*)(msDS-AllowedToActOnBehalfOfOtherIdentity=*)(userAccountControl:1.2.840.113556.1.4.803:=524288))` | bounded LDAP filter |
 | `attributes` | `string` | no | no | `sAMAccountName,userAccountControl,msDS-AllowedToDelegateTo,msDS-AllowedToActOnBehalfOfOtherIdentity` | comma-separated attributes (maximum eight) |
+| `result_limit` | `int` | no | no | `25` | maximum directory entries (1-100) |
+
+## `builtin/ldap-gpo-inventory`
+
+Enumerate bounded Group Policy object identity, version, and filesystem location metadata
+
+- Can do: bounded LDAP GPO inventory
+- Effects: reaches a domain controller; reads directory data
+- Needs: privilege=user; network=domain controller; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `ldap_gpo_inventory`
+- Live proofs: domain-topology (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `server` | `string` | no | no | `` | exact domain controller; topology supplies this when omitted |
+| `base_dn` | `string` | no | no | `` | LDAP search base; topology supplies the domain base DN when omitted |
+| `filter` | `string` | no | no | `(objectClass=groupPolicyContainer)` | bounded LDAP filter |
+| `attributes` | `string` | no | no | `displayName,name,versionNumber,gPCFileSysPath` | comma-separated attributes (maximum eight) |
+| `result_limit` | `int` | no | no | `25` | maximum directory entries (1-100) |
+
+## `builtin/ldap-group-inventory`
+
+Enumerate bounded domain group identity, scope, and membership metadata
+
+- Can do: bounded LDAP group inventory
+- Effects: reaches a domain controller; reads directory data
+- Needs: privilege=user; network=domain controller; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `ldap_group_inventory`
+- Live proofs: domain-topology (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `server` | `string` | no | no | `` | exact domain controller; topology supplies this when omitted |
+| `base_dn` | `string` | no | no | `` | LDAP search base; topology supplies the domain base DN when omitted |
+| `filter` | `string` | no | no | `(objectCategory=group)` | bounded LDAP filter |
+| `attributes` | `string` | no | no | `sAMAccountName,groupType,member` | comma-separated attributes (maximum eight) |
 | `result_limit` | `int` | no | no | `25` | maximum directory entries (1-100) |
 
 ## `builtin/ldap-query`
@@ -406,6 +466,24 @@ Report the Windows computer name and Winsock host name from the current network 
 - Version: `1.0.0`
 - Analyzer signatures: `host_identity`
 
+## `builtin/object-namespace-inventory`
+
+enumerate bounded entries from one Windows object-manager directory
+
+- Can do: bounded Windows object-manager namespace inventory
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `object_namespace_inventory`
+- Live proofs: base-named-objects (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `directory` | `wstring` | no | no | `\BaseNamedObjects` | object-manager directory such as \BaseNamedObjects |
+| `prefix` | `string` | no | no | `` | case-insensitive name prefix; empty matches all |
+| `result_limit` | `int` | no | no | `64` | maximum objects (1-512) |
+
 ## `builtin/offensive-lab`
 
 deep discovery plus observable reversible action primitives
@@ -455,6 +533,40 @@ Enumerate a bounded local process snapshot
 | --- | --- | --- | --- | --- | --- |
 | `process_filter` | `string` | no | no | `` | case-insensitive process image substring; empty matches all |
 | `result_limit` | `int` | no | no | `25` | maximum matching process rows (1-256) |
+
+## `builtin/process-image-inventory`
+
+enumerate bounded loaded images for one explicitly selected process
+
+- Can do: bounded loaded-image inventory for one selected process; module base, size, and path discovery
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `process_image_inventory`
+- Live proofs: target-images (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` | process identifier |
+| `module_filter` | `string` | no | no | `` | case-insensitive module-name substring; empty matches all |
+| `result_limit` | `int` | no | no | `64` | maximum images (1-512) |
+
+## `builtin/process-job-inventory`
+
+report job-object membership for one explicitly selected process
+
+- Can do: process job-object membership discovery
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `process_job_inventory`
+- Live proofs: target-job (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` | process identifier |
 
 ## `builtin/process-list`
 
@@ -714,6 +826,23 @@ enumerate bounded thread start addresses and containing process regions for one 
 | Argument | Type | Required | Sensitive | Default | Description |
 | --- | --- | --- | --- | --- | --- |
 | `target_pid` | `int` | yes | no | `` | exact process identifier |
+| `result_limit` | `int` | no | no | `64` | maximum threads (1-512) |
+
+## `builtin/thread-state-inventory`
+
+enumerate bounded thread scheduling and execution-time state for one selected process
+
+- Can do: bounded thread scheduling-state inventory; thread priority and execution-time discovery
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `thread_state_inventory`
+- Live proofs: target-thread-state (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` | process identifier |
 | `result_limit` | `int` | no | no | `64` | maximum threads (1-512) |
 
 ## `builtin/token-context`

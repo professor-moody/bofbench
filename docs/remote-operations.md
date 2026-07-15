@@ -86,7 +86,20 @@ bofbench run bofs/remote-wmi --via lab --lab devbox \
 
 The pack constructs `\\DEVBOX\ROOT\CIMV2`, applies the current authorized security context, and stops at the supplied result limit.
 
-## Stage and remove one hash-matched file
+## Stage and remove a file
+
+Direct operator-controlled write and removal use `guard_mode=none` and may overwrite when requested:
+
+```bash
+bofbench new remote-stage --pack internal/remote-file-stage
+bofbench run bofs/remote-stage --via lab --lab devbox \
+  --arg target_host=DEVBOX --arg share='C$' \
+  --arg relative_path='Temp\operator.bin' \
+  --arg content=@file:/absolute/path/operator.bin \
+  --arg guard_mode=none --arg overwrite=1
+```
+
+Select hash guards when you want content validation and guarded cleanup:
 
 ```bash
 bofbench new remote-stage --pack internal/remote-file-stage
@@ -95,6 +108,7 @@ bofbench run bofs/remote-stage --via lab --lab devbox \
   --arg share='C$' \
   --arg relative_path='bofbench\proof\operator-canary.bin' \
   --arg content=/absolute/path/to/operator-canary.bin \
+  --arg guard_mode=hash \
   --arg content_sha256=<SHA256> \
   --arg overwrite=0
 
@@ -102,10 +116,42 @@ bofbench run bofs/remote-stage --via lab --lab devbox --cleanup \
   --arg target_host=DEVBOX \
   --arg share='C$' \
   --arg relative_path='bofbench\proof\operator-canary.bin' \
+  --arg guard_mode=hash \
   --arg content_sha256=<SHA256>
 ```
 
-Staging refuses content whose supplied hash does not match. Cleanup re-hashes the existing remote file and refuses deletion when the digest differs, so it cannot silently remove changed content.
+Hash mode refuses content whose supplied hash does not match and re-hashes before removal. None mode performs the exact supplied operation without a hash requirement.
+
+## Create, replace, or delete a remote registry value
+
+```bash
+bofbench new remote-reg-write --pack internal/remote-registry-write
+bofbench run bofs/remote-reg-write --via lab --lab devbox \
+  --arg target_host=DEVBOX --arg hive=HKLM \
+  --arg key_path='Software\OperatorLab' --arg value_name=Command \
+  --arg operation=set --arg value_type=3 \
+  --arg content=@file:/absolute/path/value.bin \
+  --arg guard_mode=none
+
+bofbench run bofs/remote-reg-write --via lab --lab devbox \
+  --arg target_host=DEVBOX --arg hive=HKLM \
+  --arg key_path='Software\OperatorLab' --arg value_name=Command \
+  --arg operation=delete
+```
+
+`operation=create` refuses an existing value. `operation=set` creates or replaces it. `operation=delete` removes it. Cleanup can run with no guard, a type/identity guard, or a content-hash guard.
+
+## Execute through WinRM
+
+```bash
+bofbench new remote-winrm --pack internal/remote-winrm-execute
+bofbench run bofs/remote-winrm --via lab --topology dedicated-standalone \
+  --arg command='whoami /all' \
+  --arg auth_mode=current \
+  --arg timeout_ms=120000 --arg output_limit=16384
+```
+
+For explicit network credentials, use `auth_mode=new_credentials`, `username=@env:...`, and `password=@prompt`. The Windows child receives the supplied network-only context; receipts redact credentials and collected output fields.
 
 ## Execute and clean one exact remote task
 

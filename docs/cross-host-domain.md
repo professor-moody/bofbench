@@ -58,9 +58,29 @@ bofbench pack prove builtin/ldap-account-inventory \
   --via lab --topology dedicated-domain
 bofbench pack prove internal/ldap-acl-read \
   --via lab --topology dedicated-domain
+bofbench pack prove ldap-group-inventory \
+  --via lab --topology dedicated-domain
+bofbench pack prove ldap-computer-inventory \
+  --via lab --topology dedicated-domain
+bofbench pack prove ldap-gpo-inventory \
+  --via lab --topology dedicated-domain
 ```
 
-The domain packs cover bounded controller, account, SPN, delegation, trust, and ACL discovery. Stateful remote operations target the member profile, never the domain controller. BOFBench does not scan hosts, propagate, disable security controls, or reuse credentials beyond the operator-supplied target.
+The domain packs accept an explicit server, base DN, LDAP filter, attribute set, paging contract, and result limit. They cover controllers, accounts, groups, computers, GPOs, SPNs, delegation, trusts, and ACLs.
+
+Request and inspect an exact Kerberos service context:
+
+```bash
+bofbench new ticket --pack internal/kerberos-service-ticket-request
+bofbench run bofs/ticket --via lab --topology dedicated-domain \
+  --arg spn='HOST/domain-member.lab.example' \
+  --arg auth_mode=current \
+  --arg return_token=0
+```
+
+Purge an exact cache selection—or explicitly request a broader purge—using `internal/kerberos-ticket-purge`. Ticket/token bytes are returned only when explicitly requested and remain redacted from stored receipts.
+
+State-changing remote operations target the supplied member profile in the acceptance topology. The packs themselves accept operator-supplied targets and do not impose BOFBench fixture names.
 
 ## Teardown standard
 

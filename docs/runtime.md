@@ -13,9 +13,17 @@ Before running, get a concise readiness view instead of a long diagnostic report
 ```bash
 bofbench runtime status --lab devbox
 bofbench runtime sessions --via sliver --lab devbox
+bofbench runtime wait --via sliver --lab devbox --timeout 10m
 ```
 
 The first command shows the native loader, remote lab, Sliver configuration/session match, and licensed Cobalt Strike availability. The second lists selectable Sliver sessions for the named profile.
+
+`runtime wait` polls the selected adapter until a profile-matching session exists or the timeout expires. It does not submit a BOF. This is useful when a Sliver implant is reconnecting before a proof lane:
+
+```bash
+bofbench runtime wait --via sliver --lab devbox --timeout 10m --interval 2s
+bofbench pack prove internal/thread-hijack-execute --via sliver --lab devbox
+```
 
 ## Native Windows
 

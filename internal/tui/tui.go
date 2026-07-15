@@ -60,18 +60,21 @@ type tuiArgument struct {
 }
 
 type runEntry struct {
-	Path      string
-	Report    string
-	Source    string
-	Status    string
-	Runtime   string
-	Kind      string
-	ExitState string
-	Artifact  string
-	Summary   string
-	Events    []eventEntry
-	Findings  []findingEntry
-	ModTime   time.Time
+	Path           string
+	Report         string
+	Source         string
+	Status         string
+	Runtime        string
+	Kind           string
+	ExitState      string
+	TaskID         string
+	ExecutionState string
+	OutputComplete bool
+	Artifact       string
+	Summary        string
+	Events         []eventEntry
+	Findings       []findingEntry
+	ModTime        time.Time
 }
 
 type eventEntry struct {
@@ -556,6 +559,7 @@ func (m model) viewRun() string {
 		}
 		fmt.Fprintf(&b, "\nRuntime   %s  Lab %s\nAction    bofbench run %s --via %s\n", hotStyle.Render(runVias[m.viaCursor]), labName, project, runVias[m.viaCursor])
 		fmt.Fprintf(&b, "Cleanup   bofbench run %s --via %s --cleanup\n", project, runVias[m.viaCursor])
+		fmt.Fprintf(&b, "%s\n", mutedStyle.Render("Operational packs expose target, payload, guard_mode, overwrite, backup, restore, and cleanup as ordinary typed arguments when supported."))
 		if m.argumentProject != project {
 			fmt.Fprintf(&b, "\nArguments  press e to load and edit this project's typed arguments\n")
 		} else if len(m.runArguments) == 0 {
@@ -855,6 +859,9 @@ func renderRunDetail(run runEntry) string {
 	if run.Runtime != "" || run.Kind != "" || run.ExitState != "" {
 		fmt.Fprintf(&b, "  runtime/kind/exit: %s / %s / %s\n", emptyDash(run.Runtime), emptyDash(run.Kind), emptyDash(run.ExitState))
 	}
+	if run.ExecutionState != "" || run.TaskID != "" {
+		fmt.Fprintf(&b, "  task: %s  state=%s  output_complete=%t\n", emptyDash(run.TaskID), emptyDash(run.ExecutionState), run.OutputComplete)
+	}
 	if run.Summary != "" {
 		fmt.Fprintf(&b, "  summary: %s\n", run.Summary)
 	}
@@ -1069,6 +1076,15 @@ func applyRunFields(run *runEntry, v map[string]any) {
 	}
 	if s := stringField(v, "exit_state"); s != "" {
 		run.ExitState = s
+	}
+	if s := stringField(v, "task_id"); s != "" {
+		run.TaskID = s
+	}
+	if s := stringField(v, "execution_state"); s != "" {
+		run.ExecutionState = s
+	}
+	if value, ok := v["output_complete"].(bool); ok {
+		run.OutputComplete = value
 	}
 	if s := stringField(v, "object"); s != "" {
 		run.Artifact = s

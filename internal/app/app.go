@@ -1522,6 +1522,8 @@ func docsCommand(stdout, stderr io.Writer) *cobra.Command {
 			cmdArgs := []string{args[0]}
 			if args[0] == "serve" {
 				cmdArgs = append(cmdArgs, "-a", "127.0.0.1:8000")
+			} else {
+				cmdArgs = append(cmdArgs, "--strict")
 			}
 			mkdocs := exec.Command("mkdocs", cmdArgs...)
 			mkdocs.Stdout = stdout
