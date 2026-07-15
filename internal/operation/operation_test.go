@@ -1,6 +1,8 @@
 package operation
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -177,5 +179,54 @@ func TestTopologyValueSyntax(t *testing.T) {
 	document := Document{Schema: Schema, SchemaVersion: 1, ID: "topology", Version: "1.0.0", Title: "Topology", Summary: "Validate topology input", Tier: "public", Inputs: []Input{{Name: "host", Type: "wstring", TopologyValue: "unknown.computer_name"}}, Steps: []Step{{ID: "host", Pack: "host-discovery"}}}
 	if err := validate(document); err == nil || !strings.Contains(err.Error(), "invalid topology value") {
 		t.Fatalf("expected invalid topology value, got %v", err)
+	}
+}
+
+func TestSchemaVersionTwoRequiresStepContracts(t *testing.T) {
+	document := Document{Schema: Schema, SchemaVersion: 2, ID: "no-contract", Version: "1.0.0", Title: "No contract", Summary: "Missing expected output", Tier: "public", Steps: []Step{{ID: "host", Pack: "host-discovery"}}}
+	if err := validate(document); err == nil || !strings.Contains(err.Error(), "requires expect") {
+		t.Fatalf("expected v2 contract rejection, got %v", err)
+	}
+	document.SchemaVersion = 1
+	if err := validate(document); err != nil {
+		t.Fatalf("schema v1 compatibility failed: %v", err)
+	}
+}
+
+func TestExpectationRejectsCompletedRuntimeWithFailedStructuredStatus(t *testing.T) {
+	expect := &packsvc.ProofExpectation{Tag: "allocate", Fields: map[string]string{"status": "complete", "base": "*"}}
+	if _, _, err := EvaluateExpectation([]string{"[allocate] status=failed base=0x1000"}, expect, nil, nil, nil); err == nil {
+		t.Fatal("completed runtime output with status=failed satisfied the step contract")
+	}
+	fields, payload, err := EvaluateExpectation([]string{"[allocate] status=complete base=0x1000"}, expect, nil, nil, nil)
+	if err != nil || payload || len(fields) != 2 {
+		t.Fatalf("valid contract failed: fields=%v payload=%t err=%v", fields, payload, err)
+	}
+}
+
+func TestExpectationResolvesReferencesAndVerifiesPayload(t *testing.T) {
+	data := []byte("atomic-operation-payload")
+	sum := sha256.Sum256(data)
+	expect := &packsvc.ProofExpectation{Tag: "read", Fields: map[string]string{"status": "complete", "pid": "$input.pid", "address": "$capture.base"}, Payload: &packsvc.ProofPayloadExpectation{Tag: "read-data", Field: "hex", Encoding: "hex", SHA256: "$input.sha256"}}
+	lines := []string{"[read] status=complete pid=42 address=0x2000", "[read-data] offset=0 hex=" + hex.EncodeToString(data[:10]), "[read-data] offset=10 hex=" + hex.EncodeToString(data[10:])}
+	_, verified, err := EvaluateExpectation(lines, expect, map[string]string{"pid": "42", "sha256": hex.EncodeToString(sum[:])}, map[string]string{"base": "0x2000"}, nil)
+	if err != nil || !verified {
+		t.Fatalf("payload contract failed: verified=%t err=%v", verified, err)
+	}
+}
+
+func TestLoadReceiptMigratesVersionOneContractState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "operation.json")
+	legacy := Receipt{Schema: ReceiptSchema, SchemaVersion: 1, Status: "completed", Steps: []StepReceipt{{ID: "one", State: "completed"}, {ID: "two", State: "pending"}}}
+	data, _ := json.Marshal(legacy)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadReceipt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.SchemaVersion != 2 || loaded.Steps[0].ContractState != "legacy" || loaded.Steps[1].ContractState != "" {
+		t.Fatalf("unexpected migrated receipt: %#v", loaded)
 	}
 }

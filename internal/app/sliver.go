@@ -240,7 +240,9 @@ func executeSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath,
 			runtimeadapter.AddTransition(&receipt, "failed", receipt.Error, time.Now())
 		}
 	}
+	rawOutput := append([]string(nil), receipt.Output...)
 	receipt = redactReceiptValues(receipt, opts.SensitiveOutputFields, opts.SensitiveArgumentNames, opts.SensitiveValues)
+	receipt.TransientOutput = rawOutput
 	if err := writeJSON(receipt.ReceiptPath, receipt); err != nil {
 		return receipt, err
 	}

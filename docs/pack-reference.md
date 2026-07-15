@@ -484,6 +484,24 @@ initialize Winsock and report the local host name
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
 
+## `builtin/network-adapter-inventory`
+
+enumerate bounded network adapters, addresses, gateways, and DNS servers
+
+- Can do: bounded network adapter and address inventory; gateway and DNS server discovery
+- Effects: reads data
+- Needs: privilege=user; network=local; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `network_adapter_inventory`
+- Live proofs: bounded-adapters (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `family` | `string` | no | no | `all` | all, ipv4, or ipv6 |
+| `interface_filter` | `string` | no | no | `` | adapter or friendly-name substring |
+| `result_limit` | `int` | no | no | `32` | maximum adapters (1-256) |
+
 ## `builtin/network-discovery`
 
 host, Winsock, TCP endpoint, and domain context
@@ -522,6 +540,24 @@ enumerate bounded IPv4 and IPv6 neighbor-cache metadata
 | `family` | `string` | no | no | `all` | all, ipv4, or ipv6 |
 | `interface_index` | `int` | no | no | `0` | exact interface index; zero matches all |
 | `result_limit` | `int` | no | no | `64` | maximum neighbor rows (1-512) |
+
+## `builtin/network-route-inventory`
+
+enumerate bounded IPv4 and IPv6 forwarding routes
+
+- Can do: bounded IPv4 and IPv6 route inventory
+- Effects: reads data
+- Needs: privilege=user; network=local; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `network_route_inventory`
+- Live proofs: bounded-routes (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `family` | `string` | no | no | `all` | all, ipv4, or ipv6 |
+| `interface_index` | `int` | no | no | `0` | exact interface index; zero matches all |
+| `result_limit` | `int` | no | no | `64` | maximum routes (1-512) |
 
 ## `builtin/network-survey`
 
@@ -755,6 +791,19 @@ enumerate a bounded process tree with session and architecture context
 | --- | --- | --- | --- | --- | --- |
 | `process_filter` | `string` | no | no | `` | case-insensitive image substring; empty matches all |
 | `result_limit` | `int` | no | no | `25` | maximum rows (1-256) |
+
+## `builtin/proxy-configuration-inventory`
+
+report current-user WinHTTP proxy, PAC, bypass, and auto-detection configuration
+
+- Can do: current-user proxy and PAC configuration discovery; proxy auto-detection and bypass discovery
+- Effects: reads data
+- Needs: privilege=user; network=local; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Stored-output redaction: `proxy`, `bypass`, `auto_config_url`
+- Analyzer signatures: `proxy_configuration_inventory`
+- Live proofs: current-user (lab, sliver)
 
 ## `builtin/registry`
 

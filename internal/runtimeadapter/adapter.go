@@ -92,6 +92,10 @@ type Receipt struct {
 	DurationMS           int64             `json:"duration_ms"`
 	Error                string            `json:"error,omitempty"`
 	ReceiptPath          string            `json:"receipt_path,omitempty"`
+	// TransientOutput carries unredacted runtime output only inside the current
+	// process so result contracts can verify sensitive payload hashes before
+	// persistence. It is deliberately excluded from every serialized receipt.
+	TransientOutput []string `json:"-"`
 }
 
 func AddTransition(receipt *Receipt, state, detail string, at time.Time) {

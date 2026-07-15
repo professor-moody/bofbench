@@ -98,7 +98,7 @@ func operationCommand(stdout io.Writer) *cobra.Command {
 			fmt.Fprintf(stdout, "OPERATION VALID\noperation  %s\nid         %s\nversion    %s\nsteps      %d\n", qualified, document.ID, document.Version, len(document.Steps))
 			return nil
 		}},
-		operationDocsCommand(stdout, load), operationRunCommand(stdout, load), operationResumeCommand(stdout, load), operationCleanupCommand(stdout, load),
+		operationDocsCommand(stdout, load), operationTestCommand(stdout, load, func() []string { return append([]string(nil), catalogs...) }), operationProveCommand(stdout, load, func() []string { return append([]string(nil), catalogs...) }), operationRunCommand(stdout, load), operationResumeCommand(stdout, load), operationCleanupCommand(stdout, load),
 	)
 	return cmd
 }
@@ -376,18 +376,25 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 		if stepReceipt.State == "incomplete" {
 			updated, err := operationsvc.RefreshRuntimeReceipt(stepReceipt.Runtime)
 			if err != nil {
-				return failOperation(path, &receipt, stepReceipt, fmt.Errorf("refresh runtime task for step %s: %w", step.ID, err))
+				return failOperation(stdout, path, &receipt, stepReceipt, fmt.Errorf("refresh runtime task for step %s: %w", step.ID, err))
 			}
 			if stepReceipt.ObjectSHA256 != "" && updated.ObjectSHA256 != stepReceipt.ObjectSHA256 {
-				return failOperation(path, &receipt, stepReceipt, fmt.Errorf("runtime task object hash changed for step %s", step.ID))
+				return failOperation(stdout, path, &receipt, stepReceipt, fmt.Errorf("runtime task object hash changed for step %s", step.ID))
 			}
 			stepReceipt.Runtime, stepReceipt.OutputComplete = updated, updated.OutputComplete
 			stepReceipt.State, receipt.Status = operationsvc.ClassifyExecution(updated.ExecutionState, updated.OutputComplete, false)
 			switch stepReceipt.State {
 			case "completed":
-				captured, captureErr := operationsvc.CaptureOutput(updated.Output, step.Captures)
+				contractOutput := updated.TransientOutput
+				if len(contractOutput) == 0 {
+					contractOutput = updated.Output
+				}
+				if err := applyOperationContract(step, stepReceipt, contractOutput, inputs, receipt.Captures, topologyValues); err != nil {
+					return failOperation(stdout, path, &receipt, stepReceipt, err)
+				}
+				captured, captureErr := operationsvc.CaptureOutput(contractOutput, step.Captures)
 				if captureErr != nil {
-					return failOperation(path, &receipt, stepReceipt, captureErr)
+					return failOperation(stdout, path, &receipt, stepReceipt, captureErr)
 				}
 				stepReceipt.Captures = captured
 				for name, value := range captured {
@@ -400,7 +407,7 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 				}
 				continue
 			case "failed":
-				return failOperation(path, &receipt, stepReceipt, fmt.Errorf("runtime task for step %s ended in %s: %s", step.ID, updated.ExecutionState, updated.Error))
+				return failOperation(stdout, path, &receipt, stepReceipt, fmt.Errorf("runtime task for step %s ended in %s: %s", step.ID, updated.ExecutionState, updated.Error))
 			default:
 				if err := operationsvc.SaveReceipt(path, &receipt); err != nil {
 					return err
@@ -410,17 +417,17 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 		}
 		packItem, err := registry.PackRegistry().Resolve(step.Pack)
 		if err != nil {
-			return failOperation(path, &receipt, stepReceipt, err)
+			return failOperation(stdout, path, &receipt, stepReceipt, err)
 		}
 		if stepReceipt.PackSHA256 != "" && stepReceipt.PackSHA256 != packItem.SHA256 {
-			return failOperation(path, &receipt, stepReceipt, fmt.Errorf("pack %s changed since operation start", step.Pack))
+			return failOperation(stdout, path, &receipt, stepReceipt, fmt.Errorf("pack %s changed since operation start", step.Pack))
 		}
 		if err := requireReferencedSensitiveInputs(item.Document, receipt, inputs, step.Arguments); err != nil {
-			return failOperation(path, &receipt, stepReceipt, err)
+			return failOperation(stdout, path, &receipt, stepReceipt, err)
 		}
 		arguments, err := resolveOperationArguments(step.Arguments, inputs, receipt.Captures, topologyValues)
 		if err != nil {
-			return failOperation(path, &receipt, stepReceipt, err)
+			return failOperation(stdout, path, &receipt, stepReceipt, err)
 		}
 		fmt.Fprintf(stdout, "step %d/%d  %s → %s\n", index+1, len(item.Document.Steps), step.ID, packItem.Qualified)
 		stepReceipt.State = "running"
@@ -446,9 +453,16 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 			}
 			return fmt.Errorf("operation step %s has incomplete runtime output; resume %s", step.ID, path)
 		}
-		captured, err := operationsvc.CaptureOutput(runtimeReceipt.Output, step.Captures)
+		contractOutput := runtimeReceipt.TransientOutput
+		if len(contractOutput) == 0 {
+			contractOutput = runtimeReceipt.Output
+		}
+		if err := applyOperationContract(step, stepReceipt, contractOutput, inputs, receipt.Captures, topologyValues); err != nil {
+			return failOperation(stdout, path, &receipt, stepReceipt, err)
+		}
+		captured, err := operationsvc.CaptureOutput(contractOutput, step.Captures)
 		if err != nil {
-			return failOperation(path, &receipt, stepReceipt, err)
+			return failOperation(stdout, path, &receipt, stepReceipt, err)
 		}
 		stepReceipt.Captures = captured
 		for name, value := range captured {
@@ -468,6 +482,23 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 	if opts.cleanup {
 		return cleanupOperation(ctx, stdout, registry, item, inputs, &receipt, path, opts)
 	}
+	return nil
+}
+
+func applyOperationContract(step operationsvc.Step, receipt *operationsvc.StepReceipt, output []string, inputs, captures, topology map[string]string) error {
+	fields, payloadVerified, err := operationsvc.EvaluateExpectation(output, step.Expect, inputs, captures, topology)
+	if err != nil {
+		receipt.ContractState = "failed"
+		return fmt.Errorf("step %s result contract: %w", step.ID, err)
+	}
+	if step.Expect == nil {
+		receipt.ContractState = "legacy"
+		return nil
+	}
+	receipt.ContractState = "matched"
+	receipt.MatchedTag = step.Expect.Tag
+	receipt.MatchedFields = fields
+	receipt.PayloadVerified = payloadVerified
 	return nil
 }
 
@@ -689,9 +720,10 @@ func resolveOperationArguments(source map[string]string, inputs, captures, topol
 	}
 	return result, nil
 }
-func failOperation(path string, receipt *operationsvc.Receipt, step *operationsvc.StepReceipt, err error) error {
+func failOperation(stdout io.Writer, path string, receipt *operationsvc.Receipt, step *operationsvc.StepReceipt, err error) error {
 	step.State, step.Error, receipt.Status, receipt.Error = "failed", err.Error(), "failed", err.Error()
 	_ = operationsvc.SaveReceipt(path, receipt)
+	fmt.Fprintf(stdout, "operation  failed\nreceipt    %s\n", path)
 	return err
 }
 func cleanupFailure(path string, receipt *operationsvc.Receipt, step *operationsvc.StepReceipt, err error) error {

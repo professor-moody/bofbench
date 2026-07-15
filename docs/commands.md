@@ -52,6 +52,11 @@ bofbench operation list
 bofbench operation search process
 bofbench operation show internal/section-map-start-unmap
 bofbench operation validate operations/example/operation.json
+bofbench operation test internal/virtual-memory-execute
+bofbench operation test --all --catalog ~/bofbench-packs-internal \
+  --compiler mingw --compiler msvc
+bofbench operation prove internal/virtual-memory-execute \
+  --catalog ~/bofbench-packs-internal --via lab --lab devbox --arch x64
 bofbench operation run internal/section-map-start-unmap \
   --via lab --lab devbox --arg target_pid=1234 --arg payload=@file:/tmp/payload.bin
 bofbench operation resume runs/<run-id>/operation.json
@@ -59,7 +64,7 @@ bofbench operation cleanup runs/<run-id>/operation.json
 bofbench operation docs --output docs/operation-reference.md
 ```
 
-See [multi-step operations](operations.md) for captures, sensitive inputs, incomplete C2 tasks, and reverse cleanup.
+See [multi-step operations](operations.md) for result contracts, captures, sensitive inputs, static tests, live proof, incomplete C2 tasks, and reverse cleanup.
 
 ## Build
 

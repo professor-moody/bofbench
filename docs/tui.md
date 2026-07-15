@@ -17,7 +17,7 @@ The terminal workbench invokes the same commands as the CLI; it does not use wra
 | Packs | Browse catalogs, inspect capabilities, and compose the selected pack into a project. |
 | Prove | Execute a declared native, lab, Sliver, or Cobalt Strike proof. |
 | Topology | Inspect execution, target, and domain-controller role mappings. |
-| Operations | Select a linear pack workflow, enter typed inputs, run it, and inspect resume/cleanup commands. |
+| Operations | Select a result-aware pack workflow, enter typed inputs, test or prove it, run it, and inspect captures, resume, and cleanup. |
 
 Controls:
 
@@ -30,9 +30,11 @@ Controls:
 | `l` | Cycle configured lab profiles in Run, Prove, and Operations. |
 | `[`, `]` | Select a typed project or operation argument. |
 | `e` | Edit the selected argument; sensitive values are masked. |
+| `x` | Run the selected operation's portable static test. |
+| `p` | Run the selected operation's declared proof through the chosen runtime. |
 | `c` | Compose the selected pack into the selected project. |
 | `f`, `t`, `a` | Filter Results by status, runtime, or selected artifact. |
 | `r` | Refresh projects, arsenal, and receipts. |
 | `q` | Quit. |
 
-The Results workspace leads with predicted-versus-observed behavior: analyzer findings are shown beside receipt events and actual runtime output. The header keeps the operator loop visible: `new → add packs → build → analyze → run → export`. The last command and its real output remain on screen for immediate review.
+The Operations result view keeps runtime task state separate from version-2 result-contract state. A completed task with `status=failed` remains failed; captures appear only after the declared tag and fields match. The Results workspace leads with predicted-versus-observed behavior: analyzer findings are shown beside receipt events and actual runtime output. The header keeps the operator loop visible: `new → add packs → build → analyze → run → export`. The last command and its real output remain on screen for immediate review.

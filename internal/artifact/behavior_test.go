@@ -304,6 +304,54 @@ func TestRuntimeAccessRulesRequireCompleteSameFunctionEvidence(t *testing.T) {
 	}
 }
 
+func TestAtomicOperationRulesRequireCompleteSameFunctionEvidence(t *testing.T) {
+	cases := []struct {
+		id, tag string
+		apis    []string
+	}{
+		{"network_route_inventory", "[network-route-inventory]", []string{"IPHLPAPI$GetIpForwardTable2", "IPHLPAPI$FreeMibTable"}},
+		{"process_memory_allocate", "[process-memory-allocate]", []string{"KERNEL32$OpenProcess", "KERNEL32$VirtualAllocEx"}},
+		{"process_memory_free", "[process-memory-free]", []string{"KERNEL32$OpenProcess", "KERNEL32$VirtualFreeEx"}},
+		{"process_thread_suspend", "[process-thread-suspend]", []string{"KERNEL32$OpenThread", "KERNEL32$SuspendThread"}},
+		{"process_thread_resume", "[process-thread-resume]", []string{"KERNEL32$OpenThread", "KERNEL32$ResumeThread"}},
+		{"thread_context_set", "[thread-context-set]", []string{"KERNEL32$OpenThread", "KERNEL32$GetThreadContext", "KERNEL32$SetThreadContext"}},
+		{"thread_context_restore", "[thread-context-restore]", []string{"KERNEL32$CreateFileW", "KERNEL32$ReadFile", "KERNEL32$OpenThread", "KERNEL32$SetThreadContext"}},
+		{"named_pipe_exchange", "[named-pipe-exchange]", []string{"KERNEL32$WaitNamedPipeW", "KERNEL32$CreateFileW", "KERNEL32$WriteFile", "KERNEL32$ReadFile"}},
+	}
+	for _, test := range cases {
+		t.Run(test.id, func(t *testing.T) {
+			var relocations []Relocation
+			for _, api := range test.apis {
+				relocations = append(relocations, Relocation{Function: "go", Symbol: api})
+			}
+			chain := requireBehavior(t, inferBehaviorChains(relocations, []String{{Value: test.tag}}), test.id)
+			if chain.Confidence != "strong chain" || len(chain.Steps) != len(test.apis) {
+				t.Fatalf("chain = %+v", chain)
+			}
+			for _, candidate := range inferBehaviorChains(relocations[:len(relocations)-1], []String{{Value: test.tag}}) {
+				if candidate.ID == test.id {
+					t.Fatalf("incomplete API sequence produced %s", test.id)
+				}
+			}
+			split := append([]Relocation(nil), relocations...)
+			split[len(split)-1].Function = "helper"
+			for _, candidate := range inferBehaviorChains(split, []String{{Value: test.tag}}) {
+				if candidate.ID == test.id {
+					t.Fatalf("split API evidence produced %s", test.id)
+				}
+			}
+		})
+	}
+	for _, primitive := range []struct {
+		id, api, tag string
+	}{{"network_adapter_inventory", "IPHLPAPI$GetAdaptersAddresses", "[network-adapter-inventory]"}, {"proxy_configuration_inventory", "WINHTTP$WinHttpGetIEProxyConfigForCurrentUser", "[proxy-configuration-inventory]"}} {
+		chain := requireBehavior(t, inferBehaviorChains([]Relocation{{Function: "go", Symbol: primitive.api}}, []String{{Value: primitive.tag}}), primitive.id)
+		if chain.Confidence != "confirmed primitive" {
+			t.Fatalf("%s = %+v", primitive.id, chain)
+		}
+	}
+}
+
 func TestRemoteOperationRulesRequireCompleteFunctionLocalChains(t *testing.T) {
 	cases := []struct {
 		id      string

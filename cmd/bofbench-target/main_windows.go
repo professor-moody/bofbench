@@ -122,6 +122,43 @@ type handler struct {
 	root string
 }
 
+type helperHandler struct {
+	name string
+	root string
+}
+
+func (service helperHandler) Execute(_ []string, requests <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
+	status <- svc.Status{State: svc.StartPending}
+	if err := os.MkdirAll(service.root, 0o755); err != nil {
+		return true, 1
+	}
+	stop := make(chan struct{})
+	threadID := make(chan uint32, 1)
+	go alertableThread(stop, threadID)
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 4, Service: service.name, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	if module, _, _ := procModuleHandle.Call(0); module != 0 {
+		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
+	}
+	state.KnownModulePath, _ = os.Executable()
+	if err := writeJSON(filepath.Join(service.root, "x86-helper.json"), state); err != nil {
+		close(stop)
+		return true, 2
+	}
+	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+	for request := range requests {
+		switch request.Cmd {
+		case svc.Interrogate:
+			status <- request.CurrentStatus
+		case svc.Stop, svc.Shutdown:
+			status <- svc.Status{State: svc.StopPending}
+			close(stop)
+			return false, 0
+		}
+	}
+	close(stop)
+	return false, 0
+}
+
 func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
 	status <- svc.Status{State: svc.StartPending}
 	if err := os.MkdirAll(service.root, 0o755); err != nil {
@@ -321,8 +358,34 @@ func namedPipeFixture(stop <-chan struct{}, ready chan<- namedPipeResult) {
 		return
 	}
 	ready <- namedPipeResult{Name: name}
-	<-stop
-	_ = windows.CloseHandle(handle)
+	closed := make(chan struct{})
+	go func() {
+		select {
+		case <-stop:
+			_ = windows.CloseHandle(handle)
+		case <-closed:
+		}
+	}()
+	defer close(closed)
+	buffer := make([]byte, 65536)
+	for {
+		err = windows.ConnectNamedPipe(handle, nil)
+		if err != nil && err != windows.ERROR_PIPE_CONNECTED {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			return
+		}
+		var read uint32
+		if err = windows.ReadFile(handle, buffer, &read, nil); err == nil && read > 0 {
+			var written uint32
+			_ = windows.WriteFile(handle, buffer[:read], &written, nil)
+		}
+		_ = windows.FlushFileBuffers(handle)
+		_ = windows.DisconnectNamedPipe(handle)
+	}
 }
 
 func deployFixtures(root string) (fixtureState, error) {
@@ -516,7 +579,14 @@ func main() {
 	root := flag.String("root", targetRoot, "canary and state directory")
 	fixture := flag.String("fixture", "", "fixture operation: deploy, status, or remove")
 	helper := flag.Bool("helper", false, "run a persistent architecture-specific proof helper")
+	helperService := flag.Bool("helper-service", false, "run the architecture-specific proof helper as a Windows service")
 	flag.Parse()
+	if *helperService {
+		if err := svc.Run(*name, helperHandler{name: *name, root: *root}); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	if *helper {
 		if err := runArchitectureHelper(*root); err != nil {
 			fmt.Fprintln(os.Stderr, err)

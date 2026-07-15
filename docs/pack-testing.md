@@ -62,6 +62,29 @@ Each case is one of:
 
 Receipts are correlated only when their object hash matches the object built for the case.
 
+## Test and prove multi-step operations
+
+Operation testing reuses the pack build, analyzer, and export machinery for every unique action and cleanup pack in the definition:
+
+```bash
+bofbench operation test internal/virtual-memory-execute \
+  --catalog ~/bofbench-packs-internal
+bofbench operation test --all --catalog ~/bofbench-packs-internal \
+  --compiler mingw --compiler msvc
+```
+
+Operation proof adds ordered execution, version-2 result contracts, captures, payload verification, independent state checks, and reverse cleanup:
+
+```bash
+bofbench operation prove internal/memory-allocation-roundtrip \
+  --catalog ~/bofbench-packs-internal \
+  --via lab --lab devbox --arch x64
+```
+
+Reports are written to `runs/<run-id>/operation-proof.json`. Each case is `pass`, `failed`, `incomplete`, or `unavailable`. Runtime completion and contract matching are separate: output containing the expected tag with `status=failed` cannot advance a step that requires `status=complete`.
+
+Operation proof accepts captures inside independent state checks. For example, an allocation step can capture `remote_base`, later steps can write and read it, and the final `process_memory_region` cleanup check can require that exact captured base to be absent.
+
 ## Resume an interrupted catalog run
 
 ```bash

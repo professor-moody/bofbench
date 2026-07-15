@@ -841,7 +841,7 @@ static void bofbench_feature_named_pipe_inventory(datap *parser) {
     }
     do {
         if (!bofbench_pipe_prefix(entry.cFileName, prefix, prefix_length > 0 ? prefix_length - 1 : 0)) continue;
-        BeaconPrintf(CALLBACK_OUTPUT, "[named-pipe-inventory] name=%s", entry.cFileName);
+        BeaconPrintf(CALLBACK_OUTPUT, "[named-pipe-inventory] name=%s path=\\\\.\\pipe\\%s", entry.cFileName, entry.cFileName);
         shown++;
     } while (shown < limit && KERNEL32$FindNextFileA(search, &entry));
     KERNEL32$FindClose(search);
@@ -1752,6 +1752,51 @@ static void bofbench_feature_lab_cleanup(void) {
         file_removed, process_removed, registry_status, runkey_status);
 }`,
 		Call: "bofbench_feature_lab_cleanup();",
+	},
+	{
+		Name:        "network-adapter-inventory",
+		Description: "enumerate bounded network adapters, addresses, gateways, and DNS servers",
+		Declaration: `#include <iphlpapi.h>
+#include <ws2tcpip.h>
+ULONG WINAPI IPHLPAPI$GetAdaptersAddresses(ULONG, ULONG, PVOID, PIP_ADAPTER_ADDRESSES, PULONG);
+int WSAAPI WS2_32$WSAStartup(WORD, LPWSADATA);
+int WSAAPI WS2_32$WSACleanup(void);
+int WSAAPI WS2_32$getnameinfo(const SOCKADDR *, socklen_t, PCHAR, DWORD, PCHAR, DWORD, INT);
+static BYTE bofbench_adapter_buffer[65536];
+static void bofbench_adapter_wide(const WCHAR *source,char *target,DWORD size){DWORD i=0;while(source&&source[i]&&i+1<size){target[i]=source[i]<128?(char)source[i]:'?';i++;}target[i]=0;}
+static BOOL bofbench_adapter_contains(const char *value,const char *filter,int bytes){int i,j,n=bytes>0?bytes-1:0;if(!n)return TRUE;for(i=0;value&&value[i];i++){for(j=0;j<n&&value[i+j];j++){char a=value[i+j],b=filter[j];if(a>='A'&&a<='Z')a+=32;if(b>='A'&&b<='Z')b+=32;if(a!=b)break;}if(j==n)return TRUE;}return FALSE;}
+static void bofbench_adapter_address(const char *kind,ULONG index,PSOCKET_ADDRESS address){char text[96];DWORD size=sizeof(text);if(address&&address->lpSockaddr&&WS2_32$getnameinfo(address->lpSockaddr,(socklen_t)address->iSockaddrLength,text,size,NULL,0,NI_NUMERICHOST)==0)BOFBENCH_PRINTF(CALLBACK_OUTPUT,"[network-adapter-inventory] interface=%lu kind=%s address=%s",index,kind,text);}
+static void bofbench_feature_network_adapter_inventory(datap *parser){int family_bytes=0,filter_bytes=0;char *family=BeaconDataExtract(parser,&family_bytes),*filter=BeaconDataExtract(parser,&filter_bytes);DWORD requested=(DWORD)BeaconDataInt(parser),limit=requested?requested:32,shown=0;ULONG af=AF_UNSPEC,size=sizeof(bofbench_adapter_buffer),status;PIP_ADAPTER_ADDRESSES row;WSADATA winsock;if(family&&family_bytes>1){if((family[0]=='4')||(family[0]=='i'&&family[3]=='4'))af=AF_INET;else if((family[0]=='6')||(family[0]=='i'&&family[3]=='6'))af=AF_INET6;}if(limit>256)limit=256;if(WS2_32$WSAStartup(MAKEWORD(2,2),&winsock)!=0){BOFBENCH_PRINTF(CALLBACK_ERROR,"[network-adapter-inventory] status=failed api=WSAStartup");return;}status=IPHLPAPI$GetAdaptersAddresses(af,GAA_FLAG_INCLUDE_PREFIX|GAA_FLAG_INCLUDE_GATEWAYS,NULL,(PIP_ADAPTER_ADDRESSES)bofbench_adapter_buffer,&size);if(status!=NO_ERROR){BOFBENCH_PRINTF(CALLBACK_ERROR,"[network-adapter-inventory] status=failed error=%lu required=%lu",status,size);WS2_32$WSACleanup();return;}for(row=(PIP_ADAPTER_ADDRESSES)bofbench_adapter_buffer;row&&shown<limit;row=row->Next){char friendly[260];PIP_ADAPTER_UNICAST_ADDRESS u;PIP_ADAPTER_GATEWAY_ADDRESS_LH g;PIP_ADAPTER_DNS_SERVER_ADDRESS d;bofbench_adapter_wide(row->FriendlyName,friendly,sizeof(friendly));if(!bofbench_adapter_contains(friendly,filter,filter_bytes)&&!bofbench_adapter_contains(row->AdapterName,filter,filter_bytes))continue;BOFBENCH_PRINTF(CALLBACK_OUTPUT,"[network-adapter-inventory] interface=%lu name=%s adapter=%s status=%lu mtu=%lu type=%lu",row->IfIndex,friendly,row->AdapterName?row->AdapterName:"-",row->OperStatus,row->Mtu,row->IfType);for(u=row->FirstUnicastAddress;u;u=u->Next)bofbench_adapter_address("unicast",row->IfIndex,&u->Address);for(g=row->FirstGatewayAddress;g;g=g->Next)bofbench_adapter_address("gateway",row->IfIndex,&g->Address);for(d=row->FirstDnsServerAddress;d;d=d->Next)bofbench_adapter_address("dns",row->IfIndex,&d->Address);shown++;}WS2_32$WSACleanup();BOFBENCH_PRINTF(CALLBACK_OUTPUT,"[network-adapter-inventory] status=complete shown=%lu limit=%lu family=%lu",shown,limit,af);}`,
+		Call: "bofbench_feature_network_adapter_inventory($PARSER);",
+	},
+	{
+		Name:        "network-route-inventory",
+		Description: "enumerate bounded IPv4 and IPv6 forwarding routes",
+		Declaration: `#include <ws2tcpip.h>
+typedef union _BOFBENCH_ROUTE_SOCKADDR_INET { SOCKADDR_IN Ipv4; SOCKADDR_IN6 Ipv6; USHORT si_family; } BOFBENCH_ROUTE_SOCKADDR_INET;
+typedef union _BOFBENCH_NET_LUID { ULONGLONG Value; struct { ULONGLONG Reserved:24; ULONGLONG NetLuidIndex:24; ULONGLONG IfType:16; } Info; } BOFBENCH_NET_LUID;
+typedef struct _BOFBENCH_IP_ADDRESS_PREFIX { BOFBENCH_ROUTE_SOCKADDR_INET Prefix; UINT8 PrefixLength; } BOFBENCH_IP_ADDRESS_PREFIX;
+typedef struct _BOFBENCH_MIB_IPFORWARD_ROW2 { BOFBENCH_NET_LUID InterfaceLuid; ULONG InterfaceIndex; BOFBENCH_IP_ADDRESS_PREFIX DestinationPrefix; BOFBENCH_ROUTE_SOCKADDR_INET NextHop; UCHAR SitePrefixLength; ULONG ValidLifetime; ULONG PreferredLifetime; ULONG Metric; ULONG Protocol; BOOLEAN Loopback; BOOLEAN AutoconfigureAddress; BOOLEAN Publish; BOOLEAN Immortal; ULONG Age; ULONG Origin; } BOFBENCH_MIB_IPFORWARD_ROW2;
+typedef struct _BOFBENCH_MIB_IPFORWARD_TABLE2 { ULONG NumEntries; BOFBENCH_MIB_IPFORWARD_ROW2 Table[1]; } BOFBENCH_MIB_IPFORWARD_TABLE2;
+ULONG WINAPI IPHLPAPI$GetIpForwardTable2(USHORT, BOFBENCH_MIB_IPFORWARD_TABLE2 **);
+VOID WINAPI IPHLPAPI$FreeMibTable(PVOID);
+int WSAAPI WS2_32$WSAStartup(WORD, LPWSADATA);
+int WSAAPI WS2_32$WSACleanup(void);
+int WSAAPI WS2_32$getnameinfo(const SOCKADDR *, socklen_t, PCHAR, DWORD, PCHAR, DWORD, INT);
+static void bofbench_route_text(const BOFBENCH_ROUTE_SOCKADDR_INET *address,char *text,DWORD size){DWORD length=address->si_family==AF_INET?sizeof(SOCKADDR_IN):sizeof(SOCKADDR_IN6);if(WS2_32$getnameinfo((const SOCKADDR*)address,(socklen_t)length,text,size,NULL,0,NI_NUMERICHOST)!=0){text[0]='-';text[1]=0;}}
+static void bofbench_feature_network_route_inventory(datap *parser){int family_bytes=0;char *family=BeaconDataExtract(parser,&family_bytes);DWORD interface_index=(DWORD)BeaconDataInt(parser),requested=(DWORD)BeaconDataInt(parser),limit=requested?requested:64,shown=0,index;USHORT af=AF_UNSPEC;BOFBENCH_MIB_IPFORWARD_TABLE2 *table=NULL;ULONG status;WSADATA winsock;if(family&&family_bytes>1){if(family[0]=='4'||(family[0]=='i'&&family[3]=='4'))af=AF_INET;else if(family[0]=='6'||(family[0]=='i'&&family[3]=='6'))af=AF_INET6;}if(limit>512)limit=512;if(WS2_32$WSAStartup(MAKEWORD(2,2),&winsock)!=0){BOFBENCH_PRINTF(CALLBACK_ERROR,"[network-route-inventory] status=failed api=WSAStartup");return;}status=IPHLPAPI$GetIpForwardTable2(af,&table);if(status!=NO_ERROR||!table){BOFBENCH_PRINTF(CALLBACK_ERROR,"[network-route-inventory] status=failed error=%lu",status);WS2_32$WSACleanup();return;}for(index=0;index<table->NumEntries&&shown<limit;index++){BOFBENCH_MIB_IPFORWARD_ROW2 *row=&table->Table[index];char destination[96],next_hop[96];if(interface_index&&row->InterfaceIndex!=interface_index)continue;bofbench_route_text(&row->DestinationPrefix.Prefix,destination,sizeof(destination));bofbench_route_text(&row->NextHop,next_hop,sizeof(next_hop));BOFBENCH_PRINTF(CALLBACK_OUTPUT,"[network-route-inventory] destination=%s prefix=%u next_hop=%s interface=%lu metric=%lu protocol=%lu origin=%lu",destination,row->DestinationPrefix.PrefixLength,next_hop,row->InterfaceIndex,row->Metric,row->Protocol,row->Origin);shown++;}IPHLPAPI$FreeMibTable(table);WS2_32$WSACleanup();BOFBENCH_PRINTF(CALLBACK_OUTPUT,"[network-route-inventory] status=complete shown=%lu limit=%lu family=%u interface=%lu",shown,limit,af,interface_index);}`,
+		Call: "bofbench_feature_network_route_inventory($PARSER);",
+	},
+	{
+		Name:        "proxy-configuration-inventory",
+		Description: "report current-user WinHTTP proxy, PAC, bypass, and auto-detection configuration",
+		Declaration: `#include <winhttp.h>
+BOOL WINAPI WINHTTP$WinHttpGetIEProxyConfigForCurrentUser(WINHTTP_CURRENT_USER_IE_PROXY_CONFIG *);
+HGLOBAL WINAPI KERNEL32$GlobalFree(HGLOBAL);
+DWORD WINAPI KERNEL32$GetLastError(void);
+static void bofbench_proxy_text(const WCHAR *source,char *target,DWORD size){DWORD i=0;while(source&&source[i]&&i+1<size){target[i]=source[i]<128?(char)source[i]:'?';i++;}target[i]=0;}
+static void bofbench_feature_proxy_configuration_inventory(void){WINHTTP_CURRENT_USER_IE_PROXY_CONFIG config;char proxy[1024],bypass[1024],pac[1024];config.fAutoDetect=FALSE;config.lpszAutoConfigUrl=NULL;config.lpszProxy=NULL;config.lpszProxyBypass=NULL;if(!WINHTTP$WinHttpGetIEProxyConfigForCurrentUser(&config)){BOFBENCH_PRINTF(CALLBACK_ERROR,"[proxy-configuration-inventory] status=failed error=%lu",KERNEL32$GetLastError());return;}bofbench_proxy_text(config.lpszProxy,proxy,sizeof(proxy));bofbench_proxy_text(config.lpszProxyBypass,bypass,sizeof(bypass));bofbench_proxy_text(config.lpszAutoConfigUrl,pac,sizeof(pac));BOFBENCH_PRINTF(CALLBACK_OUTPUT,"[proxy-configuration-inventory] status=complete auto_detect=%lu proxy=%s bypass=%s auto_config_url=%s",config.fAutoDetect?1UL:0UL,proxy[0]?proxy:"-",bypass[0]?bypass:"-",pac[0]?pac:"-");if(config.lpszAutoConfigUrl)KERNEL32$GlobalFree(config.lpszAutoConfigUrl);if(config.lpszProxy)KERNEL32$GlobalFree(config.lpszProxy);if(config.lpszProxyBypass)KERNEL32$GlobalFree(config.lpszProxyBypass);}`,
+		Call: "bofbench_feature_proxy_configuration_inventory();",
 	},
 }
 

@@ -259,6 +259,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+		case "p":
+			if m.tab == 9 && !m.running {
+				if operation, ok := m.selectedOperation(); ok {
+					command := []string{"operation", "prove", operation.Qualified, "--via", runVias[m.viaCursor]}
+					if (runVias[m.viaCursor] == "lab" || runVias[m.viaCursor] == "sliver") && len(m.labProfiles) > 0 {
+						command = append(command, "--lab", m.labProfiles[m.labProfile])
+					}
+					m.running = true
+					m.commandOutput = ""
+					m.message = "$ bofbench " + strings.Join(command, " ")
+					return m, executeBOFBench(command)
+				}
+			}
+		case "x":
+			if m.tab == 9 && !m.running {
+				if operation, ok := m.selectedOperation(); ok {
+					command := []string{"operation", "test", operation.Qualified, "--compiler", "mingw"}
+					m.running = true
+					m.commandOutput = ""
+					m.message = "$ bofbench " + strings.Join(command, " ")
+					return m, executeBOFBench(command)
+				}
+			}
 		case "enter":
 			if !m.running {
 				if command := m.currentCommand(); len(command) > 0 {
@@ -813,6 +836,7 @@ func (m model) viewOperations() string {
 			labName = m.labProfiles[m.labProfile]
 		}
 		fmt.Fprintf(&b, "\nRuntime  %s  Lab %s\nRun      bofbench operation run %s --via %s\n", hotStyle.Render(runVias[m.viaCursor]), labName, item.Qualified, runVias[m.viaCursor])
+		fmt.Fprintf(&b, "Test [x] bofbench operation test %s\nProve[p] bofbench operation prove %s --via %s\n", item.Qualified, item.Qualified, runVias[m.viaCursor])
 		fmt.Fprintf(&b, "Resume   bofbench operation resume runs/<id>/operation.json\nCleanup  bofbench operation cleanup runs/<id>/operation.json\n")
 		if len(m.operationArguments) == 0 {
 			b.WriteString("\nArguments  press e to load and edit typed operation inputs\n")
@@ -1054,6 +1078,7 @@ Controls:
   [ / ]            select a typed argument in Run
   e                edit the selected argument; sensitive input is masked
   c                compose the selected pack into the selected project
+  x / p            test or prove the selected operation
   f                cycle status filter in Results
   t                cycle runtime filter in Results
   r                refresh arsenal and run history

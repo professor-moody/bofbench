@@ -862,12 +862,42 @@ func builtins() []Resolved {
 	neighbors.AnalysisSignatures = []AnalysisSignature{{ID: "network_neighbor_inventory", Name: "Network neighbor inventory", Summary: "Enumerate bounded IPv4 and IPv6 neighbor-cache rows with interface, state, and router metadata.", Steps: []AnalysisStep{{Action: "read IP neighbor table", APIs: []string{"GetIpNetTable2"}}, {Action: "format neighbor addresses", APIs: []string{"inet_ntop"}}, {Action: "release neighbor table", APIs: []string{"FreeMibTable"}}}, RequiredStrings: []string{"[network-neighbor-inventory]"}, Effects: []string{"reads local network neighbor metadata"}, Requirements: []string{"local IP Helper access"}}}
 	neighbors.ProofCases = []ProofCase{{ID: "bounded-neighbors", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"family": "all", "interface_index": "0", "result_limit": "16"}, Expect: ProofExpectation{Tag: "network-neighbor-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
 	byID["network-neighbor-inventory"] = neighbors
+	adapters := byID["network-adapter-inventory"]
+	adapters.Title = "Network Adapter Inventory"
+	adapters.Capabilities = []string{"bounded network adapter and address inventory", "gateway and DNS server discovery"}
+	adapters.Network = "local"
+	adapters.Arguments = []Argument{{Name: "family", Type: "string", Default: "all", Description: "all, ipv4, or ipv6"}, {Name: "interface_filter", Type: "string", Default: "", Description: "adapter or friendly-name substring"}, {Name: "result_limit", Type: "int", Default: "32", Description: "maximum adapters (1-256)"}}
+	adapters.ExpectedAnalysis = []string{"network_adapter_inventory"}
+	adapters.OutputFields = []string{"interface", "name", "adapter", "status", "mtu", "type", "kind", "address", "shown", "limit", "family", "error"}
+	adapters.AnalysisSignatures = []AnalysisSignature{{ID: "network_adapter_inventory", Name: "Network adapter inventory", Summary: "Enumerate bounded adapters and their unicast, gateway, and DNS address metadata.", Steps: []AnalysisStep{{Action: "enumerate adapter and address metadata", APIs: []string{"GetAdaptersAddresses"}}}, RequiredStrings: []string{"[network-adapter-inventory]"}, Effects: []string{"reads local network configuration"}, Requirements: []string{"local IP Helper access"}}}
+	adapters.ProofCases = []ProofCase{{ID: "bounded-adapters", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"family": "all", "interface_filter": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "network-adapter-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["network-adapter-inventory"] = adapters
+	routes := byID["network-route-inventory"]
+	routes.Title = "Network Route Inventory"
+	routes.Capabilities = []string{"bounded IPv4 and IPv6 route inventory"}
+	routes.Network = "local"
+	routes.Arguments = []Argument{{Name: "family", Type: "string", Default: "all", Description: "all, ipv4, or ipv6"}, {Name: "interface_index", Type: "int", Default: "0", Description: "exact interface index; zero matches all"}, {Name: "result_limit", Type: "int", Default: "64", Description: "maximum routes (1-512)"}}
+	routes.ExpectedAnalysis = []string{"network_route_inventory"}
+	routes.OutputFields = []string{"destination", "prefix", "next_hop", "interface", "metric", "protocol", "origin", "shown", "limit", "family", "status", "error"}
+	routes.AnalysisSignatures = []AnalysisSignature{{ID: "network_route_inventory", Name: "Network route inventory", Summary: "Read bounded IPv4 and IPv6 forwarding-table rows with next-hop, interface, metric, and origin metadata.", Steps: []AnalysisStep{{Action: "read the IP forwarding table", APIs: []string{"GetIpForwardTable2"}}, {Action: "release forwarding table", APIs: []string{"FreeMibTable"}}}, RequiredStrings: []string{"[network-route-inventory]"}, Effects: []string{"reads local route metadata"}, Requirements: []string{"local IP Helper access"}}}
+	routes.ProofCases = []ProofCase{{ID: "bounded-routes", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"family": "all", "interface_index": "0", "result_limit": "16"}, Expect: ProofExpectation{Tag: "network-route-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["network-route-inventory"] = routes
+	proxy := byID["proxy-configuration-inventory"]
+	proxy.Title = "Proxy Configuration Inventory"
+	proxy.Capabilities = []string{"current-user proxy and PAC configuration discovery", "proxy auto-detection and bypass discovery"}
+	proxy.Network = "local"
+	proxy.ExpectedAnalysis = []string{"proxy_configuration_inventory"}
+	proxy.OutputFields = []string{"auto_detect", "proxy", "bypass", "auto_config_url", "status", "error"}
+	proxy.SensitiveOutputFields = []string{"proxy", "bypass", "auto_config_url"}
+	proxy.AnalysisSignatures = []AnalysisSignature{{ID: "proxy_configuration_inventory", Name: "Proxy configuration inventory", Summary: "Read current-user WinHTTP proxy, PAC, bypass, and automatic-detection configuration.", Steps: []AnalysisStep{{Action: "read current-user proxy configuration", APIs: []string{"WinHttpGetIEProxyConfigForCurrentUser"}}, {Action: "release proxy strings", APIs: []string{"GlobalFree"}}}, RequiredStrings: []string{"[proxy-configuration-inventory]"}, Effects: []string{"reads local proxy configuration"}, Requirements: []string{"the runtime user context"}}}
+	proxy.ProofCases = []ProofCase{{ID: "current-user", Via: []string{"lab", "sliver"}, Expect: ProofExpectation{Tag: "proxy-configuration-inventory", Fields: map[string]string{"status": "complete"}}}}
+	byID["proxy-configuration-inventory"] = proxy
 	pipeInventory := byID["named-pipe-inventory"]
 	pipeInventory.Title = "Named Pipe Inventory"
 	pipeInventory.Capabilities = []string{"bounded named-pipe discovery"}
 	pipeInventory.Arguments = []Argument{{Name: "prefix", Type: "string", Description: "case-insensitive pipe-name prefix; empty matches all", Default: ""}, {Name: "result_limit", Type: "int", Description: "maximum rows (1-512)", Default: "64"}}
 	pipeInventory.ExpectedAnalysis = []string{"named_pipe_inventory"}
-	pipeInventory.OutputFields = []string{"name", "shown", "limit", "prefix", "status"}
+	pipeInventory.OutputFields = []string{"name", "path", "shown", "limit", "prefix", "status"}
 	pipeInventory.AnalysisSignatures = []AnalysisSignature{{ID: "named_pipe_inventory", Name: "Named-pipe inventory", Summary: "Enumerate bounded entries from the local named-pipe namespace.", Steps: []AnalysisStep{{Action: "open pipe namespace search", APIs: []string{"FindFirstFileA", "FindFirstFileW"}}, {Action: "enumerate pipe names", APIs: []string{"FindNextFileA", "FindNextFileW"}}}, RequiredStrings: []string{`\\.\pipe\*`}, Effects: []string{"reads named-pipe metadata"}}}
 	pipeInventory.ProofCases = []ProofCase{{ID: "bounded", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"prefix": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "named-pipe-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
 	byID["named-pipe-inventory"] = pipeInventory
@@ -1179,7 +1209,8 @@ func validate(document Document, root string) error {
 	}
 	allowedPlaceholders := map[string]bool{
 		"$TARGET_PID": true, "$TARGET_TID": true, "$TARGET_HANDLE": true,
-		"$TARGET_ARCH": true, "$TARGET_MODULE_BASE": true, "$TARGET_MODULE_PATH": true, "$EXECUTION_ADDRESS": true,
+		"$TARGET_NAMED_PIPE": true,
+		"$TARGET_ARCH":       true, "$TARGET_MODULE_BASE": true, "$TARGET_MODULE_PATH": true, "$EXECUTION_ADDRESS": true,
 		"$X86_TARGET_PID": true, "$X86_TARGET_TID": true, "$X86_TARGET_MODULE_BASE": true, "$X86_TARGET_MODULE_PATH": true,
 		"$MEMORY_ADDRESS": true, "$MEMORY_SIZE": true, "$MEMORY_SHA256": true, "$CANARY_PATH": true, "$CANARY_SHA256": true,
 		"$MEMORY_WRITE_ADDRESS": true, "$MEMORY_WRITE_SIZE": true, "$MEMORY_WRITE_SHA256": true,
@@ -1271,6 +1302,7 @@ func validate(document Document, root string) error {
 			"scheduled_task": {"name"}, "credential": {"target"}, "certificate": {"scope", "store", "thumbprint"},
 			"dpapi_file": {"path", "sha256"}, "pfx": {"path", "password", "thumbprint"},
 			"process_memory": {"pid", "address", "size", "sha256"}, "process_protection": {"pid", "address", "protection"},
+			"process_memory_region": {"pid", "address"}, "thread_suspend_state": {"tid", "suspended"}, "thread_context": {"tid", "ip"},
 			"process":              {"pid", "image", "marker"},
 			"process_command_line": {"pid", "value"},
 			"service_config":       {"name", "field", "value"},

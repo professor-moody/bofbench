@@ -140,7 +140,9 @@ func executeCobaltStrike(parent context.Context, stdout io.Writer, opts cobaltSt
 	}
 	receipt.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	receipt.DurationMS = time.Since(started).Milliseconds()
+	rawOutput := append([]string(nil), receipt.Output...)
 	receipt = redactReceiptValues(receipt, opts.SensitiveOutputFields, opts.SensitiveArgumentNames, opts.SensitiveValues)
+	receipt.TransientOutput = rawOutput
 	_ = writeJSON(receipt.ReceiptPath, receipt)
 	if printErr := printJSON(stdout, receipt); printErr != nil {
 		return receipt, printErr

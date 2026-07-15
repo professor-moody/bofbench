@@ -2,6 +2,7 @@ package operation
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -18,10 +19,12 @@ import (
 )
 
 const (
-	Schema               = "bofbench.operation"
-	SchemaVersion        = 1
-	ReceiptSchema        = "bofbench.operation-receipt"
-	ReceiptSchemaVersion = 1
+	Schema                = "bofbench.operation"
+	SchemaVersion         = 2
+	MinimumSchemaVersion  = 1
+	ReceiptSchema         = "bofbench.operation-receipt"
+	ReceiptSchemaVersion  = 2
+	MinimumReceiptVersion = 1
 )
 
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
@@ -47,24 +50,37 @@ type Cleanup struct {
 }
 
 type Step struct {
-	ID        string             `json:"id"`
-	Pack      string             `json:"pack"`
-	Arguments map[string]string  `json:"arguments,omitempty"`
-	Captures  map[string]Capture `json:"captures,omitempty"`
-	Cleanup   *Cleanup           `json:"cleanup,omitempty"`
+	ID        string                    `json:"id"`
+	Pack      string                    `json:"pack"`
+	Arguments map[string]string         `json:"arguments,omitempty"`
+	Captures  map[string]Capture        `json:"captures,omitempty"`
+	Cleanup   *Cleanup                  `json:"cleanup,omitempty"`
+	Expect    *packsvc.ProofExpectation `json:"expect,omitempty"`
+}
+
+type ProofCase struct {
+	ID             string                    `json:"id"`
+	Via            []string                  `json:"via"`
+	Architectures  []string                  `json:"architectures,omitempty"`
+	Roles          []string                  `json:"roles,omitempty"`
+	Inputs         map[string]string         `json:"inputs,omitempty"`
+	ExpectCaptures map[string]string         `json:"expect_captures,omitempty"`
+	Cleanup        bool                      `json:"cleanup,omitempty"`
+	StateChecks    []packsvc.ProofStateCheck `json:"state_checks,omitempty"`
 }
 
 type Document struct {
-	Schema        string   `json:"schema"`
-	SchemaVersion int      `json:"schema_version"`
-	ID            string   `json:"id"`
-	Version       string   `json:"version"`
-	Title         string   `json:"title"`
-	Summary       string   `json:"summary"`
-	Tier          string   `json:"tier"`
-	Inputs        []Input  `json:"inputs,omitempty"`
-	Roles         []string `json:"roles,omitempty"`
-	Steps         []Step   `json:"steps"`
+	Schema        string      `json:"schema"`
+	SchemaVersion int         `json:"schema_version"`
+	ID            string      `json:"id"`
+	Version       string      `json:"version"`
+	Title         string      `json:"title"`
+	Summary       string      `json:"summary"`
+	Tier          string      `json:"tier"`
+	Inputs        []Input     `json:"inputs,omitempty"`
+	Roles         []string    `json:"roles,omitempty"`
+	Steps         []Step      `json:"steps"`
+	ProofCases    []ProofCase `json:"proof_cases,omitempty"`
 }
 
 type Resolved struct {
@@ -89,19 +105,23 @@ type Registry struct {
 }
 
 type StepReceipt struct {
-	ID             string                  `json:"id"`
-	Pack           string                  `json:"pack"`
-	PackSHA256     string                  `json:"pack_sha256"`
-	CleanupPack    string                  `json:"cleanup_pack,omitempty"`
-	CleanupSHA256  string                  `json:"cleanup_pack_sha256,omitempty"`
-	State          string                  `json:"state"`
-	ObjectSHA256   string                  `json:"object_sha256,omitempty"`
-	OutputComplete bool                    `json:"output_complete"`
-	Runtime        runtimeadapter.Receipt  `json:"runtime_receipt,omitempty"`
-	Captures       map[string]string       `json:"captures,omitempty"`
-	Error          string                  `json:"error,omitempty"`
-	CleanupState   string                  `json:"cleanup_state,omitempty"`
-	CleanupRuntime *runtimeadapter.Receipt `json:"cleanup_runtime_receipt,omitempty"`
+	ID              string                  `json:"id"`
+	Pack            string                  `json:"pack"`
+	PackSHA256      string                  `json:"pack_sha256"`
+	CleanupPack     string                  `json:"cleanup_pack,omitempty"`
+	CleanupSHA256   string                  `json:"cleanup_pack_sha256,omitempty"`
+	State           string                  `json:"state"`
+	ObjectSHA256    string                  `json:"object_sha256,omitempty"`
+	OutputComplete  bool                    `json:"output_complete"`
+	Runtime         runtimeadapter.Receipt  `json:"runtime_receipt,omitempty"`
+	Captures        map[string]string       `json:"captures,omitempty"`
+	Error           string                  `json:"error,omitempty"`
+	CleanupState    string                  `json:"cleanup_state,omitempty"`
+	CleanupRuntime  *runtimeadapter.Receipt `json:"cleanup_runtime_receipt,omitempty"`
+	ContractState   string                  `json:"contract_state,omitempty"`
+	MatchedTag      string                  `json:"matched_tag,omitempty"`
+	MatchedFields   []string                `json:"matched_fields,omitempty"`
+	PayloadVerified bool                    `json:"payload_verified,omitempty"`
 }
 
 type Receipt struct {
@@ -385,7 +405,7 @@ func contains(values []string, value string) bool {
 }
 
 func validate(document Document) error {
-	if document.Schema != Schema || document.SchemaVersion != SchemaVersion {
+	if document.Schema != Schema || document.SchemaVersion < MinimumSchemaVersion || document.SchemaVersion > SchemaVersion {
 		return fmt.Errorf("unsupported operation schema %q version %d", document.Schema, document.SchemaVersion)
 	}
 	if !idPattern.MatchString(document.ID) {
@@ -437,6 +457,31 @@ func validate(document Document) error {
 			return fmt.Errorf("duplicate step %q", step.ID)
 		}
 		steps[step.ID] = true
+		if document.SchemaVersion >= 2 && step.Expect == nil {
+			return fmt.Errorf("step %s requires expect in operation schema version 2", step.ID)
+		}
+		if step.Expect != nil {
+			if !idPattern.MatchString(step.Expect.Tag) {
+				return fmt.Errorf("step %s has invalid expected tag %q", step.ID, step.Expect.Tag)
+			}
+			for _, value := range step.Expect.Fields {
+				if value != "*" {
+					if err := validateReference(value, inputs, captures, steps); err != nil {
+						return fmt.Errorf("step %s expectation: %w", step.ID, err)
+					}
+				}
+			}
+			if payload := step.Expect.Payload; payload != nil {
+				if !idPattern.MatchString(payload.Tag) || !idPattern.MatchString(payload.Field) || (payload.Encoding != "hex" && payload.Encoding != "base64") || payload.SHA256 == "" {
+					return fmt.Errorf("step %s has invalid payload expectation", step.ID)
+				}
+				if strings.HasPrefix(payload.SHA256, "$") {
+					if err := validateReference(payload.SHA256, inputs, captures, steps); err != nil {
+						return fmt.Errorf("step %s payload expectation: %w", step.ID, err)
+					}
+				}
+			}
+		}
 		for _, value := range step.Arguments {
 			if err := validateReference(value, inputs, captures, steps); err != nil {
 				return fmt.Errorf("step %s: %w", step.ID, err)
@@ -456,6 +501,36 @@ func validate(document Document) error {
 				if err := validateReference(value, inputs, captures, steps); err != nil {
 					return fmt.Errorf("step %s cleanup: %w", step.ID, err)
 				}
+			}
+		}
+	}
+	seenProofs := map[string]bool{}
+	for _, proof := range document.ProofCases {
+		if !idPattern.MatchString(proof.ID) || seenProofs[proof.ID] {
+			return fmt.Errorf("invalid or duplicate proof case %q", proof.ID)
+		}
+		seenProofs[proof.ID] = true
+		if len(proof.Via) == 0 {
+			return fmt.Errorf("proof case %s requires at least one runtime", proof.ID)
+		}
+		for _, via := range proof.Via {
+			if via != "native" && via != "lab" && via != "sliver" && via != "cobaltstrike" {
+				return fmt.Errorf("proof case %s has unsupported runtime %q", proof.ID, via)
+			}
+		}
+		for _, arch := range proof.Architectures {
+			if arch != "x64" && arch != "x86" {
+				return fmt.Errorf("proof case %s has unsupported architecture %q", proof.ID, arch)
+			}
+		}
+		for name := range proof.Inputs {
+			if inputs[name].Name == "" {
+				return fmt.Errorf("proof case %s uses unknown input %q", proof.ID, name)
+			}
+		}
+		for name := range proof.ExpectCaptures {
+			if captures[name] == "" {
+				return fmt.Errorf("proof case %s expects unknown capture %q", proof.ID, name)
 			}
 		}
 	}
@@ -616,6 +691,84 @@ func CaptureOutput(lines []string, captures map[string]Capture) (map[string]stri
 	return result, nil
 }
 
+// EvaluateExpectation verifies a completed step's structured output. Payload
+// bytes are checked in memory and are never added to operation receipts.
+func EvaluateExpectation(lines []string, expectation *packsvc.ProofExpectation, inputs, captures, topology map[string]string) ([]string, bool, error) {
+	if expectation == nil {
+		return nil, false, nil
+	}
+	matchedFields := []string{}
+	matched := false
+	for _, line := range lines {
+		tag, fields := parseStructuredLine(line)
+		if tag != expectation.Tag {
+			continue
+		}
+		ok := true
+		matchedFields = matchedFields[:0]
+		for name, raw := range expectation.Fields {
+			expected := raw
+			if raw != "*" {
+				var err error
+				expected, err = ResolveValue(raw, inputs, captures, topology)
+				if err != nil {
+					return nil, false, err
+				}
+			}
+			actual, exists := fields[name]
+			if !exists || (expected != "*" && actual != expected) {
+				ok = false
+				break
+			}
+			matchedFields = append(matchedFields, name)
+		}
+		if ok {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return nil, false, fmt.Errorf("structured output did not match [%s] contract", expectation.Tag)
+	}
+	sort.Strings(matchedFields)
+	payloadVerified := false
+	if payload := expectation.Payload; payload != nil {
+		var encoded strings.Builder
+		for _, line := range lines {
+			tag, fields := parseStructuredLine(line)
+			if tag == payload.Tag {
+				if value := fields[payload.Field]; value != "" && value != "<redacted>" {
+					encoded.WriteString(value)
+				}
+			}
+		}
+		if encoded.Len() == 0 {
+			return nil, false, fmt.Errorf("payload contract found no [%s] field %s", payload.Tag, payload.Field)
+		}
+		var data []byte
+		var err error
+		switch payload.Encoding {
+		case "hex":
+			data, err = hex.DecodeString(encoded.String())
+		case "base64":
+			data, err = base64.StdEncoding.DecodeString(encoded.String())
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("decode %s payload: %w", payload.Encoding, err)
+		}
+		expected, err := ResolveValue(payload.SHA256, inputs, captures, topology)
+		if err != nil {
+			return nil, false, err
+		}
+		sum := sha256.Sum256(data)
+		if !strings.EqualFold(hex.EncodeToString(sum[:]), expected) {
+			return nil, false, fmt.Errorf("payload SHA-256 did not match contract")
+		}
+		payloadVerified = true
+	}
+	return matchedFields, payloadVerified, nil
+}
+
 func parseStructuredLine(line string) (string, map[string]string) {
 	line = strings.TrimSpace(line)
 	start, end := strings.Index(line, "["), strings.Index(line, "]")
@@ -657,7 +810,7 @@ func NewReceipt(item Resolved, packs *packsvc.Registry, path, runtime, lab, topo
 				cleanupHash = resolved.SHA256
 			}
 		}
-		receipt.Steps = append(receipt.Steps, StepReceipt{ID: step.ID, Pack: step.Pack, PackSHA256: hash, CleanupPack: cleanupPack, CleanupSHA256: cleanupHash, State: "pending"})
+		receipt.Steps = append(receipt.Steps, StepReceipt{ID: step.ID, Pack: step.Pack, PackSHA256: hash, CleanupPack: cleanupPack, CleanupSHA256: cleanupHash, State: "pending", ContractState: "pending"})
 	}
 	return receipt
 }
@@ -685,8 +838,16 @@ func LoadReceipt(path string) (Receipt, error) {
 	if err := json.Unmarshal(data, &receipt); err != nil {
 		return Receipt{}, err
 	}
-	if receipt.Schema != ReceiptSchema || receipt.SchemaVersion != ReceiptSchemaVersion {
+	if receipt.Schema != ReceiptSchema || receipt.SchemaVersion < MinimumReceiptVersion || receipt.SchemaVersion > ReceiptSchemaVersion {
 		return Receipt{}, fmt.Errorf("unsupported operation receipt schema")
+	}
+	if receipt.SchemaVersion == 1 {
+		receipt.SchemaVersion = ReceiptSchemaVersion
+		for index := range receipt.Steps {
+			if receipt.Steps[index].State == "completed" {
+				receipt.Steps[index].ContractState = "legacy"
+			}
+		}
 	}
 	return receipt, nil
 }
@@ -726,14 +887,24 @@ func projectDir(path string) string {
 }
 
 func builtins() []Resolved {
-	document := Document{Schema: Schema, SchemaVersion: 1, ID: "process-triage", Version: "1.0.0", Title: "Process Triage", Summary: "Inspect a selected process, its loaded images, thread state, and security context", Tier: "public", Inputs: []Input{{Name: "target_pid", Type: "int", Required: true, Description: "exact process identifier"}, {Name: "result_limit", Type: "int", Default: "32"}}, Steps: []Step{
-		{ID: "images", Pack: "process-image-inventory", Arguments: map[string]string{"target_pid": "$input.target_pid", "module_filter": "", "result_limit": "$input.result_limit"}},
-		{ID: "threads", Pack: "thread-state-inventory", Arguments: map[string]string{"target_pid": "$input.target_pid", "result_limit": "$input.result_limit"}},
-		{ID: "security", Pack: "process-security-inventory", Arguments: map[string]string{"target_pid": "$input.target_pid"}},
-	}}
-	item := Resolved{Document: document, Catalog: "builtin", Qualified: "builtin/process-triage"}
-	item.SHA256 = Fingerprint(document)
-	return []Resolved{item}
+	triage := Document{Schema: Schema, SchemaVersion: 2, ID: "process-triage", Version: "2.0.0", Title: "Process Triage", Summary: "Inspect a selected process, its loaded images, thread state, and security context", Tier: "public", Inputs: []Input{{Name: "target_pid", Type: "int", Required: true, Description: "exact process identifier"}, {Name: "result_limit", Type: "int", Default: "32"}}, Steps: []Step{
+		{ID: "images", Pack: "process-image-inventory", Arguments: map[string]string{"target_pid": "$input.target_pid", "module_filter": "", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "process-image-inventory", Fields: map[string]string{"status": "complete", "target_pid": "$input.target_pid"}}},
+		{ID: "threads", Pack: "thread-state-inventory", Arguments: map[string]string{"target_pid": "$input.target_pid", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "thread-state-inventory", Fields: map[string]string{"status": "complete", "target_pid": "$input.target_pid"}}},
+		{ID: "security", Pack: "process-security-inventory", Arguments: map[string]string{"target_pid": "$input.target_pid"}, Expect: &packsvc.ProofExpectation{Tag: "process-security-inventory", Fields: map[string]string{"status": "complete", "target_pid": "$input.target_pid"}}},
+	}, ProofCases: []ProofCase{{ID: "target-process", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Inputs: map[string]string{"target_pid": "$TARGET_PID", "result_limit": "16"}}}}
+	network := Document{Schema: Schema, SchemaVersion: 2, ID: "network-posture", Version: "1.0.0", Title: "Network Posture", Summary: "Inventory local adapters, forwarding routes, and proxy configuration", Tier: "public", Inputs: []Input{{Name: "family", Type: "string", Default: "all"}, {Name: "result_limit", Type: "int", Default: "32"}}, Steps: []Step{
+		{ID: "adapters", Pack: "network-adapter-inventory", Arguments: map[string]string{"family": "$input.family", "interface_filter": "", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "network-adapter-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+		{ID: "routes", Pack: "network-route-inventory", Arguments: map[string]string{"family": "$input.family", "interface_index": "0", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "network-route-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+		{ID: "proxy", Pack: "proxy-configuration-inventory", Expect: &packsvc.ProofExpectation{Tag: "proxy-configuration-inventory", Fields: map[string]string{"status": "complete"}}},
+	}, ProofCases: []ProofCase{{ID: "local-network", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Inputs: map[string]string{"family": "all", "result_limit": "16"}}}}
+	documents := []Document{triage, network}
+	items := make([]Resolved, 0, len(documents))
+	for _, document := range documents {
+		item := Resolved{Document: document, Catalog: "builtin", Qualified: "builtin/" + document.ID}
+		item.SHA256 = Fingerprint(document)
+		items = append(items, item)
+	}
+	return items
 }
 
 func ReferenceMarkdown(items []Resolved) string {

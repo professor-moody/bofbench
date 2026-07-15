@@ -236,6 +236,11 @@ func (run *runtimeRunContext) executeLab(ctx context.Context, _ runtimeadapter.P
 	if report.Receipt != nil {
 		receipt = *report.Receipt
 	}
+	if report.RemoteResult != nil {
+		receipt.TransientOutput = append([]string(nil), report.RemoteResult.Output...)
+	} else if report.RemoteDev != nil && report.RemoteDev.Run != nil {
+		receipt.TransientOutput = append([]string(nil), report.RemoteDev.Run.Output...)
+	}
 	if runErr != nil {
 		return receipt, codedError{code: 1, err: runErr}
 	}
@@ -376,6 +381,7 @@ func persistNativeRuntimeReceipt(runDir string, started time.Time, result runtim
 		receipt.Error = strings.Join(result.Errors, "; ")
 	}
 	receipt = run.redactReceipt(receipt)
+	receipt.TransientOutput = append([]string(nil), result.Output...)
 	_ = writeJSON(receipt.ReceiptPath, receipt)
 	return receipt
 }
