@@ -57,7 +57,7 @@ build_cli() {
   GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags "$LDFLAGS" -o "$dir/bofbench$ext" ./cmd/bofbench
   cp README.md "$dir/"
   cp -R docs "$dir/docs"
-  rm -rf "$dir/docs/assets/downloads" "$dir/docs/assets/media"
+  rm -rf "$dir/docs/assets/downloads"
   find "$dir/docs" -name .DS_Store -delete
   mkdir -p "$dir/scripts"
   cp scripts/release.sh scripts/windows-lab-smoke.ps1 "$dir/scripts/"

@@ -169,3 +169,35 @@ bofbench arsenal search arsenal/team --effect writes-state --works-with sliver
 bofbench arsenal search arsenal/team --arch x64 --confidence 'strong chain' --has-args
 bofbench arsenal compare old.x64.o new.x64.o
 ```
+
+## Inspect, list, and fetch compatibility surfaces
+
+Use the capability-first commands for new workflows. These direct object/arsenal commands remain available:
+
+```bash
+bofbench inspect object.x64.o
+bofbench list /absolute/path/to/objects
+bofbench fetch <PATH_OR_URL> --name external-source
+```
+
+`inspect` prints human-readable object analysis. `list` inventories an arsenal-like directory. `fetch` acquires a known alias, Git repository, ZIP, or raw object; `arsenal acquire` is preferred when the result will be locked, indexed, searched, or compared.
+
+## Documentation
+
+```bash
+bofbench docs serve
+bofbench docs build --strict
+```
+
+Repository maintainers should use `make docs-check` because it also verifies generated pack references, links, media, command coverage, and executable host scenarios.
+
+## Runtime task visibility
+
+```bash
+bofbench runtime status --lab devbox
+bofbench runtime sessions --via sliver --lab devbox
+bofbench runtime wait --via sliver --lab devbox --timeout 10m
+bofbench runtime tasks --via sliver --lab devbox
+bofbench runtime task <TASK_ID> --wait --timeout 10m
+bofbench runtime watch --via sliver --lab devbox --timeout 10m
+```

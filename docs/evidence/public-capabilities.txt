@@ -1,0 +1,6 @@
+[process-access-check] target_pid=4242 right=query mask=0x00001000 granted=1 error=0
+[process-access-check] status=complete target_pid=4242 requested=0x00000000 shown=8 granted=8
+[module-export-inventory] status=complete target_pid=4242 module=kernel32.dll base=0x00007ffb00000000 shown=16 limit=16
+[local-account-policy-inventory] lockout_duration=600 lockout_window=600 lockout_threshold=10
+[network-neighbor-inventory] address=192.0.2.20 family=ipv4 interface=12 state=5 router=0 reachable=30
+[network-neighbor-inventory] status=complete shown=5 limit=16 interface=0

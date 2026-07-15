@@ -1,7 +1,7 @@
 BIN := work/bin/bofbench
 WINBIN := work/bin/bofbench.exe
 
-.PHONY: generate verify-generated test build build-windows native-loader docs doctor release clean
+.PHONY: generate verify-generated test build build-windows native-loader docs docs-check docs-media doctor release clean
 
 generate:
 	go generate ./internal/capability
@@ -23,6 +23,18 @@ native-loader: verify-generated
 
 docs:
 	mkdocs build --strict
+	@private="$${BOFBENCH_PRIVATE_CATALOG:-$(abspath ../bofbench-packs-internal)}"; \
+	if [ -f "$$private/mkdocs.yml" ]; then \
+		(cd "$$private" && mkdocs build --strict); \
+	else \
+		echo "private handbook unavailable: $$private"; \
+	fi
+
+docs-check:
+	scripts/docs-check.sh
+
+docs-media:
+	scripts/docs-media.sh
 
 doctor: build
 	$(BIN) doctor

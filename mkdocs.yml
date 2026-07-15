@@ -2,7 +2,6 @@ site_name: BOFBench
 site_description: Compose, analyze, run, and export BOFs from capability packs
 exclude_docs: |
   assets/downloads/
-  assets/media/
 theme:
   name: material
   language: en
@@ -28,21 +27,31 @@ theme:
     - content.code.annotate
 extra_css:
   - stylesheets/extra.css
+extra_javascript:
+  - javascripts/mermaid.min.js
+  - javascripts/mermaid-handbook.js
 nav:
   - Home: index.md
   - Start:
+      - Install and Verify: installation.md
       - Quickstart: quickstart.md
-      - Commands: commands.md
+      - How BOFBench Fits Together: concepts.md
+      - Scenario Library: scenarios/index.md
   - Build:
       - Capability Packs: packs.md
       - External Catalogs: external-catalogs.md
-      - Build and Extend: development.md
+      - Author an External Pack: pack-authoring.md
+      - Test and Prove Packs: pack-testing.md
+      - Build and Extend BOFs: development.md
+      - Argument Packing: arg-packing.md
       - Generated Pack Reference: pack-reference.md
   - Analyze:
+      - Read a Capability Report: report-interpretation.md
       - Behavioral Analysis: analysis.md
+      - Analyze Third-Party BOFs: third-party-analysis.md
       - Arsenal Intelligence: arsenal.md
       - Loader Internals: native-loader.md
-  - Run:
+  - Operate:
       - Runtime Adapters: runtime.md
       - Windows Lab: windows-lab.md
       - Portable Lab Profiles: lab-profiles.md
@@ -50,6 +59,27 @@ nav:
       - Sliver: sliver.md
       - Cobalt Strike: cobaltstrike.md
       - Export: staging.md
+      - Runtime Receipts: evidence.md
+      - Operator TUI: tui.md
+  - Scenarios:
+      - Choose a Scenario: scenarios/index.md
+      - First BOF: scenarios/first-bof.md
+      - Build Matrix: scenarios/build-matrix.md
+      - TrustedSec whoami: scenarios/trustedsec-whoami.md
+      - Compare Arbitrary Objects: scenarios/arbitrary-object.md
+      - Arsenal Workflow: scenarios/arsenal-workflow.md
+      - External Pack: scenarios/external-pack.md
+      - Move to Another VM: scenarios/portable-vm.md
+      - Compiler-Free Lab: scenarios/compiler-free-lab.md
+      - Public Capabilities: scenarios/public-capabilities.md
+      - Native and Lab Execution: scenarios/runtime-execution.md
+      - Receipts and Observation: scenarios/receipts.md
+      - Sliver Sessions and Tasks: scenarios/c2-tasks.md
+      - Export Packages: scenarios/export-packages.md
+      - Multi-Host Topologies: scenarios/topologies.md
+      - Operator TUI Workflow: scenarios/tui-workflow.md
+      - Diagnose a Workflow: scenarios/diagnose-workflow.md
+      - Reproducible Handoff: scenarios/release-handoff.md
       - Operator Playbooks: playbooks.md
       - Deep Capability Workflows: deep-capabilities.md
       - Native Process Depth: native-process-depth.md
@@ -59,9 +89,10 @@ nav:
       - Cross-Host and Domain Topologies: cross-host-domain.md
       - Live Capability Proof: live-proof.md
   - Reference:
-      - Operator TUI: tui.md
-      - Argument Packing: arg-packing.md
-      - Reports: evidence.md
+      - Commands: commands.md
+      - Glossary: glossary.md
+      - Documentation Conventions: documentation-conventions.md
+      - Evidence Fixture Conventions: evidence/README.md
       - Release: release.md
       - Troubleshooting: troubleshooting.md
 plugins:
@@ -79,7 +110,7 @@ markdown_extensions:
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
-          class: mermaid
+          class: bb-diagram
           format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight
   - pymdownx.inlinehilite

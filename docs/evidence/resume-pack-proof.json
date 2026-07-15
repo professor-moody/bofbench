@@ -1,0 +1,25 @@
+{
+  "schema": "bofbench.pack-proof",
+  "schema_version": 1,
+  "run_id": "sanitized-docs-proof",
+  "status": "pass",
+  "lab": "devbox",
+  "runtime": "lab",
+  "results": [
+    {
+      "pack": "builtin/process-access-check",
+      "case": "target-standard-rights",
+      "runtime": "lab",
+      "status": "pass",
+      "output": [
+        "[process-access-check] status=complete target_pid=4242 requested=0x00000000 shown=8 granted=8"
+      ],
+      "object_sha256": "sanitized"
+    }
+  ],
+  "declared": 1,
+  "passed": 1,
+  "unavailable": 0,
+  "failed": 0,
+  "without_proof": 0
+}

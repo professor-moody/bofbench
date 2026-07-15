@@ -1,0 +1,14 @@
+{
+  "schema": "bofbench.runtime-receipt",
+  "schema_version": 4,
+  "runtime": "sliver",
+  "profile": "devbox",
+  "target_computer": "WINDOWS-LAB",
+  "session": "SANITIZED-SESSION",
+  "task_id": "SANITIZED-TASK",
+  "execution_state": "completed",
+  "output_complete": true,
+  "object_sha256": "SANITIZED_OBJECT_SHA256",
+  "redacted_fields": [],
+  "output": ["[process-tree] status=complete shown=8 limit=8"]
+}

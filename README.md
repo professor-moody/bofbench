@@ -147,8 +147,11 @@ The Build, Analyze, Arsenal, Run, Lab, and Results workspaces execute the same C
 
 ```bash
 go test ./...
-mkdocs build --strict
-mkdocs serve
+make docs
+make docs-check
+make docs-media   # optional: regenerate the six checked-in VHS clips
 ```
 
-Documentation starts at [`docs/index.md`](docs/index.md). Compatibility commands (`feature`, `recipe`, `dev`, `preflight`, and `stage`) remain readable for one major release while the primary surface uses packs, `analyze`, `run --via`, and `export --for`.
+The operator handbook starts at [`docs/index.md`](docs/index.md); task-oriented walkthroughs are indexed in the [Scenario Library](docs/scenarios/index.md). `make docs-check` validates both available handbook layers, generated pack references, links, anchors, media, direct command examples, and the host-only build/analyze/arsenal/export smoke lane.
+
+Compatibility commands (`feature`, `recipe`, `dev`, `preflight`, and `stage`) remain readable for one major release while the primary surface uses packs, `analyze`, `run --via`, and `export --for`.
