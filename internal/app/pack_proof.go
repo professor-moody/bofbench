@@ -82,7 +82,15 @@ type packProofReport struct {
 	Unavailable  int               `json:"unavailable"`
 	Failed       int               `json:"failed"`
 	WithoutProof int               `json:"without_proof"`
+	ResumedFrom  string            `json:"resumed_from,omitempty"`
+	OnlyStatuses []string          `json:"only_statuses,omitempty"`
 	JSONPath     string            `json:"json_path,omitempty"`
+}
+
+type proofResumeSelection struct {
+	Path string
+	Only map[string]bool
+	Keys map[string]bool
 }
 
 func packTestCommand(stdout io.Writer, load func() (*packsvc.Registry, error), catalogSelectors func() []string) *cobra.Command {
@@ -140,7 +148,8 @@ func packTestCommand(stdout io.Writer, load func() (*packsvc.Registry, error), c
 
 func packProveCommand(stdout io.Writer, load func() (*packsvc.Registry, error), catalogSelectors func() []string) *cobra.Command {
 	var all bool
-	var via, labName, topologyName, format string
+	var via, labName, topologyName, format, resumePath string
+	var onlyStatuses []string
 	cmd := &cobra.Command{
 		Use: "prove [pack]", Short: "Run declared capability proofs and cleanup through a selected runtime", Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -167,7 +176,11 @@ func packProveCommand(stdout io.Writer, load func() (*packsvc.Registry, error), 
 				topology = &resolved
 				labName = resolved.Topology.Execution.Name
 			}
-			report, proofErr := provePacks(cmd.Context(), stdout, registry, items, via, labName, topology)
+			resume, err := loadProofResumeSelection(resumePath, onlyStatuses, via, labName, topologyName)
+			if err != nil {
+				return err
+			}
+			report, proofErr := provePacks(cmd.Context(), stdout, registry, items, via, labName, topology, resume)
 			if format == "json" {
 				if err := printJSON(stdout, report); err != nil {
 					return err
@@ -182,9 +195,86 @@ func packProveCommand(stdout io.Writer, load func() (*packsvc.Registry, error), 
 	cmd.Flags().StringVar(&via, "via", "lab", "runtime: native, lab, sliver, or cobaltstrike")
 	cmd.Flags().StringVar(&labName, "lab", "", "named lab profile for lab or Sliver proof")
 	cmd.Flags().StringVar(&topologyName, "topology", "", "named execution, target, and optional domain-controller role mapping")
+	cmd.Flags().StringVar(&resumePath, "resume", "", "prior pack-proof report or directory; rerun only selected prior statuses")
+	cmd.Flags().StringSliceVar(&onlyStatuses, "only", nil, "prior statuses to rerun with --resume: unavailable, failed, or passed")
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
 	cmd.MarkFlagsMutuallyExclusive("lab", "topology")
 	return cmd
+}
+
+func loadProofResumeSelection(path string, only []string, via, labName, topologyName string) (*proofResumeSelection, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		if len(only) > 0 {
+			return nil, fmt.Errorf("--only requires --resume")
+		}
+		return nil, nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("resume proof report: %w", err)
+	}
+	if info.IsDir() {
+		path = filepath.Join(path, "pack-proof.json")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read resume proof report: %w", err)
+	}
+	var previous packProofReport
+	if err := json.Unmarshal(data, &previous); err != nil {
+		return nil, fmt.Errorf("parse resume proof report: %w", err)
+	}
+	if previous.Schema != "bofbench.pack-proof" {
+		return nil, fmt.Errorf("resume report schema is %q, expected bofbench.pack-proof", previous.Schema)
+	}
+	if previous.Runtime != "" && previous.Runtime != via {
+		return nil, fmt.Errorf("resume report runtime is %q, requested %q", previous.Runtime, via)
+	}
+	if topologyName != "" && previous.Topology != "" && previous.Topology != topologyName {
+		return nil, fmt.Errorf("resume report topology is %q, requested %q", previous.Topology, topologyName)
+	}
+	if topologyName == "" && labName != "" && previous.Lab != "" && previous.Lab != labName {
+		return nil, fmt.Errorf("resume report lab is %q, requested %q", previous.Lab, labName)
+	}
+	if len(only) == 0 {
+		only = []string{"unavailable", "failed"}
+	}
+	selection := &proofResumeSelection{Path: path, Only: map[string]bool{}, Keys: map[string]bool{}}
+	for _, status := range only {
+		normalized, err := normalizeProofResumeStatus(status)
+		if err != nil {
+			return nil, err
+		}
+		selection.Only[normalized] = true
+	}
+	for _, result := range previous.Results {
+		status, err := normalizeProofResumeStatus(result.Status)
+		if err != nil {
+			continue
+		}
+		if selection.Only[status] {
+			selection.Keys[proofResumeKey(result.Pack, result.Case, result.Runtime)] = true
+		}
+	}
+	return selection, nil
+}
+
+func normalizeProofResumeStatus(status string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "pass", "passed":
+		return "pass", nil
+	case "fail", "failed":
+		return "fail", nil
+	case "unavailable":
+		return "unavailable", nil
+	default:
+		return "", fmt.Errorf("unsupported proof resume status %q; choose unavailable, failed, or passed", status)
+	}
+}
+
+func proofResumeKey(pack, proofCase, runtime string) string {
+	return strings.Join([]string{pack, proofCase, runtime}, "\x00")
 }
 
 func selectedPacks(registry *packsvc.Registry, args []string, all bool, selectors []string) ([]packsvc.Resolved, error) {
@@ -374,10 +464,17 @@ func unavailableCoverage(err error) bool {
 	return strings.Contains(value, "not found") || strings.Contains(value, "unavailable") || strings.Contains(value, "requires windows") || strings.Contains(value, "could not resolve compiler") || strings.Contains(value, "currently supports x64 only") || strings.Contains(value, "no live sliver session") || strings.Contains(value, "sliver session matched")
 }
 
-func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registry, items []packsvc.Resolved, via, labName string, topology *resolvedTopologyValues) (packProofReport, error) {
+func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registry, items []packsvc.Resolved, via, labName string, topology *resolvedTopologyValues, resume *proofResumeSelection) (packProofReport, error) {
 	report := packProofReport{Header: evidence.New("bofbench.pack-proof", "", ""), Status: "pass", Lab: labName, Runtime: via, GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
 	if topology != nil {
 		report.Topology = topology.Topology.Name
+	}
+	if resume != nil {
+		report.ResumedFrom = resume.Path
+		for status := range resume.Only {
+			report.OnlyStatuses = append(report.OnlyStatuses, status)
+		}
+		sort.Strings(report.OnlyStatuses)
 	}
 	runDir, err := runlog.NewDir("pack-proof")
 	if err != nil {
@@ -464,6 +561,9 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 		matchedProof := false
 		for _, proof := range item.Document.ProofCases {
 			if !containsString(proof.Via, via) {
+				continue
+			}
+			if resume != nil && !resume.Keys[proofResumeKey(item.Qualified, proof.ID, via)] {
 				continue
 			}
 			matchedProof = true
@@ -789,7 +889,8 @@ func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) 
 		"$VAULT_SHA256": target.Fixtures.VaultSHA256, "$VAULT_SIZE": strconv.Itoa(target.Fixtures.VaultSize),
 		"$CERT_THUMBPRINT": target.Fixtures.CertificateThumbprint, "$CERT_STORE": target.Fixtures.CertificateStore, "$CERT_SUBJECT": target.Fixtures.CertificateSubject,
 		"$LAB_HOST": labHost, "$SERVICE_BINARY": target.ServiceBinary, "$WMI_MARKER_PATH": target.Fixtures.WMIMarkerPath,
-		"$TEMP": `C:\bofbench\proof\` + runID, "$RUN_ID": runID, "$PROOF_SECRET": proofSecret,
+		"$TARGET_SERVICE": target.Service,
+		"$TEMP":           `C:\bofbench\proof\` + runID, "$RUN_ID": runID, "$PROOF_SECRET": proofSecret,
 		"$PROOF_SECRET_SHA256":      hex.EncodeToString(secretHash[:]),
 		"$PROOF_SECRET_CRLF_SHA256": hex.EncodeToString(secretCRLFHash[:]),
 		"$PAYLOAD_RET_SHA256":       hex.EncodeToString(retHash[:]),
@@ -1038,6 +1139,10 @@ func proofStateCheckScript(kind, expect string, parameters map[string]string) (s
 		probe = `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class BOFBenchProtectCheck{[StructLayout(LayoutKind.Sequential)]public struct MBI{public IntPtr BaseAddress;public IntPtr AllocationBase;public uint AllocationProtect;public UIntPtr RegionSize;public uint State;public uint Protect;public uint Type;}[DllImport("kernel32.dll",SetLastError=true)]public static extern IntPtr OpenProcess(uint a,bool i,uint p);[DllImport("kernel32.dll",SetLastError=true)]public static extern UIntPtr VirtualQueryEx(IntPtr p,UInt64 a,out MBI m,UIntPtr s);[DllImport("kernel32.dll")]public static extern bool CloseHandle(IntPtr h);}' -ErrorAction SilentlyContinue; $handle=[BOFBenchProtectCheck]::OpenProcess(0x1000,$false,[uint32]` + q(parameters["pid"]) + `); if($handle -eq [IntPtr]::Zero){throw 'OpenProcess failed'}; try{$mbi=New-Object BOFBenchProtectCheck+MBI; $size=[Runtime.InteropServices.Marshal]::SizeOf($mbi); $addressText=(` + q(parameters["address"]) + ` -replace '^0x',''); $got=[BOFBenchProtectCheck]::VirtualQueryEx($handle,[Convert]::ToUInt64($addressText,16),[ref]$mbi,[UIntPtr]$size); $present=$got.ToUInt64() -gt 0; $expected=[Convert]::ToUInt32(` + q(parameters["protection"]) + `,16); $matches=$present -and (($mbi.Protect -band 0xff) -eq $expected)}finally{[void][BOFBenchProtectCheck]::CloseHandle($handle)}`
 	case "process":
 		probe = `Add-Type -TypeDefinition 'using System;using System.Text;using System.Runtime.InteropServices;public static class BOFBenchProcessCheck{[StructLayout(LayoutKind.Sequential)]struct US{public ushort Length;public ushort MaximumLength;public IntPtr Buffer;}[DllImport("kernel32.dll",SetLastError=true)]static extern IntPtr OpenProcess(uint a,bool i,uint p);[DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)]static extern bool QueryFullProcessImageName(IntPtr p,uint f,StringBuilder n,ref uint s);[DllImport("ntdll.dll")]static extern int NtQueryInformationProcess(IntPtr p,int c,IntPtr b,uint s,out uint r);[DllImport("kernel32.dll")]static extern bool CloseHandle(IntPtr h);public static string[] Inspect(uint pid){IntPtr h=OpenProcess(0x1000,false,pid);if(h==IntPtr.Zero)return null;try{var image=new StringBuilder(1024);uint chars=1024;if(!QueryFullProcessImageName(h,0,image,ref chars))return null;IntPtr buffer=Marshal.AllocHGlobal(8192);try{uint returned;int status=NtQueryInformationProcess(h,60,buffer,8192,out returned);if(status<0)return null;US value=(US)Marshal.PtrToStructure(buffer,typeof(US));string command=Marshal.PtrToStringUni(value.Buffer,value.Length/2);return new[]{image.ToString(),command};}finally{Marshal.FreeHGlobal(buffer);}}finally{CloseHandle(h);}}}' -ErrorAction SilentlyContinue; $info=[BOFBenchProcessCheck]::Inspect([uint32]` + q(parameters["pid"]) + `); $present=$null -ne $info; $matches=$present -and ([IO.Path]::GetFileName([string]$info[0]) -ieq ` + q(parameters["image"]) + `) -and ([string]$info[1] -like ('*'+` + q(parameters["marker"]) + `+'*'))`
+	case "process_command_line":
+		probe = `$process=Get-CimInstance Win32_Process -Filter ("ProcessId="+` + q(parameters["pid"]) + `) -ErrorAction SilentlyContinue; $present=$null -ne $process; $matches=$present -and ([string]$process.CommandLine -like ('*'+` + q(parameters["value"]) + `+'*'))`
+	case "service_config":
+		probe = `$service=Get-CimInstance Win32_Service -Filter ("Name='"+(` + q(parameters["name"]) + ` -replace "'","''")+"'") -ErrorAction SilentlyContinue; $present=$null -ne $service; $field=` + q(parameters["field"]) + `; $actual=if($field -eq 'description'){(Get-ItemProperty -LiteralPath ('HKLM:\SYSTEM\CurrentControlSet\Services\'+` + q(parameters["name"]) + `) -Name Description -ErrorAction SilentlyContinue).Description}elseif($field -eq 'binary_path'){$service.PathName}elseif($field -eq 'start_mode'){$service.StartMode}else{''}; $matches=$present -and ([string]$actual -like ('*'+` + q(parameters["value"]) + `+'*'))`
 	default:
 		return "", fmt.Errorf("unsupported state check kind %q", kind)
 	}
@@ -1049,6 +1154,10 @@ func proofStateCheckScript(kind, expect string, parameters map[string]string) (s
 		assertion = `if($present){throw 'expected state remains present'}`
 	case "matches":
 		assertion = `if(-not $matches){throw 'state content did not match'}`
+	case "contains":
+		assertion = `if(-not $matches){throw 'state did not contain expected value'}`
+	case "not_contains":
+		assertion = `if($matches){throw 'state still contains unexpected value'}`
 	default:
 		return "", fmt.Errorf("unsupported state expectation %q", expect)
 	}
@@ -1156,6 +1265,9 @@ func printPackTestReport(w io.Writer, report packTestReport) {
 
 func printPackProofReport(w io.Writer, report packProofReport) {
 	fmt.Fprintf(w, "PACK PROOF %s\n", strings.ToUpper(report.Status))
+	if report.ResumedFrom != "" {
+		fmt.Fprintf(w, "resume    %s only=%s\n", report.ResumedFrom, strings.Join(report.OnlyStatuses, ","))
+	}
 	if report.Topology != "" {
 		fmt.Fprintf(w, "topology  %s execution=%s\n", report.Topology, report.Lab)
 	}

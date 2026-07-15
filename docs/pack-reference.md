@@ -407,6 +407,37 @@ Enumerate bounded accounts and their registered service-principal names
 | `attributes` | `string` | no | no | `sAMAccountName,servicePrincipalName` | comma-separated attributes (maximum eight) |
 | `result_limit` | `int` | no | no | `25` | maximum directory entries (1-100) |
 
+## `builtin/local-account-policy-inventory`
+
+report local password, lockout, and authentication policy metadata
+
+- Can do: local password policy inventory; local lockout and authentication-role inventory
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `local_account_policy_inventory`
+- Live proofs: local-policy (lab, sliver)
+
+## `builtin/module-export-inventory`
+
+enumerate bounded exports from one selected process module
+
+- Can do: bounded export inventory for one selected process module
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `module_export_inventory`
+- Live proofs: target-module-exports (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` | exact process identifier |
+| `module_filter` | `string` | no | no | `` | case-insensitive module or export-name substring |
+| `module_base` | `string` | no | no | `` | optional exact hexadecimal module base |
+| `result_limit` | `int` | no | no | `64` | maximum export rows (1-512) |
+
 ## `builtin/named-pipe-inventory`
 
 enumerate bounded named-pipe entries with an optional prefix filter
@@ -454,6 +485,24 @@ Report the host name and a bounded set of local TCP endpoints
 - Needs: privilege=user; network=local; platform=windows/x64,x86
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
+
+## `builtin/network-neighbor-inventory`
+
+enumerate bounded IPv4 and IPv6 neighbor-cache metadata
+
+- Can do: bounded IPv4 and IPv6 neighbor-cache inventory
+- Effects: reads data
+- Needs: privilege=user; network=local; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `network_neighbor_inventory`
+- Live proofs: bounded-neighbors (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `family` | `string` | no | no | `all` | all, ipv4, or ipv6 |
+| `interface_index` | `int` | no | no | `0` | exact interface index; zero matches all |
+| `result_limit` | `int` | no | no | `64` | maximum neighbor rows (1-512) |
 
 ## `builtin/network-survey`
 
@@ -518,6 +567,23 @@ report the current process and thread identifiers
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
 - Analyzer signatures: `current_process_context`
+
+## `builtin/process-access-check`
+
+test requested process access rights against one selected PID
+
+- Can do: selected-process access-right discovery
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `process_access_check`
+- Live proofs: target-standard-rights (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` | exact process identifier |
+| `access_mask` | `int` | no | no | `0` | exact access mask; zero tests the standard operator rights |
 
 ## `builtin/process-discovery`
 

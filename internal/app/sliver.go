@@ -206,6 +206,8 @@ func executeSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath,
 		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), DurationMS: time.Since(started).Milliseconds(),
 		ReceiptPath: filepath.Join(runDir, "result.json"),
 	}
+	runtimeadapter.AddTransition(&receipt, "submitted", "extension command sent to selected Sliver session", started)
+	runtimeadapter.AddTransition(&receipt, "running", "Sliver task output collection started", started)
 	if manifest, manifestErr := loadStageManifest(filepath.Join(extensionPath, "manifest.json")); manifestErr == nil {
 		receipt.Object = manifest.Object
 		receipt.ObjectSHA256 = manifest.ObjectFingerprint.SHA256
@@ -226,12 +228,16 @@ func executeSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath,
 		receipt.ExecutionState = "completed"
 		receipt.OutputComplete = true
 		receipt.ExitState = "success"
+		runtimeadapter.AddTransition(&receipt, "completed", "Sliver reported successful execution and complete output", time.Now())
 	} else {
 		receipt.Error = runErr.Error()
 		receipt.ExitState = "error"
 		receipt.TimedOut = strings.Contains(strings.ToLower(receipt.Error), "timed out")
 		if receipt.TimedOut {
 			receipt.ExecutionState = "timeout"
+			runtimeadapter.AddTransition(&receipt, "timeout", receipt.Error, time.Now())
+		} else {
+			runtimeadapter.AddTransition(&receipt, "failed", receipt.Error, time.Now())
 		}
 	}
 	receipt = redactReceiptValues(receipt, opts.SensitiveOutputFields, opts.SensitiveArgumentNames, opts.SensitiveValues)

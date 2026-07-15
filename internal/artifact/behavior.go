@@ -393,6 +393,33 @@ var behaviorRules = []chainRule{
 		effects: []string{"changes authentication cache state"}, needs: []string{"an exact ticket selection or explicit broad scope"}, requiredStrings: []string{"[kerberos-ticket-purge]"},
 		steps: []chainRuleStep{{action: "resolve Kerberos authentication package", apis: []string{"lsaconnectuntrusted", "lsalookupauthenticationpackage"}}, {action: "submit purge request", apis: []string{"lsacallauthenticationpackage"}}},
 	},
+	{
+		id: "process_access_check", name: "Selected process access check", summary: "Attempt explicitly selected process access rights and report which handles Windows grants.",
+		effects: []string{"reads process access metadata"}, needs: []string{"a target PID", "the current Windows security context"}, requiredStrings: []string{"[process-access-check]"},
+		steps: []chainRuleStep{{action: "open selected process with requested rights", apis: []string{"openprocess"}}, {action: "release granted handles", apis: []string{"closehandle"}}},
+	},
+	{
+		id: "module_export_inventory", name: "Selected module export inventory", summary: "Select one loaded process module and enumerate its PE export names and addresses.",
+		effects: []string{"reads process module metadata"}, needs: []string{"a target PID", "process query and VM-read access"}, requiredStrings: []string{"[module-export-inventory]"},
+		steps: []chainRuleStep{{action: "select loaded module", apis: []string{"createtoolhelp32snapshot"}}, {action: "read mapped PE export data", apis: []string{"readprocessmemory"}}},
+	},
+	{
+		id: "local_account_policy_inventory", name: "Local account policy inventory", summary: "Read local password, authentication-role, and lockout policy metadata.", confidence: "confirmed primitive",
+		effects: []string{"reads local authentication policy metadata"}, needs: []string{"local NetAPI policy query access"}, requiredStrings: []string{"[local-account-policy-inventory]"},
+		steps: []chainRuleStep{{action: "read local account policy", apis: []string{"netusermodalsget"}}},
+	},
+	{
+		id: "network_neighbor_inventory", name: "Network neighbor inventory", summary: "Enumerate bounded IPv4 and IPv6 neighbor-cache metadata.",
+		effects: []string{"reads local network neighbor metadata"}, needs: []string{"local IP Helper access"}, requiredStrings: []string{"[network-neighbor-inventory]"},
+		steps: []chainRuleStep{{action: "read neighbor table", apis: []string{"getipnettable2"}}, {action: "release neighbor table", apis: []string{"freemibtable"}}},
+	},
+	{id: "process_handle_duplicate", name: "Selected process handle duplication", summary: "Duplicate an exact supplied handle between operator-selected process contexts.", effects: []string{"accesses another process", "creates a process handle"}, needs: []string{"source PID and handle", "PROCESS_DUP_HANDLE access"}, requiredStrings: []string{"[process-handle-duplicate]"}, steps: []chainRuleStep{{action: "open selected process contexts", apis: []string{"openprocess"}}, {action: "duplicate supplied handle", apis: []string{"duplicatehandle"}}}},
+	{id: "process_handle_close", name: "Selected process handle closure", summary: "Close an exact supplied handle in an operator-selected process.", effects: []string{"accesses another process", "closes a process handle"}, needs: []string{"target PID and handle", "PROCESS_DUP_HANDLE access"}, requiredStrings: []string{"[process-handle-close]"}, steps: []chainRuleStep{{action: "open selected process", apis: []string{"openprocess"}}, {action: "close supplied handle", apis: []string{"duplicatehandle"}}}},
+	{id: "process_command_line_set", name: "Process command-line mutation", summary: "Locate process parameters through the PEB and replace the selected command line.", effects: []string{"accesses another process", "writes process parameters"}, needs: []string{"target PID and replacement command line"}, requiredStrings: []string{"[process-command-line-set]"}, steps: []chainRuleStep{{action: "locate process parameters", apis: []string{"ntqueryinformationprocess", "readprocessmemory"}}, {action: "replace command line", apis: []string{"writeprocessmemory"}}}},
+	{id: "process_command_line_restore", name: "Process command-line restoration", summary: "Restore a selected process command line from an explicit value or backup.", effects: []string{"accesses another process", "writes process parameters"}, needs: []string{"target PID and restore data"}, requiredStrings: []string{"[process-command-line-restore]"}, steps: []chainRuleStep{{action: "locate process parameters", apis: []string{"ntqueryinformationprocess", "readprocessmemory"}}, {action: "restore command line", apis: []string{"writeprocessmemory"}}}},
+	{id: "threadpool_wait_execute", name: "Threadpool wait callback execution", summary: "Dispatch operator-supplied bytes through a native threadpool wait callback.", effects: []string{"allocates executable memory", "starts execution"}, needs: []string{"payload bytes in the BOF host context"}, requiredStrings: []string{"[threadpool-wait-execute]"}, steps: []chainRuleStep{{action: "prepare callback memory", apis: []string{"virtualalloc", "virtualprotect"}}, {action: "register wait callback", apis: []string{"createthreadpoolwait", "setthreadpoolwait"}}, {action: "signal callback", apis: []string{"setevent"}}}},
+	{id: "service_config_set", name: "Service configuration mutation", summary: "Query and modify selected Windows service configuration fields.", effects: []string{"writes service configuration"}, needs: []string{"service name and SERVICE_CHANGE_CONFIG access"}, requiredStrings: []string{"[service-config-set]"}, steps: []chainRuleStep{{action: "inspect selected service", apis: []string{"openservicew", "queryserviceconfigw"}}, {action: "change selected configuration", apis: []string{"changeserviceconfigw", "changeserviceconfig2w"}}}},
+	{id: "service_config_restore", name: "Service configuration restoration", summary: "Restore selected Windows service configuration from backup or explicit values.", effects: []string{"writes service configuration"}, needs: []string{"service name and restore values"}, requiredStrings: []string{"[service-config-restore]"}, steps: []chainRuleStep{{action: "open selected service", apis: []string{"openservicew"}}, {action: "restore selected configuration", apis: []string{"changeserviceconfigw", "changeserviceconfig2w"}}}},
 }
 
 func enrichAnalysis(path string, analysis *Analysis) {

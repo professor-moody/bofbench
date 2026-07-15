@@ -796,6 +796,42 @@ func builtins() []Resolved {
 	objectNamespace.AnalysisSignatures = []AnalysisSignature{{ID: "object_namespace_inventory", Name: "Object namespace inventory", Summary: "Open one object-manager directory and enumerate bounded object names and types.", Steps: []AnalysisStep{{Action: "open object-manager directory", APIs: []string{"NtOpenDirectoryObject"}}, {Action: "enumerate namespace entries", APIs: []string{"NtQueryDirectoryObject"}}}, RequiredStrings: []string{"[object-namespace-inventory]"}, Effects: []string{"reads Windows object namespace metadata"}, Requirements: []string{"an object-manager directory path", "directory query access"}}}
 	objectNamespace.ProofCases = []ProofCase{{ID: "base-named-objects", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"directory": `\BaseNamedObjects`, "prefix": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "object-namespace-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
 	byID["object-namespace-inventory"] = objectNamespace
+	processAccess := byID["process-access-check"]
+	processAccess.Title = "Process Access Check"
+	processAccess.Capabilities = []string{"selected-process access-right discovery"}
+	processAccess.Arguments = []Argument{{Name: "target_pid", Type: "int", Description: "exact process identifier", Required: true}, {Name: "access_mask", Type: "int", Description: "exact access mask; zero tests the standard operator rights", Default: "0"}}
+	processAccess.ExpectedAnalysis = []string{"process_access_check"}
+	processAccess.OutputFields = []string{"target_pid", "right", "mask", "granted", "error", "requested", "shown", "status"}
+	processAccess.AnalysisSignatures = []AnalysisSignature{{ID: "process_access_check", Name: "Selected process access check", Summary: "Attempt explicitly requested process access rights against one selected PID and report the Windows result.", Steps: []AnalysisStep{{Action: "open selected process with requested rights", APIs: []string{"OpenProcess"}}, {Action: "release granted process handles", APIs: []string{"CloseHandle"}}}, RequiredStrings: []string{"[process-access-check]"}, Effects: []string{"reads process access metadata"}, Requirements: []string{"an exact target PID", "the current Windows security context"}}}
+	processAccess.ProofCases = []ProofCase{{ID: "target-standard-rights", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID", "access_mask": "0"}, Expect: ProofExpectation{Tag: "process-access-check", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["process-access-check"] = processAccess
+	moduleExports := byID["module-export-inventory"]
+	moduleExports.Title = "Module Export Inventory"
+	moduleExports.Capabilities = []string{"bounded export inventory for one selected process module"}
+	moduleExports.Arguments = []Argument{{Name: "target_pid", Type: "int", Description: "exact process identifier", Required: true}, {Name: "module_filter", Type: "string", Description: "case-insensitive module or export-name substring", Default: ""}, {Name: "module_base", Type: "string", Description: "optional exact hexadecimal module base", Default: ""}, {Name: "result_limit", Type: "int", Description: "maximum export rows (1-512)", Default: "64"}}
+	moduleExports.ExpectedAnalysis = []string{"module_export_inventory"}
+	moduleExports.OutputFields = []string{"target_pid", "module", "base", "name", "ordinal", "address", "shown", "limit", "status", "error"}
+	moduleExports.AnalysisSignatures = []AnalysisSignature{{ID: "module_export_inventory", Name: "Selected module export inventory", Summary: "Select one loaded process module and enumerate bounded PE export names, ordinals, and addresses.", Steps: []AnalysisStep{{Action: "select a loaded process module", APIs: []string{"CreateToolhelp32Snapshot", "Module32FirstA", "Module32NextA"}}, {Action: "open and read the selected process image", APIs: []string{"OpenProcess", "ReadProcessMemory"}}}, RequiredStrings: []string{"[module-export-inventory]"}, Effects: []string{"reads process module metadata"}, Requirements: []string{"an exact target PID", "process query and VM-read access"}}}
+	moduleExports.ProofCases = []ProofCase{{ID: "target-module-exports", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID", "module_filter": "", "module_base": "$TARGET_MODULE_BASE", "result_limit": "16"}, Expect: ProofExpectation{Tag: "module-export-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["module-export-inventory"] = moduleExports
+	accountPolicy := byID["local-account-policy-inventory"]
+	accountPolicy.Title = "Local Account Policy Inventory"
+	accountPolicy.Capabilities = []string{"local password policy inventory", "local lockout and authentication-role inventory"}
+	accountPolicy.ExpectedAnalysis = []string{"local_account_policy_inventory"}
+	accountPolicy.OutputFields = []string{"min_length", "min_age", "max_age", "force_logoff", "history", "role", "lockout_duration", "lockout_window", "lockout_threshold", "status", "error"}
+	accountPolicy.AnalysisSignatures = []AnalysisSignature{{ID: "local_account_policy_inventory", Name: "Local account policy inventory", Summary: "Read local password, authentication-role, and account-lockout policy metadata.", Steps: []AnalysisStep{{Action: "read local user policy levels", APIs: []string{"NetUserModalsGet"}}, {Action: "release policy buffers", APIs: []string{"NetApiBufferFree"}}}, RequiredStrings: []string{"[local-account-policy-inventory]"}, Effects: []string{"reads local authentication policy metadata"}, Requirements: []string{"local NetAPI policy query access"}}}
+	accountPolicy.ProofCases = []ProofCase{{ID: "local-policy", Via: []string{"lab", "sliver"}, Expect: ProofExpectation{Tag: "local-account-policy-inventory", Fields: map[string]string{"status": "complete"}}}}
+	byID["local-account-policy-inventory"] = accountPolicy
+	neighbors := byID["network-neighbor-inventory"]
+	neighbors.Title = "Network Neighbor Inventory"
+	neighbors.Capabilities = []string{"bounded IPv4 and IPv6 neighbor-cache inventory"}
+	neighbors.Network = "local"
+	neighbors.Arguments = []Argument{{Name: "family", Type: "string", Description: "all, ipv4, or ipv6", Default: "all"}, {Name: "interface_index", Type: "int", Description: "exact interface index; zero matches all", Default: "0"}, {Name: "result_limit", Type: "int", Description: "maximum neighbor rows (1-512)", Default: "64"}}
+	neighbors.ExpectedAnalysis = []string{"network_neighbor_inventory"}
+	neighbors.OutputFields = []string{"address", "family", "interface", "state", "router", "reachable", "shown", "limit", "status", "error"}
+	neighbors.AnalysisSignatures = []AnalysisSignature{{ID: "network_neighbor_inventory", Name: "Network neighbor inventory", Summary: "Enumerate bounded IPv4 and IPv6 neighbor-cache rows with interface, state, and router metadata.", Steps: []AnalysisStep{{Action: "read IP neighbor table", APIs: []string{"GetIpNetTable2"}}, {Action: "format neighbor addresses", APIs: []string{"inet_ntop"}}, {Action: "release neighbor table", APIs: []string{"FreeMibTable"}}}, RequiredStrings: []string{"[network-neighbor-inventory]"}, Effects: []string{"reads local network neighbor metadata"}, Requirements: []string{"local IP Helper access"}}}
+	neighbors.ProofCases = []ProofCase{{ID: "bounded-neighbors", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"family": "all", "interface_index": "0", "result_limit": "16"}, Expect: ProofExpectation{Tag: "network-neighbor-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["network-neighbor-inventory"] = neighbors
 	pipeInventory := byID["named-pipe-inventory"]
 	pipeInventory.Title = "Named Pipe Inventory"
 	pipeInventory.Capabilities = []string{"bounded named-pipe discovery"}
@@ -1120,7 +1156,7 @@ func validate(document Document, root string) error {
 		"$DPAPI_USER_PATH": true, "$DPAPI_USER_SHA256": true, "$DPAPI_MACHINE_PATH": true, "$DPAPI_MACHINE_SHA256": true,
 		"$VAULT_GUID": true, "$VAULT_RESOURCE": true, "$VAULT_IDENTITY": true, "$VAULT_SHA256": true, "$VAULT_SIZE": true,
 		"$CERT_THUMBPRINT": true, "$CERT_STORE": true, "$CERT_SUBJECT": true,
-		"$LAB_HOST": true, "$SERVICE_BINARY": true, "$WMI_MARKER_PATH": true, "$TEMP": true, "$RUN_ID": true, "$PROOF_SECRET": true,
+		"$LAB_HOST": true, "$SERVICE_BINARY": true, "$TARGET_SERVICE": true, "$WMI_MARKER_PATH": true, "$TEMP": true, "$RUN_ID": true, "$PROOF_SECRET": true,
 		"$PROOF_SECRET_SHA256": true, "$PROOF_SECRET_CRLF_SHA256": true, "$PROOF_SECRET_PATH": true,
 		"$REMOTE_REGISTRY_HIVE": true, "$REMOTE_REGISTRY_PATH": true, "$REMOTE_REGISTRY_NAME": true, "$REMOTE_REGISTRY_SHA256": true, "$REMOTE_REGISTRY_SIZE": true,
 		"$REMOTE_STAGE_SHARE": true, "$REMOTE_STAGE_RELATIVE_ROOT": true, "$REMOTE_STAGE_LOCAL_ROOT": true,
@@ -1203,11 +1239,13 @@ func validate(document Document, root string) error {
 			"scheduled_task": {"name"}, "credential": {"target"}, "certificate": {"scope", "store", "thumbprint"},
 			"dpapi_file": {"path", "sha256"}, "pfx": {"path", "password", "thumbprint"},
 			"process_memory": {"pid", "address", "size", "sha256"}, "process_protection": {"pid", "address", "protection"},
-			"process": {"pid", "image", "marker"},
+			"process":              {"pid", "image", "marker"},
+			"process_command_line": {"pid", "value"},
+			"service_config":       {"name", "field", "value"},
 		}
 		for _, check := range proof.StateChecks {
 			required, ok := stateParameters[check.Kind]
-			if !contains([]string{"after_run", "after_cleanup"}, check.Phase) || !ok || !contains([]string{"present", "absent", "matches"}, check.Expect) {
+			if !contains([]string{"after_run", "after_cleanup"}, check.Phase) || !ok || !contains([]string{"present", "absent", "matches", "contains", "not_contains"}, check.Expect) {
 				problems = append(problems, fmt.Sprintf("proof case %s has an invalid state check", proof.ID))
 				continue
 			}

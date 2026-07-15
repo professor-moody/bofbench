@@ -14,6 +14,9 @@ Before running, get a concise readiness view instead of a long diagnostic report
 bofbench runtime status --lab devbox
 bofbench runtime sessions --via sliver --lab devbox
 bofbench runtime wait --via sliver --lab devbox --timeout 10m
+bofbench runtime tasks --via sliver --lab devbox
+bofbench runtime task <task-id> --wait --timeout 10m
+bofbench runtime watch --via sliver --lab devbox
 ```
 
 The first command shows the native loader, remote lab, Sliver configuration/session match, and licensed Cobalt Strike availability. The second lists selectable Sliver sessions for the named profile.
@@ -24,6 +27,17 @@ The first command shows the native loader, remote lab, Sliver configuration/sess
 bofbench runtime wait --via sliver --lab devbox --timeout 10m --interval 2s
 bofbench pack prove internal/thread-hijack-execute --via sliver --lab devbox
 ```
+
+`runtime tasks` gives a compact view of submitted, running, completed, failed, and timed-out C2 work from stored receipts. `runtime task` resolves either a task ID or receipt path; `--wait` follows state changes until output is complete. `runtime watch` continuously refreshes incomplete work for the selected adapter and profile.
+
+Interrupted catalog proof runs can resume from their previous report:
+
+```bash
+bofbench pack prove --all --catalog internal --via sliver --lab devbox \
+  --resume runs/<proof-run>/pack-proof.json --only failed,unavailable
+```
+
+The resumed report records its source report and executes only matching pack/proof cases. Existing completed cases remain in the original report, so an operator can retry live coverage without rebuilding the entire proof lane.
 
 ## Native Windows
 

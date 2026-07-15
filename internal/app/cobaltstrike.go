@@ -107,6 +107,7 @@ func executeCobaltStrike(parent context.Context, stdout io.Writer, opts cobaltSt
 		Session: beacon, Object: object, Entrypoint: manifest.Entrypoint, Arguments: argumentTypes,
 		TimeoutMS: 90000, StartedAt: started.UTC().Format(time.RFC3339Nano), ReceiptPath: filepath.Join(runDir, "result.json"),
 	}
+	runtimeadapter.AddTransition(&receipt, "submitted", "Aggressor client started", started)
 	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
 	defer cancel()
 	output, runErr := exec.CommandContext(ctx, agscript, host, port, user, password, scriptPath).CombinedOutput()
@@ -123,6 +124,7 @@ func executeCobaltStrike(parent context.Context, stdout io.Writer, opts cobaltSt
 		receipt.ExecutionState = "submitted"
 		receipt.OutputComplete = false
 		receipt.ExitState = "submitted"
+		runtimeadapter.AddTransition(&receipt, "acknowledged", "Cobalt Strike accepted the inline-execute request", time.Now())
 	} else if runErr == nil {
 		runErr = fmt.Errorf("agscript exited without confirming BOF task submission")
 	}
@@ -131,6 +133,9 @@ func executeCobaltStrike(parent context.Context, stdout io.Writer, opts cobaltSt
 		receipt.ExitState = "error"
 		if receipt.TimedOut {
 			receipt.ExecutionState = "timeout"
+			runtimeadapter.AddTransition(&receipt, "timeout", receipt.Error, time.Now())
+		} else {
+			runtimeadapter.AddTransition(&receipt, "failed", receipt.Error, time.Now())
 		}
 	}
 	receipt.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)

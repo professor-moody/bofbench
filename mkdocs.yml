@@ -54,6 +54,7 @@ nav:
       - Deep Capability Workflows: deep-capabilities.md
       - Native Process Depth: native-process-depth.md
       - Operator-Controlled Execution: operator-execution-depth.md
+      - Runtime Access and Configuration: runtime-access-depth.md
       - Standalone Remote Operations: remote-operations.md
       - Cross-Host and Domain Topologies: cross-host-domain.md
       - Live Capability Proof: live-proof.md

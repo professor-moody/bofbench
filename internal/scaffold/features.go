@@ -1365,6 +1365,159 @@ cleanup:
 		Call: "bofbench_feature_remote_task_inventory($PARSER);",
 	},
 	{
+		Name:        "process-access-check",
+		Description: "test requested process access rights against one selected PID",
+		Declaration: `HANDLE WINAPI KERNEL32$OpenProcess(DWORD, BOOL, DWORD);
+BOOL WINAPI KERNEL32$CloseHandle(HANDLE);
+DWORD WINAPI KERNEL32$GetLastError(void);
+
+typedef struct _BOFBENCH_PROCESS_ACCESS_ITEM { DWORD mask; const char *name; } BOFBENCH_PROCESS_ACCESS_ITEM;
+static BOFBENCH_PROCESS_ACCESS_ITEM bofbench_process_access_items[] = {
+    { PROCESS_QUERY_LIMITED_INFORMATION, "query" }, { PROCESS_VM_READ, "read" },
+    { PROCESS_VM_WRITE, "write" }, { PROCESS_VM_OPERATION, "operation" },
+    { PROCESS_CREATE_THREAD, "create_thread" }, { PROCESS_DUP_HANDLE, "duplicate_handle" },
+    { PROCESS_SUSPEND_RESUME, "suspend_resume" }, { PROCESS_TERMINATE, "terminate" }
+};
+
+static void bofbench_feature_process_access_check(datap *parser) {
+    DWORD pid = (DWORD)BeaconDataInt(parser), requested = (DWORD)BeaconDataInt(parser);
+    DWORD shown = 0, granted = 0, index, count = sizeof(bofbench_process_access_items) / sizeof(bofbench_process_access_items[0]);
+    if (!pid) { BeaconPrintf(CALLBACK_ERROR, "[process-access-check] status=bad-arguments"); return; }
+    if (requested) {
+        HANDLE process = KERNEL32$OpenProcess(requested, FALSE, pid); DWORD error = process ? 0 : KERNEL32$GetLastError();
+        BeaconPrintf(CALLBACK_OUTPUT, "[process-access-check] target_pid=%lu right=custom mask=0x%08lx granted=%lu error=%lu", pid, requested, process != NULL, error);
+        if (process) { granted = 1; KERNEL32$CloseHandle(process); }
+        shown = 1;
+    } else {
+        for (index = 0; index < count; index++) {
+            HANDLE process = KERNEL32$OpenProcess(bofbench_process_access_items[index].mask, FALSE, pid); DWORD error = process ? 0 : KERNEL32$GetLastError();
+            BeaconPrintf(CALLBACK_OUTPUT, "[process-access-check] target_pid=%lu right=%s mask=0x%08lx granted=%lu error=%lu", pid, bofbench_process_access_items[index].name, bofbench_process_access_items[index].mask, process != NULL, error);
+            shown++; if (process) { granted++; KERNEL32$CloseHandle(process); }
+        }
+    }
+    BeaconPrintf(CALLBACK_OUTPUT, "[process-access-check] status=complete target_pid=%lu requested=0x%08lx shown=%lu granted=%lu", pid, requested, shown, granted);
+}`,
+		Call: "bofbench_feature_process_access_check($PARSER);",
+	},
+	{
+		Name:        "module-export-inventory",
+		Description: "enumerate bounded exports from one selected process module",
+		Declaration: `HANDLE WINAPI KERNEL32$CreateToolhelp32Snapshot(DWORD, DWORD);
+BOOL WINAPI KERNEL32$Module32FirstW(HANDLE, LPMODULEENTRY32W);
+BOOL WINAPI KERNEL32$Module32NextW(HANDLE, LPMODULEENTRY32W);
+HANDLE WINAPI KERNEL32$OpenProcess(DWORD, BOOL, DWORD);
+BOOL WINAPI KERNEL32$ReadProcessMemory(HANDLE, LPCVOID, LPVOID, SIZE_T, SIZE_T *);
+BOOL WINAPI KERNEL32$CloseHandle(HANDLE);
+DWORD WINAPI KERNEL32$GetLastError(void);
+
+static int bofbench_export_lower(int value) { return value >= 'A' && value <= 'Z' ? value + ('a' - 'A') : value; }
+static BOOL bofbench_export_contains(const char *value, const char *filter, int filter_bytes) {
+    int i, j, limit = filter_bytes > 0 ? filter_bytes - 1 : 0; if (!filter || limit == 0) return TRUE;
+    for (i = 0; value[i]; i++) { for (j = 0; j < limit && value[i+j] && bofbench_export_lower(value[i+j]) == bofbench_export_lower(filter[j]); j++) {} if (j == limit) return TRUE; }
+    return FALSE;
+}
+static void bofbench_export_text(const WCHAR *source, char *target, DWORD capacity) { DWORD index = 0; while (source && source[index] && index + 1 < capacity) { target[index] = source[index] < 128 ? (char)source[index] : '?'; index++; } target[index] = 0; }
+static ULONG_PTR bofbench_export_address(const char *value, int bytes) {
+    ULONG_PTR result = 0; int index = 0, digit; if (!value || bytes <= 0) return 0;
+    if (bytes > 2 && value[0] == '0' && (value[1] == 'x' || value[1] == 'X')) index = 2;
+    for (; index < bytes && value[index]; index++) { char c = value[index]; if (c >= '0' && c <= '9') digit = c - '0'; else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10; else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10; else break; result = (result << 4) | (ULONG_PTR)digit; }
+    return result;
+}
+static BOOL bofbench_export_read(HANDLE process, ULONG_PTR address, void *buffer, SIZE_T size) { SIZE_T read = 0; return KERNEL32$ReadProcessMemory(process, (LPCVOID)address, buffer, size, &read) && read == size; }
+
+static void bofbench_feature_module_export_inventory(datap *parser) {
+    DWORD pid = (DWORD)BeaconDataInt(parser); int filter_bytes = 0, base_bytes = 0;
+    char *filter = BeaconDataExtract(parser, &filter_bytes), *base_text = BeaconDataExtract(parser, &base_bytes);
+    DWORD requested = (DWORD)BeaconDataInt(parser), limit = requested ? requested : 64, shown = 0, index;
+    ULONG_PTR selected_base = bofbench_export_address(base_text, base_bytes); HANDLE snapshot = INVALID_HANDLE_VALUE, process = NULL; MODULEENTRY32W module; BOOL found = FALSE; char module_name[260];
+    IMAGE_DOS_HEADER dos; DWORD signature = 0; IMAGE_FILE_HEADER file_header; WORD magic = 0; IMAGE_DATA_DIRECTORY exports; IMAGE_EXPORT_DIRECTORY directory;
+    if (!pid) { BeaconPrintf(CALLBACK_ERROR, "[module-export-inventory] status=bad-arguments"); return; } if (limit > 512) limit = 512;
+    snapshot = KERNEL32$CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid); if (snapshot == INVALID_HANDLE_VALUE) goto failed;
+    module.dwSize = sizeof(module);
+    if (KERNEL32$Module32FirstW(snapshot, &module)) do { bofbench_export_text(module.szModule, module_name, sizeof(module_name)); if ((selected_base == 0 || selected_base == (ULONG_PTR)module.modBaseAddr) && bofbench_export_contains(module_name, filter, filter_bytes)) { found = TRUE; break; } } while (KERNEL32$Module32NextW(snapshot, &module));
+    if (!found) { BeaconPrintf(CALLBACK_ERROR, "[module-export-inventory] status=not-found target_pid=%lu", pid); goto cleanup; }
+    process = KERNEL32$OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid); if (!process) goto failed;
+    if (!bofbench_export_read(process, (ULONG_PTR)module.modBaseAddr, &dos, sizeof(dos)) || dos.e_magic != IMAGE_DOS_SIGNATURE) goto failed;
+    if (!bofbench_export_read(process, (ULONG_PTR)module.modBaseAddr + dos.e_lfanew, &signature, sizeof(signature)) || signature != IMAGE_NT_SIGNATURE) goto failed;
+    if (!bofbench_export_read(process, (ULONG_PTR)module.modBaseAddr + dos.e_lfanew + sizeof(DWORD), &file_header, sizeof(file_header))) goto failed;
+    if (!bofbench_export_read(process, (ULONG_PTR)module.modBaseAddr + dos.e_lfanew + sizeof(DWORD) + sizeof(file_header), &magic, sizeof(magic))) goto failed;
+    { ULONG_PTR optional = (ULONG_PTR)module.modBaseAddr + dos.e_lfanew + sizeof(DWORD) + sizeof(file_header); ULONG_PTR offset = magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC ? 112 : 96;
+      if (!bofbench_export_read(process, optional + offset, &exports, sizeof(exports)) || !exports.VirtualAddress) goto complete; }
+    if (!bofbench_export_read(process, (ULONG_PTR)module.modBaseAddr + exports.VirtualAddress, &directory, sizeof(directory))) goto failed;
+    for (index = 0; index < directory.NumberOfNames && shown < limit; index++) {
+        DWORD name_rva = 0, function_rva = 0; WORD ordinal_index = 0; char name[256]; SIZE_T read = 0;
+        if (!bofbench_export_read(process, (ULONG_PTR)module.modBaseAddr + directory.AddressOfNames + index * sizeof(DWORD), &name_rva, sizeof(name_rva))) break;
+        if (!KERNEL32$ReadProcessMemory(process, (LPCVOID)((ULONG_PTR)module.modBaseAddr + name_rva), name, sizeof(name)-1, &read) || read == 0) continue; name[sizeof(name)-1] = 0;
+        if (!bofbench_export_contains(name, filter, filter_bytes)) continue;
+        if (!bofbench_export_read(process, (ULONG_PTR)module.modBaseAddr + directory.AddressOfNameOrdinals + index * sizeof(WORD), &ordinal_index, sizeof(ordinal_index))) continue;
+        if (!bofbench_export_read(process, (ULONG_PTR)module.modBaseAddr + directory.AddressOfFunctions + ordinal_index * sizeof(DWORD), &function_rva, sizeof(function_rva))) continue;
+        BeaconPrintf(CALLBACK_OUTPUT, "[module-export-inventory] target_pid=%lu module=%s base=0x%llx name=%s ordinal=%lu address=0x%llx", pid, module_name, (unsigned long long)(ULONG_PTR)module.modBaseAddr, name, directory.Base + ordinal_index, (unsigned long long)((ULONG_PTR)module.modBaseAddr + function_rva)); shown++;
+    }
+complete:
+    BeaconPrintf(CALLBACK_OUTPUT, "[module-export-inventory] status=complete target_pid=%lu module=%s base=0x%llx shown=%lu limit=%lu", pid, module_name, (unsigned long long)(ULONG_PTR)module.modBaseAddr, shown, limit); goto cleanup;
+failed:
+    BeaconPrintf(CALLBACK_ERROR, "[module-export-inventory] status=failed target_pid=%lu error=%lu", pid, KERNEL32$GetLastError());
+cleanup:
+    if (process) KERNEL32$CloseHandle(process); if (snapshot != INVALID_HANDLE_VALUE) KERNEL32$CloseHandle(snapshot);
+}`,
+		Call: "bofbench_feature_module_export_inventory($PARSER);",
+	},
+	{
+		Name:        "local-account-policy-inventory",
+		Description: "report local password, lockout, and authentication policy metadata",
+		Declaration: `#include <lm.h>
+NET_API_STATUS WINAPI NETAPI32$NetUserModalsGet(LPCWSTR, DWORD, LPBYTE *);
+NET_API_STATUS WINAPI NETAPI32$NetApiBufferFree(LPVOID);
+
+static void bofbench_feature_local_account_policy_inventory(void) {
+    LPBYTE buffer = NULL; NET_API_STATUS status; USER_MODALS_INFO_0 *password = NULL; USER_MODALS_INFO_1 *role = NULL; USER_MODALS_INFO_3 *lockout = NULL;
+    status = NETAPI32$NetUserModalsGet(NULL, 0, &buffer); if (status != NERR_Success) goto failed; password = (USER_MODALS_INFO_0 *)buffer;
+    BeaconPrintf(CALLBACK_OUTPUT, "[local-account-policy-inventory] min_length=%lu min_age=%lu max_age=%lu force_logoff=%lu history=%lu", password->usrmod0_min_passwd_len, password->usrmod0_min_passwd_age, password->usrmod0_max_passwd_age, password->usrmod0_force_logoff, password->usrmod0_password_hist_len); NETAPI32$NetApiBufferFree(buffer); buffer = NULL;
+    status = NETAPI32$NetUserModalsGet(NULL, 1, &buffer); if (status != NERR_Success) goto failed; role = (USER_MODALS_INFO_1 *)buffer;
+    BeaconPrintf(CALLBACK_OUTPUT, "[local-account-policy-inventory] role=%lu", role->usrmod1_role); NETAPI32$NetApiBufferFree(buffer); buffer = NULL;
+    status = NETAPI32$NetUserModalsGet(NULL, 3, &buffer); if (status != NERR_Success) goto failed; lockout = (USER_MODALS_INFO_3 *)buffer;
+    BeaconPrintf(CALLBACK_OUTPUT, "[local-account-policy-inventory] lockout_duration=%lu lockout_window=%lu lockout_threshold=%lu", lockout->usrmod3_lockout_duration, lockout->usrmod3_lockout_observation_window, lockout->usrmod3_lockout_threshold);
+    NETAPI32$NetApiBufferFree(buffer); BeaconPrintf(CALLBACK_OUTPUT, "[local-account-policy-inventory] status=complete"); return;
+failed:
+    if (buffer) NETAPI32$NetApiBufferFree(buffer); BeaconPrintf(CALLBACK_ERROR, "[local-account-policy-inventory] status=failed error=%lu", status);
+}`,
+		Call: "bofbench_feature_local_account_policy_inventory();",
+	},
+	{
+		Name:        "network-neighbor-inventory",
+		Description: "enumerate bounded IPv4 and IPv6 neighbor-cache metadata",
+		Declaration: `#include <ws2tcpip.h>
+typedef union _BOFBENCH_SOCKADDR_INET { SOCKADDR_IN Ipv4; SOCKADDR_IN6 Ipv6; USHORT si_family; } BOFBENCH_SOCKADDR_INET;
+typedef struct _BOFBENCH_MIB_IPNET_ROW2 { BOFBENCH_SOCKADDR_INET Address; ULONGLONG InterfaceLuid; DWORD InterfaceIndex; UCHAR PhysicalAddress[32]; DWORD PhysicalAddressLength; DWORD State; UCHAR Flags; UCHAR Reserved[3]; DWORD LastReachable; } BOFBENCH_MIB_IPNET_ROW2, *PBOFBENCH_MIB_IPNET_ROW2;
+typedef struct _BOFBENCH_MIB_IPNET_TABLE2 { DWORD NumEntries; DWORD Reserved; BOFBENCH_MIB_IPNET_ROW2 Table[1]; } BOFBENCH_MIB_IPNET_TABLE2, *PBOFBENCH_MIB_IPNET_TABLE2;
+DWORD WINAPI IPHLPAPI$GetIpNetTable2(USHORT, PBOFBENCH_MIB_IPNET_TABLE2 *);
+VOID WINAPI IPHLPAPI$FreeMibTable(PVOID);
+int WSAAPI WS2_32$WSAStartup(WORD, LPWSADATA);
+int WSAAPI WS2_32$WSACleanup(void);
+PCSTR WSAAPI WS2_32$inet_ntop(INT, const VOID *, PSTR, size_t);
+
+static BOOL bofbench_neighbor_family(const char *family, int bytes, ADDRESS_FAMILY candidate) {
+    if (!family || bytes <= 1 || family[0] == 'a' || family[0] == 'A') return TRUE;
+    if ((family[0] == '4' || family[0] == 'i' || family[0] == 'I') && candidate == AF_INET) return TRUE;
+    if ((family[0] == '6' || family[0] == 'v' || family[0] == 'V') && candidate == AF_INET6) return TRUE;
+    return FALSE;
+}
+static void bofbench_feature_network_neighbor_inventory(datap *parser) {
+    int family_bytes = 0; char *family = BeaconDataExtract(parser, &family_bytes); DWORD interface_index = (DWORD)BeaconDataInt(parser), requested = (DWORD)BeaconDataInt(parser), limit = requested ? requested : 64, shown = 0, index; WSADATA winsock; PBOFBENCH_MIB_IPNET_TABLE2 table = NULL; DWORD status;
+    if (limit > 512) limit = 512; if (WS2_32$WSAStartup(MAKEWORD(2,2), &winsock) != 0) { BeaconPrintf(CALLBACK_ERROR, "[network-neighbor-inventory] status=failed api=WSAStartup"); return; }
+    status = IPHLPAPI$GetIpNetTable2(AF_UNSPEC, &table); if (status != NO_ERROR || !table) { BeaconPrintf(CALLBACK_ERROR, "[network-neighbor-inventory] status=failed error=%lu", status); WS2_32$WSACleanup(); return; }
+    for (index = 0; index < table->NumEntries && shown < limit; index++) { PBOFBENCH_MIB_IPNET_ROW2 row = &table->Table[index]; char address[INET6_ADDRSTRLEN]; const void *source = NULL;
+        if (interface_index && row->InterfaceIndex != interface_index) continue; if (!bofbench_neighbor_family(family, family_bytes, row->Address.si_family)) continue;
+        source = row->Address.si_family == AF_INET ? (const void *)&row->Address.Ipv4.sin_addr : (const void *)&row->Address.Ipv6.sin6_addr;
+        if (!WS2_32$inet_ntop(row->Address.si_family, source, address, sizeof(address))) continue;
+        BeaconPrintf(CALLBACK_OUTPUT, "[network-neighbor-inventory] address=%s family=%s interface=%lu state=%lu router=%lu reachable=%lu", address, row->Address.si_family == AF_INET ? "ipv4" : "ipv6", row->InterfaceIndex, row->State, row->Flags & 1, row->LastReachable);
+        shown++;
+    }
+    IPHLPAPI$FreeMibTable(table); WS2_32$WSACleanup(); BeaconPrintf(CALLBACK_OUTPUT, "[network-neighbor-inventory] status=complete shown=%lu limit=%lu interface=%lu", shown, limit, interface_index);
+}`,
+		Call: "bofbench_feature_network_neighbor_inventory($PARSER);",
+	},
+	{
 		Name:        "lab-file-write",
 		Description: "create a known BOFBench marker file in the Windows temporary directory",
 		Declaration: `DWORD WINAPI KERNEL32$GetTempPathA(DWORD, LPSTR);

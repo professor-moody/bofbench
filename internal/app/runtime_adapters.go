@@ -348,12 +348,18 @@ func persistNativeRuntimeReceipt(runDir string, started time.Time, result runtim
 		StartedAt: started.UTC().Format(time.RFC3339Nano), CompletedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		DurationMS: result.DurationMS, TimedOut: result.ExitState == "timeout", ReceiptPath: filepath.Join(runDir, "result.json"),
 	}
+	runtimeadapter.AddTransition(&receipt, "submitted", "native loader child prepared", started)
+	runtimeadapter.AddTransition(&receipt, "running", "BOF entrypoint invoked", started)
 	if result.Status == "pass" && operationErr == nil {
 		receipt.Status = "pass"
 		receipt.ExecutionState = "completed"
 		receipt.OutputComplete = true
+		runtimeadapter.AddTransition(&receipt, "completed", "native loader returned complete output", time.Now())
 	} else if result.ExitState == "timeout" {
 		receipt.ExecutionState = "timeout"
+		runtimeadapter.AddTransition(&receipt, "timeout", "native loader timed out", time.Now())
+	} else {
+		runtimeadapter.AddTransition(&receipt, "failed", emptyText(receipt.Error, result.ExitState), time.Now())
 	}
 	if result.ObjectFingerprint != nil {
 		receipt.ObjectSHA256 = result.ObjectFingerprint.SHA256

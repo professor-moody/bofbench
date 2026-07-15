@@ -245,6 +245,65 @@ func TestAuthenticationBehaviorRulesRequireCompleteFunctionLocalChains(t *testin
 	}
 }
 
+func TestNewPublicInventoryRulesRequireCompleteEvidence(t *testing.T) {
+	cases := []struct {
+		id      string
+		apis    []string
+		strings []String
+	}{
+		{"process_access_check", []string{"KERNEL32$OpenProcess", "KERNEL32$CloseHandle"}, []String{{Value: "[process-access-check]"}}},
+		{"module_export_inventory", []string{"KERNEL32$CreateToolhelp32Snapshot", "KERNEL32$ReadProcessMemory"}, []String{{Value: "[module-export-inventory]"}}},
+		{"network_neighbor_inventory", []string{"IPHLPAPI$GetIpNetTable2", "IPHLPAPI$FreeMibTable"}, []String{{Value: "[network-neighbor-inventory]"}}},
+	}
+	for _, test := range cases {
+		t.Run(test.id, func(t *testing.T) {
+			var relocations []Relocation
+			for _, api := range test.apis {
+				relocations = append(relocations, Relocation{Function: "go", Symbol: api})
+			}
+			requireBehavior(t, inferBehaviorChains(relocations, test.strings), test.id)
+			for _, chain := range inferBehaviorChains(relocations[:len(relocations)-1], test.strings) {
+				if chain.ID == test.id {
+					t.Fatalf("incomplete API evidence produced %s: %+v", test.id, chain)
+				}
+			}
+		})
+	}
+	primitive := requireBehavior(t, inferBehaviorChains([]Relocation{{Function: "go", Symbol: "NETAPI32$NetUserModalsGet"}}, []String{{Value: "[local-account-policy-inventory]"}}), "local_account_policy_inventory")
+	if primitive.Confidence != "confirmed primitive" {
+		t.Fatalf("account policy primitive = %+v", primitive)
+	}
+}
+
+func TestRuntimeAccessRulesRequireCompleteSameFunctionEvidence(t *testing.T) {
+	cases := []struct {
+		id, tag string
+		apis    []string
+	}{
+		{"process_handle_duplicate", "[process-handle-duplicate]", []string{"KERNEL32$OpenProcess", "KERNEL32$DuplicateHandle"}},
+		{"process_handle_close", "[process-handle-close]", []string{"KERNEL32$OpenProcess", "KERNEL32$DuplicateHandle"}},
+		{"process_command_line_set", "[process-command-line-set]", []string{"NTDLL$NtQueryInformationProcess", "KERNEL32$ReadProcessMemory", "KERNEL32$WriteProcessMemory"}},
+		{"process_command_line_restore", "[process-command-line-restore]", []string{"NTDLL$NtQueryInformationProcess", "KERNEL32$ReadProcessMemory", "KERNEL32$WriteProcessMemory"}},
+		{"threadpool_wait_execute", "[threadpool-wait-execute]", []string{"KERNEL32$VirtualAlloc", "KERNEL32$VirtualProtect", "KERNEL32$CreateThreadpoolWait", "KERNEL32$SetThreadpoolWait", "KERNEL32$SetEvent"}},
+		{"service_config_set", "[service-config-set]", []string{"ADVAPI32$OpenServiceW", "ADVAPI32$QueryServiceConfigW", "ADVAPI32$ChangeServiceConfigW"}},
+		{"service_config_restore", "[service-config-restore]", []string{"ADVAPI32$OpenServiceW", "ADVAPI32$ChangeServiceConfigW"}},
+	}
+	for _, test := range cases {
+		t.Run(test.id, func(t *testing.T) {
+			var relocations []Relocation
+			for _, api := range test.apis {
+				relocations = append(relocations, Relocation{Function: "go", Symbol: api})
+			}
+			requireBehavior(t, inferBehaviorChains(relocations, []String{{Value: test.tag}}), test.id)
+			for _, chain := range inferBehaviorChains(relocations[:len(relocations)-1], []String{{Value: test.tag}}) {
+				if chain.ID == test.id {
+					t.Fatalf("incomplete API evidence produced %s", test.id)
+				}
+			}
+		})
+	}
+}
+
 func TestRemoteOperationRulesRequireCompleteFunctionLocalChains(t *testing.T) {
 	cases := []struct {
 		id      string
