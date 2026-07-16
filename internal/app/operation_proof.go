@@ -52,6 +52,8 @@ type operationProofResult struct {
 	CleanupState   string                       `json:"cleanup_state,omitempty"`
 	Parallel       map[string]map[string]string `json:"parallel,omitempty"`
 	MaxConcurrency int                          `json:"max_observed_concurrency,omitempty"`
+	Waves          [][]string                   `json:"execution_waves,omitempty"`
+	Steps          map[string]string            `json:"step_states,omitempty"`
 	Output         []string                     `json:"output,omitempty"`
 	Error          string                       `json:"error,omitempty"`
 }
@@ -409,6 +411,8 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 			result.ExpandedPath = append([]string(nil), receipt.ExpandedPath...)
 			result.MaxConcurrency = receipt.MaxConcurrency
 			result.Parallel = operationParallelStates(receipt)
+			result.Waves = operationWaveSteps(receipt)
+			result.Steps = operationStepStates(receipt)
 			if err := matchOperationProofCaptures(proof.ExpectCaptures, receipt.Captures, placeholders); err != nil {
 				result.Status, result.Error = "fail", err.Error()
 				report.Failed++
@@ -428,6 +432,18 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 				continue
 			}
 			if err := matchOperationProofParallel(proof.ExpectParallel, result.Parallel); err != nil {
+				result.Status, result.Error = "fail", err.Error()
+				report.Failed++
+				report.Results = append(report.Results, result)
+				continue
+			}
+			if err := matchOperationProofWaves(proof.ExpectWaves, result.Waves); err != nil {
+				result.Status, result.Error = "fail", err.Error()
+				report.Failed++
+				report.Results = append(report.Results, result)
+				continue
+			}
+			if err := matchOperationProofSteps(proof.ExpectSteps, result.Steps); err != nil {
 				result.Status, result.Error = "fail", err.Error()
 				report.Failed++
 				report.Results = append(report.Results, result)
@@ -612,6 +628,46 @@ func matchOperationProofParallel(expected, actual map[string]map[string]string) 
 			if got != want {
 				return fmt.Errorf("parallel branch %s/%s=%q did not match %q", groupID, branchID, got, want)
 			}
+		}
+	}
+	return nil
+}
+
+func operationWaveSteps(receipt operationsvc.Receipt) [][]string {
+	result := make([][]string, 0, len(receipt.ExecutionWaves))
+	for _, wave := range receipt.ExecutionWaves {
+		result = append(result, append([]string(nil), wave.Steps...))
+	}
+	return result
+}
+
+func operationStepStates(receipt operationsvc.Receipt) map[string]string {
+	result := map[string]string{}
+	for _, step := range receipt.Steps {
+		result[step.ID] = step.State
+	}
+	return result
+}
+
+func matchOperationProofWaves(expected, actual [][]string) error {
+	if len(expected) == 0 {
+		return nil
+	}
+	if len(expected) != len(actual) {
+		return fmt.Errorf("operation waves %v did not match %v", actual, expected)
+	}
+	for index := range expected {
+		if strings.Join(expected[index], "\x00") != strings.Join(actual[index], "\x00") {
+			return fmt.Errorf("operation waves %v did not match %v", actual, expected)
+		}
+	}
+	return nil
+}
+
+func matchOperationProofSteps(expected, actual map[string]string) error {
+	for step, want := range expected {
+		if actual[step] != want {
+			return fmt.Errorf("operation step %s=%q did not match %q", step, actual[step], want)
 		}
 	}
 	return nil

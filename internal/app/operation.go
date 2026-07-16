@@ -223,9 +223,19 @@ func operationResumeCommand(stdout io.Writer, load func() (*operationsvc.Registr
 		if item.SHA256 != receipt.OperationSHA256 {
 			return fmt.Errorf("operation definition changed since %s; start a new operation run", path)
 		}
-		_, runnable, routeErr := operationsvc.NextRunnableStep(item.Document, receipt)
-		if routeErr != nil {
-			return routeErr
+		runnable := false
+		if operationsvc.IsDAG(item.Document) {
+			ready, readyErr := operationsvc.ReadyDAGSteps(item.Document, receipt)
+			if readyErr != nil {
+				return readyErr
+			}
+			runnable = len(ready) > 0
+		} else {
+			_, linearRunnable, routeErr := operationsvc.NextRunnableStep(item.Document, receipt)
+			if routeErr != nil {
+				return routeErr
+			}
+			runnable = linearRunnable
 		}
 		if !runnable && !opts.cleanup {
 			fmt.Fprintf(stdout, "operation  %s\nreceipt    %s\n", receipt.Status, path)
@@ -421,6 +431,9 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 	}
 	if err := validatePinnedOperation(item, &receipt, registry); err != nil {
 		return err
+	}
+	if operationsvc.IsDAG(item.Document) {
+		return runDAGOperation(ctx, stdout, registry, item, inputs, topologyValues, opts, &receipt, path, resumePath != "")
 	}
 	_, hasRunnable, routeErr := operationsvc.NextRunnableStep(item.Document, receipt)
 	if routeErr != nil {
@@ -1050,6 +1063,9 @@ func applyOperationContract(step operationsvc.Step, receipt *operationsvc.StepRe
 
 func validatePinnedOperation(item operationsvc.Resolved, receipt *operationsvc.Receipt, registry *operationsvc.Registry) error {
 	document := item.Document
+	if receipt.Execution != "" && receipt.Execution != operationsvc.ExecutionMode(document) {
+		return fmt.Errorf("operation execution mode changed since operation start")
+	}
 	if len(document.Steps) != len(receipt.Steps) {
 		return fmt.Errorf("operation receipt step count does not match the pinned definition")
 	}
@@ -1062,6 +1078,9 @@ func validatePinnedOperation(item operationsvc.Resolved, receipt *operationsvc.R
 		}
 	}
 	for index, step := range document.Steps {
+		if strings.Join(receipt.Steps[index].DependsOn, "\x00") != strings.Join(step.DependsOn, "\x00") {
+			return fmt.Errorf("step %s dependencies changed since operation start", step.ID)
+		}
 		if step.Parallel != nil {
 			if receipt.Steps[index].Parallel == nil || len(receipt.Steps[index].Parallel.Branches) != len(step.Parallel.Branches) {
 				return fmt.Errorf("parallel step %s branch count does not match the pinned definition", step.ID)

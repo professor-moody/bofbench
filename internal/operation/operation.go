@@ -20,10 +20,10 @@ import (
 
 const (
 	Schema                = "bofbench.operation"
-	SchemaVersion         = 5
+	SchemaVersion         = 6
 	MinimumSchemaVersion  = 1
 	ReceiptSchema         = "bofbench.operation-receipt"
-	ReceiptSchemaVersion  = 5
+	ReceiptSchemaVersion  = 6
 	MinimumReceiptVersion = 1
 )
 
@@ -79,6 +79,7 @@ type Step struct {
 	ID        string                    `json:"id"`
 	Pack      string                    `json:"pack,omitempty"`
 	Operation string                    `json:"operation,omitempty"`
+	DependsOn []string                  `json:"depends_on,omitempty"`
 	Arguments map[string]string         `json:"arguments,omitempty"`
 	Captures  map[string]Capture        `json:"captures,omitempty"`
 	Cleanup   *Cleanup                  `json:"cleanup,omitempty"`
@@ -99,6 +100,8 @@ type ProofCase struct {
 	ExpectPath         []string                     `json:"expect_path,omitempty"`
 	ExpectExpandedPath []string                     `json:"expect_expanded_path,omitempty"`
 	ExpectParallel     map[string]map[string]string `json:"expect_parallel,omitempty"`
+	ExpectWaves        [][]string                   `json:"expect_waves,omitempty"`
+	ExpectSteps        map[string]string            `json:"expect_steps,omitempty"`
 }
 
 type Document struct {
@@ -109,6 +112,7 @@ type Document struct {
 	Title         string      `json:"title"`
 	Summary       string      `json:"summary"`
 	Tier          string      `json:"tier"`
+	Execution     string      `json:"execution,omitempty"`
 	Inputs        []Input     `json:"inputs,omitempty"`
 	Roles         []string    `json:"roles,omitempty"`
 	Steps         []Step      `json:"steps"`
@@ -162,7 +166,19 @@ type StepReceipt struct {
 	ChildCleanupState string                  `json:"child_cleanup_state,omitempty"`
 	StartedAt         string                  `json:"started_at,omitempty"`
 	CompletedAt       string                  `json:"completed_at,omitempty"`
+	ReadyAt           string                  `json:"ready_at,omitempty"`
+	DependsOn         []string                `json:"depends_on,omitempty"`
+	BlockedBy         []string                `json:"blocked_by,omitempty"`
 	Parallel          *ParallelReceipt        `json:"parallel,omitempty"`
+}
+
+type ExecutionWave struct {
+	Index       int      `json:"index"`
+	Steps       []string `json:"steps"`
+	State       string   `json:"state"`
+	ReadyAt     string   `json:"ready_at,omitempty"`
+	StartedAt   string   `json:"started_at,omitempty"`
+	CompletedAt string   `json:"completed_at,omitempty"`
 }
 
 type ParallelReceipt struct {
@@ -202,6 +218,10 @@ type Receipt struct {
 	Error            string            `json:"error,omitempty"`
 	Parallelism      int               `json:"parallelism,omitempty"`
 	MaxConcurrency   int               `json:"max_observed_concurrency,omitempty"`
+	Execution        string            `json:"execution,omitempty"`
+	TopologicalOrder []string          `json:"topological_order,omitempty"`
+	BlockedSteps     []string          `json:"blocked_steps,omitempty"`
+	ExecutionWaves   []ExecutionWave   `json:"execution_waves,omitempty"`
 }
 
 func Load(opts LoadOptions) (*Registry, error) {
@@ -348,6 +368,9 @@ func ValidateFile(path string) (Document, error) {
 	}
 	if err := validate(document); err != nil {
 		return Document{}, err
+	}
+	if document.Execution == "" {
+		document.Execution = "linear"
 	}
 	return document, nil
 }
@@ -622,6 +645,15 @@ func validate(document Document) error {
 	if document.Tier != "public" && document.Tier != "internal" {
 		return fmt.Errorf("operation tier must be public or internal")
 	}
+	if document.SchemaVersion < 6 && document.Execution != "" {
+		return fmt.Errorf("operation execution mode requires schema version 6")
+	}
+	if document.Execution == "" {
+		document.Execution = "linear"
+	}
+	if document.Execution != "linear" && document.Execution != "dag" {
+		return fmt.Errorf("operation execution must be linear or dag")
+	}
 	seenRoles := map[string]bool{}
 	for _, role := range document.Roles {
 		if role != "execution" && role != "target" && role != "domain_controller" {
@@ -652,6 +684,12 @@ func validate(document Document) error {
 		}
 		if document.SchemaVersion < 5 && step.Parallel != nil {
 			return fmt.Errorf("step %s parallel execution requires schema version 5", step.ID)
+		}
+		if document.SchemaVersion < 6 && len(step.DependsOn) > 0 {
+			return fmt.Errorf("step %s dependencies require schema version 6", step.ID)
+		}
+		if document.Execution != "dag" && len(step.DependsOn) > 0 {
+			return fmt.Errorf("step %s depends_on is available only in dag execution", step.ID)
 		}
 		if document.SchemaVersion >= 5 && stepTargetCount(step) != 1 {
 			return fmt.Errorf("step %s must declare exactly one of pack, operation, or parallel", step.ID)
@@ -685,77 +723,85 @@ func validate(document Document) error {
 		}
 		inputs[input.Name] = input
 	}
-	for stepIndex, step := range document.Steps {
-		steps[step.ID] = true
-		if step.Parallel != nil {
-			if err := validateParallel(step.ID, *step.Parallel, inputs, captures, steps); err != nil {
-				return err
+	if document.Execution == "dag" {
+		var err error
+		captures, err = validateDAG(document, inputs, stepIndexes)
+		if err != nil {
+			return err
+		}
+	} else {
+		for stepIndex, step := range document.Steps {
+			steps[step.ID] = true
+			if step.Parallel != nil {
+				if err := validateParallel(step.ID, *step.Parallel, inputs, captures, steps); err != nil {
+					return err
+				}
+				for name := range step.Parallel.Exports {
+					if captures[name] != "" {
+						return fmt.Errorf("capture %q is declared more than once", name)
+					}
+					captures[name] = step.ID
+				}
+				continue
 			}
-			for name := range step.Parallel.Exports {
+			if document.SchemaVersion == 2 && step.Expect == nil {
+				return fmt.Errorf("step %s requires expect in operation schema version 2", step.ID)
+			}
+			if document.SchemaVersion < 3 && len(step.Outcomes) > 0 {
+				return fmt.Errorf("step %s outcomes require operation schema version 3", step.ID)
+			}
+			if document.SchemaVersion >= 3 && (step.Expect == nil) == (len(step.Outcomes) == 0) {
+				return fmt.Errorf("step %s must declare exactly one of expect or outcomes", step.ID)
+			}
+			if step.Expect != nil {
+				if err := validateExpectation(step.ID, *step.Expect, inputs, captures, steps); err != nil {
+					return err
+				}
+			}
+			seenOutcomes := map[string]bool{}
+			for _, outcome := range step.Outcomes {
+				if !idPattern.MatchString(outcome.ID) || seenOutcomes[outcome.ID] {
+					return fmt.Errorf("step %s has invalid or duplicate outcome %q", step.ID, outcome.ID)
+				}
+				seenOutcomes[outcome.ID] = true
+				if err := validateExpectation(step.ID+" outcome "+outcome.ID, outcome.Expect, inputs, captures, steps); err != nil {
+					return err
+				}
+				if outcome.Next != "$complete" && outcome.Next != "$fail" {
+					target, ok := stepIndexes[outcome.Next]
+					if !ok {
+						return fmt.Errorf("step %s outcome %s selects unknown step %q", step.ID, outcome.ID, outcome.Next)
+					}
+					if target <= stepIndex {
+						return fmt.Errorf("step %s outcome %s must select a later step", step.ID, outcome.ID)
+					}
+				}
+			}
+			for _, value := range step.Arguments {
+				if err := validateReference(value, inputs, captures, steps); err != nil {
+					return fmt.Errorf("step %s: %w", step.ID, err)
+				}
+			}
+			for name, capture := range step.Captures {
+				if !idPattern.MatchString(name) {
+					return fmt.Errorf("step %s has invalid capture %q", step.ID, name)
+				}
+				if step.Operation == "" && (capture.Tag == "" || capture.Field == "" || capture.Capture != "") {
+					return fmt.Errorf("step %s pack capture %q requires tag and field", step.ID, name)
+				}
+				if step.Operation != "" && (capture.Capture == "" || capture.Tag != "" || capture.Field != "") {
+					return fmt.Errorf("step %s operation capture %q requires child capture", step.ID, name)
+				}
 				if captures[name] != "" {
 					return fmt.Errorf("capture %q is declared more than once", name)
 				}
 				captures[name] = step.ID
 			}
-			continue
-		}
-		if document.SchemaVersion == 2 && step.Expect == nil {
-			return fmt.Errorf("step %s requires expect in operation schema version 2", step.ID)
-		}
-		if document.SchemaVersion < 3 && len(step.Outcomes) > 0 {
-			return fmt.Errorf("step %s outcomes require operation schema version 3", step.ID)
-		}
-		if document.SchemaVersion >= 3 && (step.Expect == nil) == (len(step.Outcomes) == 0) {
-			return fmt.Errorf("step %s must declare exactly one of expect or outcomes", step.ID)
-		}
-		if step.Expect != nil {
-			if err := validateExpectation(step.ID, *step.Expect, inputs, captures, steps); err != nil {
-				return err
-			}
-		}
-		seenOutcomes := map[string]bool{}
-		for _, outcome := range step.Outcomes {
-			if !idPattern.MatchString(outcome.ID) || seenOutcomes[outcome.ID] {
-				return fmt.Errorf("step %s has invalid or duplicate outcome %q", step.ID, outcome.ID)
-			}
-			seenOutcomes[outcome.ID] = true
-			if err := validateExpectation(step.ID+" outcome "+outcome.ID, outcome.Expect, inputs, captures, steps); err != nil {
-				return err
-			}
-			if outcome.Next != "$complete" && outcome.Next != "$fail" {
-				target, ok := stepIndexes[outcome.Next]
-				if !ok {
-					return fmt.Errorf("step %s outcome %s selects unknown step %q", step.ID, outcome.ID, outcome.Next)
-				}
-				if target <= stepIndex {
-					return fmt.Errorf("step %s outcome %s must select a later step", step.ID, outcome.ID)
-				}
-			}
-		}
-		for _, value := range step.Arguments {
-			if err := validateReference(value, inputs, captures, steps); err != nil {
-				return fmt.Errorf("step %s: %w", step.ID, err)
-			}
-		}
-		for name, capture := range step.Captures {
-			if !idPattern.MatchString(name) {
-				return fmt.Errorf("step %s has invalid capture %q", step.ID, name)
-			}
-			if step.Operation == "" && (capture.Tag == "" || capture.Field == "" || capture.Capture != "") {
-				return fmt.Errorf("step %s pack capture %q requires tag and field", step.ID, name)
-			}
-			if step.Operation != "" && (capture.Capture == "" || capture.Tag != "" || capture.Field != "") {
-				return fmt.Errorf("step %s operation capture %q requires child capture", step.ID, name)
-			}
-			if captures[name] != "" {
-				return fmt.Errorf("capture %q is declared more than once", name)
-			}
-			captures[name] = step.ID
-		}
-		if step.Cleanup != nil {
-			for _, value := range step.Cleanup.Arguments {
-				if err := validateReference(value, inputs, captures, steps); err != nil {
-					return fmt.Errorf("step %s cleanup: %w", step.ID, err)
+			if step.Cleanup != nil {
+				for _, value := range step.Cleanup.Arguments {
+					if err := validateReference(value, inputs, captures, steps); err != nil {
+						return fmt.Errorf("step %s cleanup: %w", step.ID, err)
+					}
 				}
 			}
 		}
@@ -825,6 +871,141 @@ func validate(document Document) error {
 				}
 			}
 		}
+		for waveIndex, wave := range proof.ExpectWaves {
+			if len(wave) == 0 {
+				return fmt.Errorf("proof case %s expect_waves[%d] cannot be empty", proof.ID, waveIndex)
+			}
+			for _, stepID := range wave {
+				if _, ok := stepIndexes[stepID]; !ok {
+					return fmt.Errorf("proof case %s expects unknown wave step %q", proof.ID, stepID)
+				}
+			}
+		}
+		for stepID, state := range proof.ExpectSteps {
+			if _, ok := stepIndexes[stepID]; !ok {
+				return fmt.Errorf("proof case %s expects unknown step %q", proof.ID, stepID)
+			}
+			switch state {
+			case "completed", "failed", "incomplete", "blocked", "skipped":
+			default:
+				return fmt.Errorf("proof case %s step %s has unsupported state %q", proof.ID, stepID, state)
+			}
+		}
+	}
+	return nil
+}
+
+func validateDAG(document Document, inputs map[string]Input, stepIndexes map[string]int) (map[string]string, error) {
+	if document.SchemaVersion != 6 {
+		return nil, fmt.Errorf("dag execution requires operation schema version 6")
+	}
+	captureOwners := map[string]string{}
+	for _, step := range document.Steps {
+		if step.Parallel != nil || len(step.Outcomes) > 0 {
+			return nil, fmt.Errorf("dag step %s cannot declare parallel groups or ordered outcomes", step.ID)
+		}
+		if step.Expect == nil {
+			return nil, fmt.Errorf("dag step %s requires expect", step.ID)
+		}
+		for _, dependency := range step.DependsOn {
+			if dependency == step.ID {
+				return nil, fmt.Errorf("dag step %s cannot depend on itself", step.ID)
+			}
+			if _, ok := stepIndexes[dependency]; !ok {
+				return nil, fmt.Errorf("dag step %s depends on unknown step %q", step.ID, dependency)
+			}
+		}
+		for name, capture := range step.Captures {
+			if !idPattern.MatchString(name) {
+				return nil, fmt.Errorf("step %s has invalid capture %q", step.ID, name)
+			}
+			if step.Operation == "" && (capture.Tag == "" || capture.Field == "" || capture.Capture != "") {
+				return nil, fmt.Errorf("step %s pack capture %q requires tag and field", step.ID, name)
+			}
+			if step.Operation != "" && (capture.Capture == "" || capture.Tag != "" || capture.Field != "") {
+				return nil, fmt.Errorf("step %s operation capture %q requires child capture", step.ID, name)
+			}
+			if captureOwners[name] != "" {
+				return nil, fmt.Errorf("capture %q is declared more than once", name)
+			}
+			captureOwners[name] = step.ID
+		}
+	}
+	order, ancestors, err := dagTopology(document)
+	if err != nil {
+		return nil, err
+	}
+	_ = order
+	allSteps := map[string]bool{}
+	for id := range stepIndexes {
+		allSteps[id] = true
+	}
+	for _, step := range document.Steps {
+		available := map[string]string{}
+		for name, owner := range captureOwners {
+			if ancestors[step.ID][owner] {
+				available[name] = owner
+			}
+		}
+		validateValue := func(label, value string) error {
+			if err := validateReference(value, inputs, available, allSteps); err != nil {
+				return fmt.Errorf("dag step %s %s: %w", step.ID, label, err)
+			}
+			if strings.HasPrefix(value, "$step.") {
+				parts := strings.Split(strings.TrimPrefix(value, "$step."), ".")
+				if len(parts) == 2 && !ancestors[step.ID][parts[0]] {
+					return fmt.Errorf("dag step %s may consume captures only from transitive dependencies", step.ID)
+				}
+			}
+			return nil
+		}
+		for _, value := range step.Arguments {
+			if err := validateValue("argument", value); err != nil {
+				return nil, err
+			}
+		}
+		if err := validateDAGExpectation(step.ID, *step.Expect, inputs, available, allSteps, ancestors[step.ID]); err != nil {
+			return nil, err
+		}
+		if step.Cleanup != nil {
+			cleanupAvailable := map[string]string{}
+			for name, owner := range available {
+				cleanupAvailable[name] = owner
+			}
+			for name, owner := range captureOwners {
+				if owner == step.ID {
+					cleanupAvailable[name] = owner
+				}
+			}
+			for _, value := range step.Cleanup.Arguments {
+				if err := validateReference(value, inputs, cleanupAvailable, allSteps); err != nil {
+					return nil, fmt.Errorf("dag step %s cleanup: %w", step.ID, err)
+				}
+			}
+		}
+	}
+	return captureOwners, nil
+}
+
+func validateDAGExpectation(label string, expectation packsvc.ProofExpectation, inputs map[string]Input, captures map[string]string, steps map[string]bool, ancestors map[string]bool) error {
+	if err := validateExpectation(label, expectation, inputs, captures, steps); err != nil {
+		return err
+	}
+	values := make([]string, 0, len(expectation.Fields)+1)
+	for _, value := range expectation.Fields {
+		values = append(values, value)
+	}
+	if expectation.Payload != nil {
+		values = append(values, expectation.Payload.SHA256)
+	}
+	for _, value := range values {
+		if !strings.HasPrefix(value, "$step.") {
+			continue
+		}
+		parts := strings.Split(strings.TrimPrefix(value, "$step."), ".")
+		if len(parts) == 2 && !ancestors[parts[0]] {
+			return fmt.Errorf("dag step %s expectation may consume captures only from transitive dependencies", label)
+		}
 	}
 	return nil
 }
@@ -852,6 +1033,72 @@ func branchTargetCount(branch ParallelBranch) int {
 		count++
 	}
 	return count
+}
+
+func dagTopology(document Document) ([]string, map[string]map[string]bool, error) {
+	index := map[string]int{}
+	dependencies := map[string][]string{}
+	dependents := map[string][]string{}
+	indegree := map[string]int{}
+	for position, step := range document.Steps {
+		index[step.ID] = position
+		seen := map[string]bool{}
+		for _, dependency := range step.DependsOn {
+			if seen[dependency] {
+				return nil, nil, fmt.Errorf("dag step %s repeats dependency %q", step.ID, dependency)
+			}
+			seen[dependency] = true
+			dependencies[step.ID] = append(dependencies[step.ID], dependency)
+			dependents[dependency] = append(dependents[dependency], step.ID)
+			indegree[step.ID]++
+		}
+	}
+	var ready []string
+	for _, step := range document.Steps {
+		if indegree[step.ID] == 0 {
+			ready = append(ready, step.ID)
+		}
+	}
+	sort.SliceStable(ready, func(i, j int) bool { return index[ready[i]] < index[ready[j]] })
+	var order []string
+	for len(ready) > 0 {
+		current := ready[0]
+		ready = ready[1:]
+		order = append(order, current)
+		for _, dependent := range dependents[current] {
+			indegree[dependent]--
+			if indegree[dependent] == 0 {
+				ready = append(ready, dependent)
+				sort.SliceStable(ready, func(i, j int) bool { return index[ready[i]] < index[ready[j]] })
+			}
+		}
+	}
+	if len(order) != len(document.Steps) {
+		return nil, nil, fmt.Errorf("dag operation contains a dependency cycle")
+	}
+	ancestors := map[string]map[string]bool{}
+	for _, id := range order {
+		ancestors[id] = map[string]bool{}
+		for _, dependency := range dependencies[id] {
+			ancestors[id][dependency] = true
+			for ancestor := range ancestors[dependency] {
+				ancestors[id][ancestor] = true
+			}
+		}
+	}
+	return order, ancestors, nil
+}
+
+func TopologicalOrder(document Document) ([]string, error) {
+	if document.Execution != "dag" {
+		order := make([]string, 0, len(document.Steps))
+		for _, step := range document.Steps {
+			order = append(order, step.ID)
+		}
+		return order, nil
+	}
+	order, _, err := dagTopology(document)
+	return order, err
 }
 
 func validateParallel(stepID string, parallel Parallel, inputs map[string]Input, captures map[string]string, steps map[string]bool) error {
@@ -988,6 +1235,15 @@ func validType(value string) bool {
 	return false
 }
 
+func ExecutionMode(document Document) string {
+	if document.Execution == "" {
+		return "linear"
+	}
+	return document.Execution
+}
+
+func IsDAG(document Document) bool { return ExecutionMode(document) == "dag" }
+
 func ResolveValue(value string, inputs, captures, topology map[string]string) (string, error) {
 	if !strings.HasPrefix(value, "$") {
 		return value, nil
@@ -1040,6 +1296,119 @@ func ValidateTopologyRoles(roles []string, values map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// ReadyDAGSteps returns a deterministic ready wave. Incomplete or running
+// external-runtime work is returned alone so it is refreshed before any new
+// dependent or independent work is scheduled.
+func ReadyDAGSteps(document Document, receipt Receipt) ([]int, error) {
+	if !IsDAG(document) {
+		return nil, fmt.Errorf("ready waves require dag execution")
+	}
+	if len(document.Steps) != len(receipt.Steps) {
+		return nil, fmt.Errorf("operation receipt step count does not match definition")
+	}
+	var incomplete []int
+	for index, step := range receipt.Steps {
+		if step.State == "failed" {
+			return nil, fmt.Errorf("dag step %q failed and cannot be resumed without an explicit retry", step.ID)
+		}
+		if step.State == "incomplete" || step.State == "running" {
+			incomplete = append(incomplete, index)
+		}
+	}
+	if len(incomplete) > 0 {
+		return incomplete, nil
+	}
+	state := map[string]string{}
+	for _, step := range receipt.Steps {
+		state[step.ID] = step.State
+	}
+	var ready []int
+	for index, step := range document.Steps {
+		if receipt.Steps[index].State != "pending" {
+			continue
+		}
+		dependenciesComplete := true
+		for _, dependency := range step.DependsOn {
+			if state[dependency] != "completed" {
+				dependenciesComplete = false
+				break
+			}
+		}
+		if dependenciesComplete {
+			ready = append(ready, index)
+		}
+	}
+	return ready, nil
+}
+
+func UnblockDAGSteps(document Document, receipt *Receipt) {
+	state := map[string]string{}
+	for _, step := range receipt.Steps {
+		state[step.ID] = step.State
+	}
+	for index, step := range document.Steps {
+		if receipt.Steps[index].State != "blocked" {
+			continue
+		}
+		ready := true
+		for _, dependency := range step.DependsOn {
+			if state[dependency] != "completed" {
+				ready = false
+				break
+			}
+		}
+		if ready {
+			receipt.Steps[index].State = "pending"
+			receipt.Steps[index].ContractState = "pending"
+			receipt.Steps[index].BlockedBy = nil
+		}
+	}
+}
+
+func DAGComplete(receipt Receipt) bool {
+	for _, step := range receipt.Steps {
+		if step.State != "completed" && step.State != "skipped" {
+			return false
+		}
+	}
+	return true
+}
+
+func BlockDAGDescendants(document Document, receipt *Receipt, causes []string) {
+	if len(causes) == 0 {
+		return
+	}
+	blocked := map[string]bool{}
+	for _, cause := range causes {
+		blocked[cause] = true
+	}
+	changed := true
+	for changed {
+		changed = false
+		for index, step := range document.Steps {
+			if receipt.Steps[index].State != "pending" {
+				continue
+			}
+			var blockers []string
+			for _, dependency := range step.DependsOn {
+				if blocked[dependency] {
+					blockers = append(blockers, dependency)
+				}
+			}
+			if len(blockers) == 0 {
+				continue
+			}
+			sort.Strings(blockers)
+			receipt.Steps[index].State = "blocked"
+			receipt.Steps[index].ContractState = "blocked"
+			receipt.Steps[index].BlockedBy = blockers
+			receipt.BlockedSteps = appendUnique(receipt.BlockedSteps, step.ID)
+			blocked[step.ID] = true
+			changed = true
+		}
+	}
 }
 
 // NextRunnableStep returns the single step selected by the persisted route.
@@ -1201,7 +1570,19 @@ func appendUnique(values []string, value string) []string {
 func CleanupStepIndexes(document Document, receipt Receipt) []int {
 	var indexes []int
 	ordered := make([]int, 0, len(document.Steps))
-	if len(receipt.ActualPath) > 0 {
+	if IsDAG(document) {
+		order, err := TopologicalOrder(document)
+		if err == nil {
+			for _, id := range order {
+				for index := range document.Steps {
+					if document.Steps[index].ID == id {
+						ordered = append(ordered, index)
+						break
+					}
+				}
+			}
+		}
+	} else if len(receipt.ActualPath) > 0 {
 		for _, id := range receipt.ActualPath {
 			for index := range document.Steps {
 				if document.Steps[index].ID == id {
@@ -1445,8 +1826,9 @@ func parseStructuredLine(line string) (string, map[string]string) {
 }
 
 func NewReceipt(item Resolved, registry *Registry, path, runtime, lab, topology, arch, compiler string, inputs map[string]string) Receipt {
-	receipt := Receipt{Schema: ReceiptSchema, SchemaVersion: ReceiptSchemaVersion, Operation: item.Qualified, OperationSHA256: item.SHA256, Status: "pending", Runtime: runtime, Lab: lab, Topology: topology, Architecture: arch, Compiler: compiler, Inputs: map[string]string{}, Captures: map[string]string{}, DependencySHA256: map[string]string{}, Path: path, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	receipt := Receipt{Schema: ReceiptSchema, SchemaVersion: ReceiptSchemaVersion, Operation: item.Qualified, OperationSHA256: item.SHA256, Status: "pending", Runtime: runtime, Lab: lab, Topology: topology, Architecture: arch, Compiler: compiler, Inputs: map[string]string{}, Captures: map[string]string{}, DependencySHA256: map[string]string{}, Path: path, StartedAt: time.Now().UTC().Format(time.RFC3339Nano), Execution: ExecutionMode(item.Document)}
 	receipt.DependencySHA256 = registry.DependencyHashes(item)
+	receipt.TopologicalOrder, _ = TopologicalOrder(item.Document)
 	for _, input := range item.Document.Inputs {
 		if input.Sensitive {
 			if value, ok := inputs[input.Name]; ok && value != "" {
@@ -1465,10 +1847,12 @@ func NewReceipt(item Resolved, registry *Registry, path, runtime, lab, topology,
 			for _, branch := range step.Parallel.Branches {
 				parallel.Branches = append(parallel.Branches, newInvocationReceipt(branch.ID, branch.Pack, branch.Operation, branch.Cleanup, registry))
 			}
-			receipt.Steps = append(receipt.Steps, StepReceipt{ID: step.ID, State: "pending", ContractState: "pending", Parallel: parallel})
+			receipt.Steps = append(receipt.Steps, StepReceipt{ID: step.ID, State: "pending", ContractState: "pending", DependsOn: append([]string(nil), step.DependsOn...), Parallel: parallel})
 			continue
 		}
-		receipt.Steps = append(receipt.Steps, newInvocationReceipt(step.ID, step.Pack, step.Operation, step.Cleanup, registry))
+		state := newInvocationReceipt(step.ID, step.Pack, step.Operation, step.Cleanup, registry)
+		state.DependsOn = append([]string(nil), step.DependsOn...)
+		receipt.Steps = append(receipt.Steps, state)
 	}
 	return receipt
 }
@@ -1586,6 +1970,14 @@ func LoadReceipt(path string) (Receipt, error) {
 			if receipt.Steps[index].State == "skipped" {
 				receipt.SkippedSteps = appendUnique(receipt.SkippedSteps, receipt.Steps[index].ID)
 			}
+		}
+	}
+	if receipt.Execution == "" {
+		receipt.Execution = "linear"
+	}
+	if len(receipt.TopologicalOrder) == 0 {
+		for _, step := range receipt.Steps {
+			receipt.TopologicalOrder = append(receipt.TopologicalOrder, step.ID)
 		}
 	}
 	return receipt, nil
@@ -1720,7 +2112,44 @@ func (r *Registry) Graph(item Resolved, format string, expand bool) (string, err
 }
 
 func graphDocument(document Document, prefix string, registry *Registry, expand bool) GraphDocument {
-	graph := GraphDocument{Schema: "bofbench.operation-graph", SchemaVersion: 3, Operation: document.ID}
+	graph := GraphDocument{Schema: "bofbench.operation-graph", SchemaVersion: 4, Operation: document.ID}
+	if IsDAG(document) {
+		graph.Nodes = append(graph.Nodes, GraphNode{ID: prefix + "$start", Kind: "start"})
+		dependents := map[string]bool{}
+		for _, step := range document.Steps {
+			id := prefix + step.ID
+			kind := "pack"
+			if step.Operation != "" {
+				kind = "operation"
+			}
+			graph.Nodes = append(graph.Nodes, GraphNode{ID: id, Pack: step.Pack, Operation: step.Operation, Kind: kind})
+			if len(step.DependsOn) == 0 {
+				graph.Edges = append(graph.Edges, GraphEdge{From: prefix + "$start", To: id, Outcome: "ready"})
+			}
+			for _, dependency := range step.DependsOn {
+				dependents[dependency] = true
+				graph.Edges = append(graph.Edges, GraphEdge{From: prefix + dependency, To: id, Outcome: "depends"})
+			}
+			if expand && registry != nil && step.Operation != "" {
+				if child, err := registry.Resolve(step.Operation); err == nil {
+					childGraph := graphDocument(child.Document, id+"/", registry, true)
+					graph.Nodes = append(graph.Nodes, childGraph.Nodes...)
+					entry := id + "/" + child.Document.Steps[0].ID
+					if IsDAG(child.Document) {
+						entry = id + "/$start"
+					}
+					graph.Edges = append(graph.Edges, GraphEdge{From: id, To: entry, Outcome: "contains"})
+					graph.Edges = append(graph.Edges, childGraph.Edges...)
+				}
+			}
+		}
+		for _, step := range document.Steps {
+			if !dependents[step.ID] {
+				graph.Edges = append(graph.Edges, GraphEdge{From: prefix + step.ID, To: "$complete"})
+			}
+		}
+		return graph
+	}
 	for index, step := range document.Steps {
 		id := prefix + step.ID
 		kind := "pack"
@@ -1852,7 +2281,7 @@ func ReferenceMarkdown(items []Resolved) string {
 	body.WriteString("# Operation Reference\n\nGenerated from resolved `bofbench.operation` manifests.\n\n")
 	for _, item := range items {
 		fmt.Fprintf(&body, "## `%s`\n\n%s\n\n", item.Qualified, item.Document.Summary)
-		fmt.Fprintf(&body, "- Schema version: `%d`\n- Tier: `%s`\n- Steps: `%d`\n- Proof cases: `%d`\n\n", item.Document.SchemaVersion, item.Document.Tier, len(item.Document.Steps), len(item.Document.ProofCases))
+		fmt.Fprintf(&body, "- Schema version: `%d`\n- Execution: `%s`\n- Tier: `%s`\n- Steps: `%d`\n- Proof cases: `%d`\n\n", item.Document.SchemaVersion, ExecutionMode(item.Document), item.Document.Tier, len(item.Document.Steps), len(item.Document.ProofCases))
 		if len(item.Document.Inputs) > 0 {
 			body.WriteString("### Inputs\n\n| Name | Type | Required | Sensitive | Topology value |\n|---|---|---:|---:|---|\n")
 			for _, in := range item.Document.Inputs {
@@ -1869,6 +2298,9 @@ func ReferenceMarkdown(items []Resolved) string {
 				target = fmt.Sprintf("parallel:%s (%d branches)", step.Parallel.Join, len(step.Parallel.Branches))
 			}
 			fmt.Fprintf(&body, "%d. `%s` → `%s`", i+1, step.ID, target)
+			if len(step.DependsOn) > 0 {
+				fmt.Fprintf(&body, "; depends on `%s`", strings.Join(step.DependsOn, "`, `"))
+			}
 			if step.Cleanup != nil {
 				fmt.Fprintf(&body, "; cleanup `%s`", step.Cleanup.Pack)
 			}
@@ -1898,6 +2330,13 @@ func ReferenceMarkdown(items []Resolved) string {
 				}
 				if len(proof.ExpectExpandedPath) > 0 {
 					fmt.Fprintf(&body, ", expanded path `%s`", strings.Join(proof.ExpectExpandedPath, " → "))
+				}
+				if len(proof.ExpectWaves) > 0 {
+					var waves []string
+					for _, wave := range proof.ExpectWaves {
+						waves = append(waves, strings.Join(wave, "+"))
+					}
+					fmt.Fprintf(&body, ", waves `%s`", strings.Join(waves, " → "))
 				}
 				body.WriteString("\n")
 			}

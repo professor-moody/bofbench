@@ -177,6 +177,67 @@ func TestRefreshRuntimeReceiptUsesCompletedExternalTask(t *testing.T) {
 	}
 }
 
+func TestSchemaVersionSixDAGValidatesDependenciesAndAncestorCaptures(t *testing.T) {
+	document := Document{Schema: Schema, SchemaVersion: 6, Execution: "dag", ID: "dag", Version: "1.0.0", Title: "DAG", Summary: "Dependency-aware execution", Tier: "internal", Steps: []Step{
+		{ID: "discover", Pack: "host-discovery", Expect: &packsvc.ProofExpectation{Tag: "host", Fields: map[string]string{"status": "complete"}}, Captures: map[string]Capture{"host_name": {Tag: "host", Field: "name"}}},
+		{ID: "independent", Pack: "host-discovery", Expect: &packsvc.ProofExpectation{Tag: "host", Fields: map[string]string{"status": "complete"}}},
+		{ID: "consume", Pack: "host-discovery", DependsOn: []string{"discover"}, Arguments: map[string]string{"value": "$capture.host_name"}, Expect: &packsvc.ProofExpectation{Tag: "done", Fields: map[string]string{"host": "$step.discover.host_name"}}},
+	}}
+	if err := validate(document); err != nil {
+		t.Fatalf("valid dag rejected: %v", err)
+	}
+	document.Steps[2].DependsOn = []string{"independent"}
+	if err := validate(document); err == nil || (!strings.Contains(err.Error(), "transitive") && !strings.Contains(err.Error(), "forward capture")) {
+		t.Fatalf("sibling capture should be rejected, got %v", err)
+	}
+}
+
+func TestSchemaVersionSixDAGRejectsCyclesAndLinearFeatures(t *testing.T) {
+	document := Document{Schema: Schema, SchemaVersion: 6, Execution: "dag", ID: "cycle", Version: "1.0.0", Title: "Cycle", Summary: "Reject a cycle", Tier: "internal", Steps: []Step{
+		{ID: "one", Pack: "host-discovery", DependsOn: []string{"two"}, Expect: &packsvc.ProofExpectation{Tag: "one"}},
+		{ID: "two", Pack: "host-discovery", DependsOn: []string{"one"}, Expect: &packsvc.ProofExpectation{Tag: "two"}},
+	}}
+	if err := validate(document); err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("expected cycle rejection, got %v", err)
+	}
+	document.Steps[0].DependsOn = nil
+	document.Steps[1].Outcomes = []Outcome{{ID: "bad", Expect: packsvc.ProofExpectation{Tag: "two"}, Next: "$complete"}}
+	if err := validate(document); err == nil || !strings.Contains(err.Error(), "ordered outcomes") {
+		t.Fatalf("expected outcome rejection, got %v", err)
+	}
+}
+
+func TestDAGReadyWavesBlockingAndCleanupOrder(t *testing.T) {
+	document := Document{Execution: "dag", Steps: []Step{
+		{ID: "root-a", Cleanup: &Cleanup{Pack: "a"}},
+		{ID: "root-b", Cleanup: &Cleanup{Pack: "b"}},
+		{ID: "join", DependsOn: []string{"root-a", "root-b"}, Cleanup: &Cleanup{Pack: "join"}},
+	}}
+	receipt := Receipt{Steps: []StepReceipt{
+		{ID: "root-a", State: "pending"},
+		{ID: "root-b", State: "pending"},
+		{ID: "join", State: "pending"},
+	}}
+	ready, err := ReadyDAGSteps(document, receipt)
+	if err != nil || len(ready) != 2 || ready[0] != 0 || ready[1] != 1 {
+		t.Fatalf("unexpected root wave: %v err=%v", ready, err)
+	}
+	receipt.Steps[0].State, receipt.Steps[1].State = "completed", "completed"
+	ready, err = ReadyDAGSteps(document, receipt)
+	if err != nil || len(ready) != 1 || ready[0] != 2 {
+		t.Fatalf("unexpected join wave: %v err=%v", ready, err)
+	}
+	receipt.Steps[2].State = "completed"
+	if got := CleanupStepIndexes(document, receipt); len(got) != 3 || got[0] != 2 || got[1] != 1 || got[2] != 0 {
+		t.Fatalf("cleanup was not reverse-topological: %v", got)
+	}
+	receipt.Steps[0].State, receipt.Steps[1].State, receipt.Steps[2].State = "failed", "pending", "pending"
+	BlockDAGDescendants(document, &receipt, []string{"root-a"})
+	if receipt.Steps[2].State != "blocked" || receipt.Steps[1].State != "pending" {
+		t.Fatalf("unexpected blocking: %#v", receipt.Steps)
+	}
+}
+
 func TestTopologyValueSyntax(t *testing.T) {
 	document := Document{Schema: Schema, SchemaVersion: 1, ID: "topology", Version: "1.0.0", Title: "Topology", Summary: "Validate topology input", Tier: "public", Inputs: []Input{{Name: "host", Type: "wstring", TopologyValue: "unknown.computer_name"}}, Steps: []Step{{ID: "host", Pack: "host-discovery"}}}
 	if err := validate(document); err == nil || !strings.Contains(err.Error(), "invalid topology value") {
@@ -228,7 +289,7 @@ func TestLoadReceiptMigratesVersionOneContractState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.SchemaVersion != 5 || loaded.Steps[0].ContractState != "legacy" || loaded.Steps[1].ContractState != "" || len(loaded.ActualPath) != 1 {
+	if loaded.SchemaVersion != ReceiptSchemaVersion || loaded.Steps[0].ContractState != "legacy" || loaded.Steps[1].ContractState != "" || len(loaded.ActualPath) != 1 {
 		t.Fatalf("unexpected migrated receipt: %#v", loaded)
 	}
 }
@@ -433,7 +494,7 @@ func TestParallelReceiptPinsBranchesAndRecordsExpandedPath(t *testing.T) {
 	item := Resolved{Document: document, Catalog: "test", Qualified: "test/parallel-receipt", SHA256: Fingerprint(document)}
 	registry := &Registry{items: map[string]Resolved{}, unqualified: map[string][]string{}, packRegistry: packs}
 	receipt := NewReceipt(item, registry, filepath.Join(t.TempDir(), "operation.json"), "lab", "devbox", "", "x64", "mingw", nil)
-	if receipt.SchemaVersion != 5 || receipt.Steps[0].Parallel == nil || len(receipt.Steps[0].Parallel.Branches) != 2 {
+	if receipt.SchemaVersion != ReceiptSchemaVersion || receipt.Steps[0].Parallel == nil || len(receipt.Steps[0].Parallel.Branches) != 2 {
 		t.Fatalf("parallel receipt was not initialized: %#v", receipt)
 	}
 	for _, branch := range receipt.Steps[0].Parallel.Branches {
