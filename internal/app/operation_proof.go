@@ -47,6 +47,7 @@ type operationProofResult struct {
 	Receipt      string            `json:"receipt,omitempty"`
 	Captures     map[string]string `json:"captures,omitempty"`
 	ActualPath   []string          `json:"actual_path,omitempty"`
+	ExpandedPath []string          `json:"expanded_path,omitempty"`
 	StateChecks  int               `json:"state_checks,omitempty"`
 	CleanupState string            `json:"cleanup_state,omitempty"`
 	Output       []string          `json:"output,omitempty"`
@@ -92,25 +93,42 @@ func operationTestCommand(stdout io.Writer, load func() (*operationsvc.Registry,
 		for _, item := range items {
 			result := operationTestResult{Operation: item.Qualified, Status: "pass"}
 			seen := map[string]bool{}
-			for _, step := range item.Document.Steps {
-				for _, name := range []string{step.Pack, cleanupPackName(step)} {
-					if name == "" || seen[name] {
+			var collect func(operationsvc.Resolved) error
+			collect = func(current operationsvc.Resolved) error {
+				for _, step := range current.Document.Steps {
+					if step.Operation != "" {
+						child, resolveErr := registry.Resolve(step.Operation)
+						if resolveErr != nil {
+							return resolveErr
+						}
+						if err := collect(child); err != nil {
+							return err
+						}
 						continue
 					}
-					seen[name] = true
-					packItem, resolveErr := registry.PackRegistry().Resolve(name)
-					if resolveErr != nil {
-						result.Status, result.Error = "fail", resolveErr.Error()
-						continue
-					}
-					packResult := testOnePack(packItem, registry.PackRegistry(), compilers)
-					result.Packs = append(result.Packs, packResult)
-					if packResult.Status == "fail" {
-						result.Status = "fail"
-					} else if packResult.Status == "pass_with_unavailable" && result.Status == "pass" {
-						result.Status = "pass_with_unavailable"
+					for _, name := range []string{step.Pack, cleanupPackName(step)} {
+						if name == "" || seen[name] {
+							continue
+						}
+						seen[name] = true
+						packItem, resolveErr := registry.PackRegistry().Resolve(name)
+						if resolveErr != nil {
+							result.Status, result.Error = "fail", resolveErr.Error()
+							continue
+						}
+						packResult := testOnePack(packItem, registry.PackRegistry(), compilers)
+						result.Packs = append(result.Packs, packResult)
+						if packResult.Status == "fail" {
+							result.Status = "fail"
+						} else if packResult.Status == "pass_with_unavailable" && result.Status == "pass" {
+							result.Status = "pass_with_unavailable"
+						}
 					}
 				}
+				return nil
+			}
+			if err := collect(item); err != nil {
+				result.Status, result.Error = "fail", err.Error()
 			}
 			if result.Status == "fail" {
 				report.Status = "fail"
@@ -225,7 +243,7 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 			args = append(args, "--lab", profile)
 		}
 		var target lab.TargetReport
-		if statusErr := Run(args, &output, &output); statusErr == nil && json.Unmarshal(output.Bytes(), &target) == nil && target.Status == "pass" && target.State.SchemaVersion >= 5 {
+		if statusErr := Run(args, &output, &output); statusErr == nil && json.Unmarshal(output.Bytes(), &target) == nil && target.Status == "pass" && target.State.SchemaVersion >= 6 {
 			targets[profile] = target
 			return target, nil
 		}
@@ -348,7 +366,20 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 			}
 			result.Captures = receipt.Captures
 			result.ActualPath = append([]string(nil), receipt.ActualPath...)
+			result.ExpandedPath = append([]string(nil), receipt.ExpandedPath...)
 			if err := matchOperationProofCaptures(proof.ExpectCaptures, receipt.Captures, placeholders); err != nil {
+				result.Status, result.Error = "fail", err.Error()
+				report.Failed++
+				report.Results = append(report.Results, result)
+				continue
+			}
+			if err := matchOperationProofPath(proof.ExpectPath, receipt.ActualPath); err != nil {
+				result.Status, result.Error = "fail", err.Error()
+				report.Failed++
+				report.Results = append(report.Results, result)
+				continue
+			}
+			if err := matchOperationProofPath(proof.ExpectExpandedPath, receipt.ExpandedPath); err != nil {
 				result.Status, result.Error = "fail", err.Error()
 				report.Failed++
 				report.Results = append(report.Results, result)
@@ -372,12 +403,6 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 				var cleanup bytes.Buffer
 				if cleanupErr := Run(cleanupArgs, &cleanup, &cleanup); cleanupErr != nil {
 					result.Status, result.Error = "fail", "cleanup: "+cleanupErr.Error()
-					report.Failed++
-					report.Results = append(report.Results, result)
-					continue
-				}
-				if err := matchOperationProofPath(proof.ExpectPath, receipt.ActualPath); err != nil {
-					result.Status, result.Error = "fail", err.Error()
 					report.Failed++
 					report.Results = append(report.Results, result)
 					continue

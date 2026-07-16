@@ -32,9 +32,10 @@ Controls:
 | `e` | Edit the selected argument; sensitive values are masked. |
 | `x` | Run the selected operation's portable static test. |
 | `p` | Run the selected operation's declared proof through the chosen runtime. |
+| `g` | Collapse or expand nested child-operation routes in Operations. |
 | `c` | Compose the selected pack into the selected project. |
 | `f`, `t`, `a` | Filter Results by status, runtime, or selected artifact. |
 | `r` | Refresh projects, arsenal, and receipts. |
 | `q` | Quit. |
 
-The Operations definition view shows ordered outcomes and route targets. Its result view keeps runtime task state separate from result-contract state and displays the actual path, matched outcomes, and skipped steps from version-3 receipts. A runtime failure never selects a fallback; captures appear only after a declared contract or outcome matches complete output. The Results workspace leads with predicted-versus-observed behavior: analyzer findings are shown beside receipt events and actual runtime output. The header keeps the operator loop visible: `new → add packs → build → analyze → run → export`. The last command and its real output remain on screen for immediate review.
+The Operations definition view shows ordered outcomes, child-operation breadcrumbs, and route targets. Press `g` to move between collapsed and slash-qualified expanded graphs. Its result view keeps runtime task state separate from result-contract state and displays parent/expanded paths, matched outcomes, skipped steps, child receipts, exported captures, and nested cleanup progress from version-4 receipts. A runtime failure never selects a fallback; captures appear only after a declared contract or outcome matches complete output. The Results workspace leads with predicted-versus-observed behavior: analyzer findings are shown beside receipt events and actual runtime output. The header keeps the operator loop visible: `new → add packs → build → analyze → run → export`. The last command and its real output remain on screen for immediate review.

@@ -919,6 +919,33 @@ func builtins() []Resolved {
 	objectSecurity.AnalysisSignatures = []AnalysisSignature{{ID: "named_object_security_inventory", Name: "Named object security inventory", Summary: "Open one exact named kernel object and read its owner and DACL control metadata.", Steps: []AnalysisStep{{Action: "open a selected named kernel object", APIs: []string{"OpenEventW", "OpenMutexW", "OpenSemaphoreW", "OpenFileMappingW", "OpenJobObjectW"}}, {Action: "read kernel-object security metadata", APIs: []string{"GetSecurityInfo"}}}, RequiredStrings: []string{"[named-object-security-inventory]"}, Effects: []string{"reads kernel object security metadata"}, Requirements: []string{"an exact object type and name", "READ_CONTROL access"}}}
 	objectSecurity.ProofCases = []ProofCase{{ID: "target-event", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"object_type": "event", "object_name": "$TARGET_EVENT_NAME"}, Expect: ProofExpectation{Tag: "named-object-security-inventory", Fields: map[string]string{"status": "complete", "object_type": "event"}}}}
 	byID["named-object-security-inventory"] = objectSecurity
+	handleDetail := byID["process-handle-detail-inventory"]
+	handleDetail.Title = "Process Handle Detail Inventory"
+	handleDetail.Capabilities = []string{"bounded handle value, type, name, access, and attribute inventory for one exact process"}
+	handleDetail.Arguments = []Argument{{Name: "target_pid", Type: "int", Required: true}, {Name: "type_filter", Type: "string", Default: ""}, {Name: "name_filter", Type: "string", Default: ""}, {Name: "result_limit", Type: "int", Default: "64"}}
+	handleDetail.ExpectedAnalysis = []string{"process_handle_detail_inventory"}
+	handleDetail.OutputFields = []string{"status", "target_pid", "handle", "type", "name", "access", "attributes", "inheritable", "protected", "shown", "limit", "error"}
+	handleDetail.AnalysisSignatures = []AnalysisSignature{{ID: "process_handle_detail_inventory", Name: "Selected process handle detail inventory", Summary: "Read the system handle table and resolve bounded type, name, access, and attribute metadata for one exact process.", Steps: []AnalysisStep{{Action: "read system handles", APIs: []string{"NtQuerySystemInformation"}}, {Action: "duplicate and inspect selected handles", APIs: []string{"DuplicateHandle", "NtQueryObject"}}}, RequiredStrings: []string{"[process-handle-detail-inventory]"}, Effects: []string{"reads process handle metadata"}, Requirements: []string{"an exact PID", "PROCESS_DUP_HANDLE access"}}}
+	handleDetail.ProofCases = []ProofCase{{ID: "target-event-handles", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_HOLDER_PID", "type_filter": "Event", "name_filter": "BOFBench", "result_limit": "16"}, Expect: ProofExpectation{Tag: "process-handle-detail-inventory", Fields: map[string]string{"status": "complete", "target_pid": "$TARGET_HOLDER_PID", "shown": "*"}}}}
+	byID["process-handle-detail-inventory"] = handleDetail
+	syncState := byID["synchronization-object-state"]
+	syncState.Title = "Synchronization Object State"
+	syncState.Capabilities = []string{"non-mutating exact named event, mutex, semaphore, or timer state inspection"}
+	syncState.Arguments = []Argument{{Name: "object_type", Type: "string", Required: true, Description: "event, mutex, semaphore, or timer"}, {Name: "object_name", Type: "wstring", Required: true}}
+	syncState.ExpectedAnalysis = []string{"synchronization_object_state"}
+	syncState.OutputFields = []string{"status", "object_type", "state", "manual_reset", "count", "maximum", "owned", "abandoned", "remaining_100ns", "error"}
+	syncState.AnalysisSignatures = []AnalysisSignature{{ID: "synchronization_object_state", Name: "Synchronization object state", Summary: "Open and query one exact named synchronization object without waiting on or changing it.", Steps: []AnalysisStep{{Action: "open selected synchronization object", APIs: []string{"OpenEventW", "OpenMutexW", "OpenSemaphoreW", "OpenWaitableTimerW"}}, {Action: "query selected object state", APIs: []string{"NtQueryEvent", "NtQueryMutant", "NtQuerySemaphore", "NtQueryTimer"}}}, RequiredStrings: []string{"[synchronization-object-state]"}, Effects: []string{"reads synchronization object state"}, Requirements: []string{"an exact object type and name"}}}
+	syncState.ProofCases = []ProofCase{{ID: "target-mutex", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"object_type": "mutex", "object_name": "$TARGET_MUTEX_NAME"}, Expect: ProofExpectation{Tag: "synchronization-object-state", Fields: map[string]string{"status": "complete", "object_type": "mutex"}}}}
+	byID["synchronization-object-state"] = syncState
+	mailslots := byID["mailslot-inventory"]
+	mailslots.Title = "Mailslot Inventory"
+	mailslots.Capabilities = []string{"bounded local mailslot discovery"}
+	mailslots.Arguments = []Argument{{Name: "prefix", Type: "wstring", Default: ""}, {Name: "result_limit", Type: "int", Default: "64"}}
+	mailslots.ExpectedAnalysis = []string{"mailslot_inventory"}
+	mailslots.OutputFields = []string{"status", "name", "path", "owner_pid", "handle", "messages", "next_bytes", "shown", "limit", "error"}
+	mailslots.AnalysisSignatures = []AnalysisSignature{{ID: "mailslot_inventory", Name: "Mailslot inventory", Summary: "Enumerate bounded named mailslot handles, verify their handle type, and resolve their object names.", Steps: []AnalysisStep{{Action: "enumerate system handles", APIs: []string{"NtQuerySystemInformation"}}, {Action: "identify mailslot server handles", APIs: []string{"DuplicateHandle", "GetMailslotInfo"}}, {Action: "resolve mailslot object names", APIs: []string{"NtQueryObject"}}}, RequiredStrings: []string{`\Device\Mailslot\`}, Effects: []string{"reads mailslot metadata"}, Requirements: []string{"PROCESS_DUP_HANDLE access to each handle owner"}}}
+	mailslots.ProofCases = []ProofCase{{ID: "target-mailslot", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"prefix": "BOFBench", "result_limit": "16"}, Expect: ProofExpectation{Tag: "mailslot-inventory", Fields: map[string]string{"status": "complete", "shown": "1"}}}}
+	byID["mailslot-inventory"] = mailslots
 	pipeInventory := byID["named-pipe-inventory"]
 	pipeInventory.Title = "Named Pipe Inventory"
 	pipeInventory.Capabilities = []string{"bounded named-pipe discovery"}
@@ -1238,6 +1265,8 @@ func validate(document Document, root string) error {
 		"$TARGET_PID": true, "$TARGET_TID": true, "$TARGET_HANDLE": true,
 		"$TARGET_NAMED_PIPE": true,
 		"$TARGET_HOLDER_PID": true, "$TARGET_JOB_MEMBER_PID": true, "$TARGET_EVENT_NAME": true, "$TARGET_SECTION_NAME": true, "$TARGET_JOB_NAME": true,
+		"$TARGET_MUTEX_NAME": true, "$TARGET_SEMAPHORE_NAME": true, "$TARGET_TIMER_NAME": true, "$TARGET_MAILSLOT_NAME": true,
+		"$TARGET_MAILSLOT_HANDLE": true, "$TARGET_MAILSLOT_SHA256": true,
 		"$TARGET_ARCH": true, "$TARGET_MODULE_BASE": true, "$TARGET_MODULE_PATH": true, "$EXECUTION_ADDRESS": true,
 		"$X86_TARGET_PID": true, "$X86_TARGET_TID": true, "$X86_TARGET_MODULE_BASE": true, "$X86_TARGET_MODULE_PATH": true,
 		"$MEMORY_ADDRESS": true, "$MEMORY_SIZE": true, "$MEMORY_SHA256": true, "$CANARY_PATH": true, "$CANARY_SHA256": true,
@@ -1331,7 +1360,9 @@ func validate(document Document, root string) error {
 			"dpapi_file": {"path", "sha256"}, "pfx": {"path", "password", "thumbprint"},
 			"process_memory": {"pid", "address", "size", "sha256"}, "process_protection": {"pid", "address", "protection"},
 			"process_memory_region": {"pid", "address"}, "thread_suspend_state": {"tid", "suspended"}, "thread_context": {"tid", "ip"},
-			"kernel_object": {"object_type", "name"}, "event_state": {"name", "state"}, "section_payload": {"name", "offset", "size", "sha256"}, "job_membership": {"name", "pid"},
+			"kernel_object": {"object_type", "name"}, "event_state": {"name", "state"}, "mutex_state": {"name", "state"},
+			"semaphore_state": {"name", "count"}, "timer_state": {"name", "state"}, "section_payload": {"name", "offset", "size", "sha256"}, "job_membership": {"name", "pid"},
+			"mailslot_state": {"name"}, "mailslot_queue": {"holder_pid", "handle", "minimum_count"}, "inherited_handle": {"pid", "handle"},
 			"process":              {"pid", "image", "marker"},
 			"process_command_line": {"pid", "value"},
 			"service_config":       {"name", "field", "value"},

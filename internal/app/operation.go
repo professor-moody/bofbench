@@ -60,18 +60,7 @@ func operationCommand(stdout io.Writer) *cobra.Command {
 			printOperations(stdout, registry.Search(strings.Join(args, " ")))
 			return nil
 		}},
-		&cobra.Command{Use: "show <operation>", Short: "Show inputs, steps, captures, and cleanup", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
-			registry, err := load()
-			if err != nil {
-				return err
-			}
-			item, err := registry.Resolve(args[0])
-			if err != nil {
-				return err
-			}
-			printOperation(stdout, item)
-			return nil
-		}},
+		operationShowCommand(stdout, load),
 		operationGraphCommand(stdout, load),
 		&cobra.Command{Use: "validate <operation-or-operation.json>", Short: "Validate a resolved operation or definition file", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
 			var document operationsvc.Document
@@ -85,7 +74,7 @@ func operationCommand(stdout io.Writer) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if err := operationsvc.ValidatePackReferences(parsed, registry.PackRegistry()); err != nil {
+				if err := registry.ValidateDocumentReferences(parsed); err != nil {
 					return err
 				}
 				document = parsed
@@ -104,8 +93,30 @@ func operationCommand(stdout io.Writer) *cobra.Command {
 	return cmd
 }
 
+func operationShowCommand(stdout io.Writer, load func() (*operationsvc.Registry, error)) *cobra.Command {
+	var expand bool
+	cmd := &cobra.Command{Use: "show <operation>", Short: "Show inputs, steps, captures, and cleanup", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		registry, err := load()
+		if err != nil {
+			return err
+		}
+		item, err := registry.Resolve(args[0])
+		if err != nil {
+			return err
+		}
+		printOperation(stdout, item)
+		if expand {
+			printChildOperations(stdout, registry, item, "  ", map[string]bool{})
+		}
+		return nil
+	}}
+	cmd.Flags().BoolVar(&expand, "expand", false, "show nested operation definitions")
+	return cmd
+}
+
 func operationGraphCommand(stdout io.Writer, load func() (*operationsvc.Registry, error)) *cobra.Command {
 	var format string
+	var expand bool
 	cmd := &cobra.Command{Use: "graph <operation>", Short: "Show operation steps and result routes", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
 		registry, err := load()
 		if err != nil {
@@ -115,7 +126,7 @@ func operationGraphCommand(stdout io.Writer, load func() (*operationsvc.Registry
 		if err != nil {
 			return err
 		}
-		body, err := operationsvc.Graph(item.Document, format)
+		body, err := registry.Graph(item, format, expand)
 		if err != nil {
 			return err
 		}
@@ -123,6 +134,7 @@ func operationGraphCommand(stdout io.Writer, load func() (*operationsvc.Registry
 		return err
 	}}
 	cmd.Flags().StringVar(&format, "format", "text", "graph format: text, mermaid, or json")
+	cmd.Flags().BoolVar(&expand, "expand", false, "include slash-qualified child operation steps")
 	return cmd
 }
 
@@ -206,6 +218,14 @@ func operationResumeCommand(stdout io.Writer, load func() (*operationsvc.Registr
 		}
 		if item.SHA256 != receipt.OperationSHA256 {
 			return fmt.Errorf("operation definition changed since %s; start a new operation run", path)
+		}
+		_, runnable, routeErr := operationsvc.NextRunnableStep(item.Document, receipt)
+		if routeErr != nil {
+			return routeErr
+		}
+		if !runnable && !opts.cleanup {
+			fmt.Fprintf(stdout, "operation  %s\nreceipt    %s\n", receipt.Status, path)
+			return nil
 		}
 		inputs, err := resolveOperationInputs(item.Document, opts.arguments, receipt.Inputs, true)
 		if err != nil {
@@ -365,7 +385,9 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 			return err
 		}
 		path = filepath.Join(runDir, "operation.json")
-		receipt = operationsvc.NewReceipt(item, registry.PackRegistry(), path, opts.via, opts.lab, opts.topology, opts.arch, opts.compiler, inputs)
+		receipt = operationsvc.NewReceipt(item, registry, path, opts.via, opts.lab, opts.topology, opts.arch, opts.compiler, inputs)
+	} else if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+		receipt = operationsvc.NewReceipt(item, registry, path, opts.via, opts.lab, opts.topology, opts.arch, opts.compiler, inputs)
 	} else {
 		var err error
 		receipt, err = operationsvc.LoadReceipt(path)
@@ -373,7 +395,7 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 			return err
 		}
 	}
-	if err := validatePinnedOperationPacks(item.Document, &receipt, registry.PackRegistry()); err != nil {
+	if err := validatePinnedOperation(item, &receipt, registry); err != nil {
 		return err
 	}
 	_, hasRunnable, routeErr := operationsvc.NextRunnableStep(item.Document, receipt)
@@ -408,6 +430,33 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 		}
 		step := item.Document.Steps[index]
 		stepReceipt := &receipt.Steps[index]
+		if step.Operation != "" {
+			completed, childErr := executeOperationChildStep(ctx, stdout, registry, item, step, stepReceipt, index, inputs, topologyValues, &receipt, path, opts)
+			if childErr != nil {
+				if stepReceipt.State == "incomplete" {
+					if err := operationsvc.SaveReceipt(path, &receipt); err != nil {
+						return err
+					}
+					fmt.Fprintf(stdout, "operation  incomplete\nreceipt    %s\n", path)
+					return childErr
+				}
+				return failOperation(stdout, path, &receipt, stepReceipt, childErr)
+			}
+			if completed {
+				if stepReceipt.NextStep == "$fail" {
+					err := fmt.Errorf("step %s selected the explicit failure route", step.ID)
+					receipt.Status, receipt.Error = "failed", err.Error()
+					if saveErr := operationsvc.SaveReceipt(path, &receipt); saveErr != nil {
+						return saveErr
+					}
+					if opts.cleanupOnFailure {
+						_ = cleanupOperation(ctx, stdout, registry, item, inputs, &receipt, path, opts)
+					}
+					return err
+				}
+				continue
+			}
+		}
 		if stepReceipt.State == "incomplete" {
 			updated, err := operationsvc.RefreshRuntimeReceipt(stepReceipt.Runtime)
 			if err != nil {
@@ -556,6 +605,80 @@ func captureOperationOutput(step operationsvc.Step, output []string) (map[string
 	return operationsvc.CaptureOutput(output, step.Captures)
 }
 
+func executeOperationChildStep(ctx context.Context, stdout io.Writer, registry *operationsvc.Registry, parent operationsvc.Resolved, step operationsvc.Step, stepReceipt *operationsvc.StepReceipt, index int, inputs, topology map[string]string, receipt *operationsvc.Receipt, path string, opts operationOptions) (bool, error) {
+	child, err := registry.Resolve(step.Operation)
+	if err != nil {
+		return false, err
+	}
+	if stepReceipt.OperationSHA256 == "" || stepReceipt.OperationSHA256 != child.SHA256 {
+		return false, fmt.Errorf("child operation %s changed since operation start", step.Operation)
+	}
+	if err := requireReferencedSensitiveInputs(parent.Document, *receipt, inputs, step.Arguments); err != nil {
+		return false, err
+	}
+	childInputs, err := resolveOperationArguments(step.Arguments, inputs, receipt.Captures, topology)
+	if err != nil {
+		return false, err
+	}
+	childPath := stepReceipt.ChildReceipt
+	if childPath == "" {
+		childPath = filepath.Join(filepath.Dir(path), "children", step.ID, "operation.json")
+		stepReceipt.ChildReceipt = childPath
+	}
+	fmt.Fprintf(stdout, "step %d/%d  %s → operation:%s\n", index+1, len(parent.Document.Steps), step.ID, child.Qualified)
+	stepReceipt.State = "running"
+	receipt.Status = "running"
+	if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+		return false, err
+	}
+	childOpts := opts
+	childOpts.cleanup, childOpts.cleanupOnFailure = false, false
+	runErr := runOperation(ctx, stdout, registry, child, childInputs, childOpts, childPath)
+	childReceipt, loadErr := operationsvc.LoadReceipt(childPath)
+	if loadErr != nil {
+		if runErr != nil {
+			return false, runErr
+		}
+		return false, loadErr
+	}
+	stepReceipt.ChildCleanupState = childReceipt.CleanupState
+	switch childReceipt.Status {
+	case "completed", "cleaned":
+		// Continue below. A child is atomic from the parent route's point of view.
+	case "running", "incomplete", "pending":
+		stepReceipt.State, receipt.Status = "incomplete", "incomplete"
+		stepReceipt.Error = childReceipt.Error
+		return false, fmt.Errorf("child operation %s is incomplete; resume %s", child.Qualified, path)
+	default:
+		if runErr != nil {
+			return false, runErr
+		}
+		return false, fmt.Errorf("child operation %s ended in %s: %s", child.Qualified, childReceipt.Status, childReceipt.Error)
+	}
+	output := []string{fmt.Sprintf("[operation] status=complete operation=%s receipt=%s cleanup=%s", child.Qualified, childPath, childReceipt.CleanupState)}
+	if err := applyOperationContract(step, stepReceipt, output, inputs, receipt.Captures, topology); err != nil {
+		return false, err
+	}
+	captured, err := operationsvc.CaptureChildOutput(childReceipt, step.Captures)
+	if err != nil {
+		return false, err
+	}
+	stepReceipt.Captures = captured
+	for name, value := range captured {
+		receipt.Captures[name] = value
+	}
+	stepReceipt.State, stepReceipt.Error = "completed", ""
+	operationsvc.RecordChildPath(receipt, step.ID, childReceipt)
+	if err := operationsvc.ApplyRoute(parent.Document, receipt, index); err != nil {
+		return false, err
+	}
+	printOperationResult(stdout, output, captured)
+	if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func applyOperationContract(step operationsvc.Step, receipt *operationsvc.StepReceipt, output []string, inputs, captures, topology map[string]string) error {
 	if len(step.Outcomes) > 0 {
 		outcome, fields, payloadVerified, err := operationsvc.EvaluateOutcomes(output, step.Outcomes, inputs, captures, topology)
@@ -588,22 +711,41 @@ func applyOperationContract(step operationsvc.Step, receipt *operationsvc.StepRe
 	return nil
 }
 
-func validatePinnedOperationPacks(document operationsvc.Document, receipt *operationsvc.Receipt, packs *packsvc.Registry) error {
+func validatePinnedOperation(item operationsvc.Resolved, receipt *operationsvc.Receipt, registry *operationsvc.Registry) error {
+	document := item.Document
 	if len(document.Steps) != len(receipt.Steps) {
 		return fmt.Errorf("operation receipt step count does not match the pinned definition")
 	}
-	for index, step := range document.Steps {
-		resolved, err := packs.Resolve(step.Pack)
-		if err != nil {
-			return err
+	wantDependencies := registry.DependencyHashes(item)
+	if len(receipt.DependencySHA256) > 0 {
+		for name, hash := range wantDependencies {
+			if receipt.DependencySHA256[name] != hash {
+				return fmt.Errorf("dependency %s changed since operation start", name)
+			}
 		}
-		if receipt.Steps[index].PackSHA256 == "" || receipt.Steps[index].PackSHA256 != resolved.SHA256 {
-			return fmt.Errorf("pack %s changed since operation start", step.Pack)
+	}
+	for index, step := range document.Steps {
+		if step.Pack != "" {
+			resolved, err := registry.PackRegistry().Resolve(step.Pack)
+			if err != nil {
+				return err
+			}
+			if receipt.Steps[index].PackSHA256 == "" || receipt.Steps[index].PackSHA256 != resolved.SHA256 {
+				return fmt.Errorf("pack %s changed since operation start", step.Pack)
+			}
+		} else {
+			resolved, err := registry.Resolve(step.Operation)
+			if err != nil {
+				return err
+			}
+			if receipt.Steps[index].OperationSHA256 == "" || receipt.Steps[index].OperationSHA256 != resolved.SHA256 {
+				return fmt.Errorf("operation %s changed since operation start", step.Operation)
+			}
 		}
 		if step.Cleanup == nil {
 			continue
 		}
-		cleanup, err := packs.Resolve(step.Cleanup.Pack)
+		cleanup, err := registry.PackRegistry().Resolve(step.Cleanup.Pack)
 		if err != nil {
 			return err
 		}
@@ -696,7 +838,7 @@ func cleanupOperation(ctx context.Context, stdout io.Writer, registry *operation
 	if err := operationsvc.ValidateTopologyRoles(item.Document.Roles, topologyValues); err != nil {
 		return err
 	}
-	if err := validatePinnedOperationPacks(item.Document, receipt, registry.PackRegistry()); err != nil {
+	if err := validatePinnedOperation(item, receipt, registry); err != nil {
 		return err
 	}
 	receipt.CleanupState = "running"
@@ -706,6 +848,29 @@ func cleanupOperation(ctx context.Context, stdout io.Writer, registry *operation
 	work := filepath.Join("work", "operations", filepath.Base(filepath.Dir(path)), "cleanup")
 	for _, index := range operationsvc.CleanupStepIndexes(item.Document, *receipt) {
 		step, stepReceipt := item.Document.Steps[index], &receipt.Steps[index]
+		if step.Operation != "" {
+			child, err := registry.Resolve(step.Operation)
+			if err != nil {
+				return cleanupFailure(path, receipt, stepReceipt, err)
+			}
+			childInputs, err := resolveOperationArguments(step.Arguments, inputs, receipt.Captures, topologyValues)
+			if err != nil {
+				return cleanupFailure(path, receipt, stepReceipt, err)
+			}
+			childReceipt, err := operationsvc.LoadReceipt(stepReceipt.ChildReceipt)
+			if err != nil {
+				return cleanupFailure(path, receipt, stepReceipt, err)
+			}
+			fmt.Fprintf(stdout, "cleanup     %s → operation:%s\n", step.ID, child.Qualified)
+			if err := cleanupOperation(ctx, stdout, registry, child, childInputs, &childReceipt, stepReceipt.ChildReceipt, opts); err != nil {
+				return cleanupFailure(path, receipt, stepReceipt, err)
+			}
+			stepReceipt.ChildCleanupState, stepReceipt.CleanupState = "completed", "completed"
+			if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+				return err
+			}
+			continue
+		}
 		cleanupPack, err := registry.PackRegistry().Resolve(step.Cleanup.Pack)
 		if err != nil {
 			return cleanupFailure(path, receipt, stepReceipt, err)
@@ -860,7 +1025,11 @@ func printOperation(stdout io.Writer, item operationsvc.Resolved) {
 	}
 	fmt.Fprintln(stdout, "\nsteps")
 	for index, step := range item.Document.Steps {
-		fmt.Fprintf(stdout, "  %d. %-20s %s\n", index+1, step.ID, step.Pack)
+		target := step.Pack
+		if step.Operation != "" {
+			target = "operation:" + step.Operation
+		}
+		fmt.Fprintf(stdout, "  %d. %-20s %s\n", index+1, step.ID, target)
 		argumentNames := make([]string, 0, len(step.Arguments))
 		for name := range step.Arguments {
 			argumentNames = append(argumentNames, name)
@@ -876,7 +1045,11 @@ func printOperation(stdout io.Writer, item operationsvc.Resolved) {
 		sort.Strings(captureNames)
 		for _, name := range captureNames {
 			capture := step.Captures[name]
-			fmt.Fprintf(stdout, "     capture %-14s [%s] %s\n", name, capture.Tag, capture.Field)
+			if capture.Capture != "" {
+				fmt.Fprintf(stdout, "     capture %-14s child:%s\n", name, capture.Capture)
+			} else {
+				fmt.Fprintf(stdout, "     capture %-14s [%s] %s\n", name, capture.Tag, capture.Field)
+			}
 		}
 		if step.Cleanup != nil {
 			fmt.Fprintf(stdout, "     cleanup              %s\n", step.Cleanup.Pack)
@@ -889,5 +1062,30 @@ func printOperation(stdout io.Writer, item operationsvc.Resolved) {
 				fmt.Fprintf(stdout, "       argument %-11s %s\n", name, step.Cleanup.Arguments[name])
 			}
 		}
+	}
+}
+
+func printChildOperations(stdout io.Writer, registry *operationsvc.Registry, item operationsvc.Resolved, indent string, seen map[string]bool) {
+	if seen[item.Qualified] {
+		return
+	}
+	seen[item.Qualified] = true
+	for _, step := range item.Document.Steps {
+		if step.Operation == "" {
+			continue
+		}
+		child, err := registry.Resolve(step.Operation)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(stdout, "\n%s%s/%s → %s\n", indent, item.Document.ID, step.ID, child.Qualified)
+		for index, childStep := range child.Document.Steps {
+			target := childStep.Pack
+			if childStep.Operation != "" {
+				target = "operation:" + childStep.Operation
+			}
+			fmt.Fprintf(stdout, "%s  %d. %-20s %s\n", indent, index+1, childStep.ID, target)
+		}
+		printChildOperations(stdout, registry, child, indent+"  ", seen)
 	}
 }

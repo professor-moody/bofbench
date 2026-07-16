@@ -54,6 +54,8 @@ bofbench operation show internal/section-map-start-unmap
 bofbench operation graph internal/adaptive-memory-execute
 bofbench operation graph internal/adaptive-memory-execute --format mermaid
 bofbench operation graph internal/adaptive-memory-execute --format json
+bofbench operation show internal/coordination-matrix --expand
+bofbench operation graph internal/coordination-matrix --expand
 bofbench operation validate operations/example/operation.json
 bofbench operation test internal/virtual-memory-execute
 bofbench operation test --all --catalog ~/bofbench-packs-internal \

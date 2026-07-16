@@ -40,7 +40,8 @@ func TestReceiptRedactsSensitiveInputsAndPinsHashes(t *testing.T) {
 	}
 	document := Document{Schema: Schema, SchemaVersion: 1, ID: "one", Version: "1.0.0", Title: "One", Summary: "One step", Tier: "public", Inputs: []Input{{Name: "pid", Type: "int", Required: true}, {Name: "secret", Type: "string", Sensitive: true}}, Steps: []Step{{ID: "host", Pack: "host-discovery"}}}
 	item := Resolved{Document: document, Catalog: "test", Qualified: "test/one", SHA256: Fingerprint(document)}
-	receipt := NewReceipt(item, packs, filepath.Join(t.TempDir(), "operation.json"), "lab", "devbox", "", "x64", "mingw", map[string]string{"pid": "7", "secret": "do-not-store"})
+	registry := &Registry{items: map[string]Resolved{}, unqualified: map[string][]string{}, packRegistry: packs}
+	receipt := NewReceipt(item, registry, filepath.Join(t.TempDir(), "operation.json"), "lab", "devbox", "", "x64", "mingw", map[string]string{"pid": "7", "secret": "do-not-store"})
 	if receipt.Inputs["secret"] != "" || len(receipt.RedactedInputs) != 1 || receipt.RedactedInputs[0] != "secret" {
 		t.Fatalf("sensitive input persisted: %#v", receipt)
 	}
@@ -150,7 +151,8 @@ func TestReceiptPinsCleanupPackHash(t *testing.T) {
 	}
 	document := Document{Schema: Schema, SchemaVersion: 1, ID: "cleanup", Version: "1.0.0", Title: "Cleanup", Summary: "Pins action and cleanup", Tier: "public", Steps: []Step{{ID: "action", Pack: "host-discovery", Cleanup: &Cleanup{Pack: "host-discovery"}}}}
 	item := Resolved{Document: document, Catalog: "test", Qualified: "test/cleanup", SHA256: Fingerprint(document)}
-	receipt := NewReceipt(item, packs, filepath.Join(t.TempDir(), "operation.json"), "lab", "devbox", "", "x64", "auto", nil)
+	registry := &Registry{items: map[string]Resolved{}, unqualified: map[string][]string{}, packRegistry: packs}
+	receipt := NewReceipt(item, registry, filepath.Join(t.TempDir(), "operation.json"), "lab", "devbox", "", "x64", "auto", nil)
 	if receipt.Steps[0].CleanupPack != "host-discovery" || receipt.Steps[0].CleanupSHA256 == "" {
 		t.Fatalf("cleanup hash was not pinned: %#v", receipt.Steps[0])
 	}
@@ -226,7 +228,7 @@ func TestLoadReceiptMigratesVersionOneContractState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.SchemaVersion != 3 || loaded.Steps[0].ContractState != "legacy" || loaded.Steps[1].ContractState != "" || len(loaded.ActualPath) != 1 {
+	if loaded.SchemaVersion != 4 || loaded.Steps[0].ContractState != "legacy" || loaded.Steps[1].ContractState != "" || len(loaded.ActualPath) != 1 {
 		t.Fatalf("unexpected migrated receipt: %#v", loaded)
 	}
 }
@@ -298,5 +300,78 @@ func TestGraphRendersMermaidAndJSON(t *testing.T) {
 	body, err := Graph(document, "json")
 	if err != nil || !strings.Contains(body, `"schema": "bofbench.operation-graph"`) || !strings.Contains(body, `"outcome": "fallback"`) {
 		t.Fatalf("json=%q err=%v", body, err)
+	}
+}
+
+func TestSchemaVersionFourRequiresExactlyOneStepTarget(t *testing.T) {
+	document := Document{Schema: Schema, SchemaVersion: 4, ID: "parent", Version: "1.0.0", Title: "Parent", Summary: "Nested operation", Tier: "internal", Steps: []Step{{ID: "child", Pack: "host-discovery", Operation: "process-triage", Expect: &packsvc.ProofExpectation{Tag: "operation", Fields: map[string]string{"status": "complete"}}}}}
+	if err := validate(document); err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("expected pack/operation exclusivity rejection, got %v", err)
+	}
+	document.Steps[0].Pack = ""
+	if err := validate(document); err != nil {
+		t.Fatalf("valid child operation step failed: %v", err)
+	}
+}
+
+func TestNestedOperationsPinDependenciesExportCapturesAndExpandGraph(t *testing.T) {
+	project := t.TempDir()
+	writeOperation := func(id, body string) {
+		t.Helper()
+		root := filepath.Join(project, ".bofbench", "operations", id)
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "operation.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeOperation("child", `{"schema":"bofbench.operation","schema_version":4,"id":"child","version":"1.0.0","title":"Child","summary":"Child operation","tier":"internal","steps":[{"id":"host","pack":"host-discovery","expect":{"tag":"host","fields":{"name":"*"}},"captures":{"host_name":{"tag":"host","field":"name"}}}]}`)
+	writeOperation("parent", `{"schema":"bofbench.operation","schema_version":4,"id":"parent","version":"1.0.0","title":"Parent","summary":"Parent operation","tier":"internal","steps":[{"id":"nested","operation":"child","expect":{"tag":"operation","fields":{"status":"complete"}},"captures":{"exported_host":{"capture":"host_name"}}}]}`)
+	packs, err := packsvc.Load(packsvc.LoadOptions{Project: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := Load(LoadOptions{Project: project, PackRegistry: packs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := registry.Resolve("project/parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dependencies := registry.DependencyHashes(parent)
+	if dependencies["operation:project/parent"] == "" || dependencies["operation:project/child"] == "" || dependencies["pack:builtin/host-discovery"] == "" {
+		t.Fatalf("transitive dependency closure was incomplete: %#v", dependencies)
+	}
+	childReceipt := Receipt{Captures: map[string]string{"host_name": "DEVBOX"}}
+	captured, err := CaptureChildOutput(childReceipt, parent.Document.Steps[0].Captures)
+	if err != nil || captured["exported_host"] != "DEVBOX" {
+		t.Fatalf("child capture export failed: %#v err=%v", captured, err)
+	}
+	graph, err := registry.Graph(parent, "json", true)
+	if err != nil || !strings.Contains(graph, `"id": "nested/host"`) {
+		t.Fatalf("expanded graph omitted child node: %s err=%v", graph, err)
+	}
+}
+
+func TestNestedOperationRegistryRejectsIndirectCycles(t *testing.T) {
+	project := t.TempDir()
+	for id, child := range map[string]string{"a": "b", "b": "a"} {
+		root := filepath.Join(project, ".bofbench", "operations", id)
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := `{"schema":"bofbench.operation","schema_version":4,"id":"` + id + `","version":"1.0.0","title":"Cycle","summary":"Cycle test","tier":"internal","steps":[{"id":"child","operation":"` + child + `","expect":{"tag":"operation","fields":{"status":"complete"}}}]}`
+		if err := os.WriteFile(filepath.Join(root, "operation.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	packs, err := packsvc.Load(packsvc.LoadOptions{Project: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(LoadOptions{Project: project, PackRegistry: packs}); err == nil || !strings.Contains(err.Error(), "operation call cycle") {
+		t.Fatalf("expected indirect cycle rejection, got %v", err)
 	}
 }

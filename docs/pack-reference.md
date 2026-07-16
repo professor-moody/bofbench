@@ -419,6 +419,23 @@ report local password, lockout, and authentication policy metadata
 - Analyzer signatures: `local_account_policy_inventory`
 - Live proofs: local-policy (lab, sliver)
 
+## `builtin/mailslot-inventory`
+
+enumerate bounded local mailslot names with an exact prefix filter
+
+- Can do: bounded local mailslot discovery
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `mailslot_inventory`
+- Live proofs: target-mailslot (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `prefix` | `wstring` | no | no | `` |  |
+| `result_limit` | `int` | no | no | `64` |  |
+
 ## `builtin/module-export-inventory`
 
 enumerate bounded exports from one selected process module
@@ -671,6 +688,25 @@ Enumerate a bounded local process snapshot
 | --- | --- | --- | --- | --- | --- |
 | `process_filter` | `string` | no | no | `` | case-insensitive process image substring; empty matches all |
 | `result_limit` | `int` | no | no | `25` | maximum matching process rows (1-256) |
+
+## `builtin/process-handle-detail-inventory`
+
+enumerate bounded handle values, types, names, access, and attributes for one exact process
+
+- Can do: bounded handle value, type, name, access, and attribute inventory for one exact process
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `process_handle_detail_inventory`
+- Live proofs: target-event-handles (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` |  |
+| `type_filter` | `string` | no | no | `` |  |
+| `name_filter` | `string` | no | no | `` |  |
+| `result_limit` | `int` | no | no | `64` |  |
 
 ## `builtin/process-handle-type-summary`
 
@@ -969,6 +1005,23 @@ Collect compact host, identity, token, process, service, network, registry, and 
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
 - Analyzer signatures: `current_process_context`, `host_identity`, `filesystem_context`
+
+## `builtin/synchronization-object-state`
+
+query exact named event, mutex, semaphore, or waitable-timer state without changing it
+
+- Can do: non-mutating exact named event, mutex, semaphore, or timer state inspection
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `synchronization_object_state`
+- Live proofs: target-mutex (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `object_type` | `string` | yes | no | `` | event, mutex, semaphore, or timer |
+| `object_name` | `wstring` | yes | no | `` |  |
 
 ## `builtin/system-discovery`
 

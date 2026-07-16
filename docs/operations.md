@@ -1,6 +1,6 @@
-# Adaptive, Provable Multi-Step Operations
+# Composable, Provable Multi-Step Operations
 
-Operations connect capability packs into a result-aware, forward-only workflow. A step can capture a structured output field—such as a PID, address, hash, path, object name, or pipe name—and pass it to a later step. Version 3 can also route a completed, understood result to a later step. The operation advances only when both conditions are true:
+Operations connect capability packs into a result-aware, forward-only workflow. A step can capture a structured output field—such as a PID, address, hash, path, object name, or pipe name—and pass it to a later step. Version 3 can route a completed, understood result to a later step. Version 4 can invoke another catalog operation as an atomic child step. The operation advances only when both conditions are true:
 
 1. the runtime task completed with complete output; and
 2. the step's declared structured-result contract matched.
@@ -17,9 +17,10 @@ A loader invocation that exits normally but emits a declared clean-failure resul
 bofbench operation list
 bofbench operation search memory
 bofbench operation show internal/virtual-memory-execute
-bofbench operation graph internal/adaptive-memory-execute
-bofbench operation graph internal/adaptive-memory-execute --format mermaid
-bofbench operation graph internal/adaptive-memory-execute --format json
+bofbench operation graph internal/coordination-matrix
+bofbench operation graph internal/coordination-matrix --expand
+bofbench operation graph internal/coordination-matrix --expand --format mermaid
+bofbench operation graph internal/coordination-matrix --expand --format json
 bofbench operation validate operations/example/operation.json
 
 # Portable build, analyzer, and export coverage
@@ -51,7 +52,7 @@ bofbench operation run internal/virtual-memory-execute \
 
 Normal operation accepts operator-selected targets and payloads. Proof fixtures and benign proof payloads are acceptance infrastructure, not runtime restrictions. `--cleanup` and `--cleanup-on-failure` remain optional.
 
-The run creates `runs/<run-id>/operation.json`. The version-3 receipt pins the operation definition, action and cleanup pack hashes, object hashes, runtime receipts, contract state, matched outcomes, the actual path, skipped steps, non-sensitive captures, and cleanup results. Sensitive values are never stored.
+The run creates `runs/<run-id>/operation.json`. The version-4 receipt pins the complete transitive operation and pack set, action and cleanup pack hashes, child receipt paths, object hashes, runtime receipts, contract state, matched outcomes, parent and expanded execution paths, skipped steps, non-sensitive captures, and nested cleanup results. Sensitive values are never stored.
 
 ```mermaid
 flowchart LR
@@ -113,6 +114,54 @@ Payload contracts can join bounded hex or base64 chunks in memory and compare th
 
 Schema-version-1 operations remain readable and executable. Their steps are labeled `legacy` because they have no result contract. Schema-version-2 operations retain their linear result contracts unchanged.
 
+## Nested operations
+
+Schema version 4 lets a step select exactly one `pack` or `operation`. A child receives explicitly mapped inputs and inherits the parent's runtime, architecture, compiler, lab, and topology. Only declared non-sensitive captures can be exported back to the parent.
+
+```json
+{
+  "id": "mutex",
+  "operation": "named-mutex-lifecycle",
+  "arguments": {
+    "holder_pid": "$input.holder_pid",
+    "mutex_name": "$input.mutex_name"
+  },
+  "expect": {
+    "tag": "operation",
+    "fields": {"status": "complete", "operation": "*"}
+  },
+  "captures": {
+    "mutex_handle": {"capture": "mutex_handle"}
+  }
+}
+```
+
+Nested behavior is deterministic:
+
+- a child contract or runtime failure fails the parent step;
+- an incomplete C2 child remains incomplete and resume delegates to its child receipt;
+- a child cannot silently select a parent fallback after a runtime failure;
+- cleanup visits completed parent steps in reverse order and recursively cleans completed child steps in reverse order;
+- the registry rejects direct and indirect operation-call cycles;
+- definition pinning covers every transitive child operation, action pack, and cleanup pack.
+
+Collapsed graphs show one node per child. Expanded graphs use slash-qualified breadcrumbs:
+
+```bash
+bofbench operation show internal/coordination-matrix --expand
+bofbench operation graph internal/coordination-matrix --expand
+```
+
+```text
+mutex -> semaphore
+mutex -> mutex/create [contains]
+mutex/create -> mutex/query_before
+mutex/query_before -> mutex/acquire_release
+mutex/acquire_release -> mutex/query_after
+```
+
+The receipt retains both `actual_path` (`mutex → semaphore → …`) and `expanded_path` (`mutex/create → mutex/query_before → …`). Each child step records its receipt path and nested cleanup state.
+
 ## Ordered outcomes and result routing
 
 Schema version 3 lets a step replace `expect` with ordered `outcomes`. The first matching structured result pins the next step. Targets may be only a later step, `$complete`, or `$fail`; backward edges and cycles are rejected.
@@ -169,7 +218,7 @@ Forward references are rejected. Captures are extracted only after the step cont
 
 ## Proof cases and independent state
 
-Version 3 proof cases retain architectures, runtimes, topology roles, typed proof inputs, expected captures, independent state checks, and cleanup selection. They add `expect_path`, which proves the exact route. Pack proof placeholders include `$TARGET_PID`, `$TARGET_TID`, `$TARGET_HOLDER_PID`, `$TARGET_JOB_MEMBER_PID`, `$TARGET_EVENT_NAME`, `$TARGET_SECTION_NAME`, `$TARGET_JOB_NAME`, `$TARGET_NAMED_PIPE`, `$PAYLOAD_RET_PATH`, `$PROOF_SECRET_PATH`, and `$RUN_ID`. State checks may consume dynamic values such as `$capture.remote_base` or `$capture.retained_handle`.
+Version 4 proof cases retain architectures, runtimes, topology roles, typed proof inputs, expected captures, independent state checks, and cleanup selection. `expect_path` proves the parent route and `expect_expanded_path` proves child breadcrumbs. Pack proof placeholders include `$TARGET_PID`, `$TARGET_TID`, `$TARGET_HOLDER_PID`, `$TARGET_JOB_MEMBER_PID`, `$TARGET_EVENT_NAME`, `$TARGET_SECTION_NAME`, `$TARGET_MUTEX_NAME`, `$TARGET_SEMAPHORE_NAME`, `$TARGET_TIMER_NAME`, `$TARGET_MAILSLOT_NAME`, `$TARGET_NAMED_PIPE`, `$PAYLOAD_RET_PATH`, `$PROOF_SECRET_PATH`, and `$RUN_ID`. State checks may consume dynamic values such as `$capture.remote_base` or `$capture.retained_handle`.
 
 ```json
 {
@@ -209,7 +258,7 @@ Submitted or running C2 tasks leave the step and operation `incomplete`:
 bofbench operation resume runs/<run-id>/operation.json
 ```
 
-Resume refreshes the embedded runtime receipt, confirms the object hash, evaluates the step contract or ordered outcomes, and only then extracts captures and advances. A persisted route is never recalculated, completed steps are retained, and unvisited steps remain skipped. Failed runtime work is terminal rather than an implicit retry. Resupply sensitive inputs when an unfinished step still needs them:
+Resume refreshes the embedded runtime receipt—or recursively resumes an incomplete child receipt—confirms the pinned transitive hashes, evaluates the step contract or ordered outcomes, and only then extracts captures and advances. A persisted route is never recalculated, completed steps are retained, and unvisited steps remain skipped. Failed runtime work is terminal rather than an implicit retry. Resupply sensitive inputs when an unfinished step still needs them:
 
 ```bash
 bofbench operation resume runs/<run-id>/operation.json \

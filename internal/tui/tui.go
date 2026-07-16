@@ -35,6 +35,8 @@ type model struct {
 	projects           []string
 	packs              []packsvc.Resolved
 	operations         []operationsvc.Resolved
+	operationRegistry  *operationsvc.Registry
+	operationExpanded  bool
 	topologies         []string
 	labProfiles        []string
 	runArguments       []tuiArgument
@@ -79,8 +81,11 @@ type runEntry struct {
 	Events         []eventEntry
 	Findings       []findingEntry
 	ActualPath     []string
+	ExpandedPath   []string
 	SkippedSteps   []string
 	MatchedRoutes  []string
+	ChildReceipts  []string
+	NestedCleanup  []string
 	ModTime        time.Time
 }
 
@@ -127,10 +132,12 @@ func initialModel() model {
 	registry, _ := packsvc.Load(packsvc.LoadOptions{Project: "."})
 	var packs []packsvc.Resolved
 	var operations []operationsvc.Resolved
+	var operationRegistry *operationsvc.Registry
 	if registry != nil {
 		packs = registry.List()
-		if operationRegistry, err := operationsvc.Load(operationsvc.LoadOptions{Project: ".", PackRegistry: registry}); err == nil {
-			operations = operationRegistry.List()
+		if loaded, err := operationsvc.Load(operationsvc.LoadOptions{Project: ".", PackRegistry: registry}); err == nil {
+			operationRegistry = loaded
+			operations = loaded.List()
 		}
 	}
 	profiles, _ := lab.LoadProfiles(lab.ProfilesPath())
@@ -142,7 +149,7 @@ func initialModel() model {
 			break
 		}
 	}
-	return model{projects: listProjects(), arsenalRoot: root, arsenal: entries, runs: runs, packs: packs, operations: operations,
+	return model{projects: listProjects(), arsenalRoot: root, arsenal: entries, runs: runs, packs: packs, operations: operations, operationRegistry: operationRegistry,
 		topologies: lab.TopologyNames(profiles), labProfiles: labProfiles, labProfile: labProfile,
 		message: "new → add packs → build → analyze → run → export"}
 }
@@ -216,6 +223,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "v":
 			if m.tab == 3 || m.tab == 7 || m.tab == 9 {
 				m.viaCursor = (m.viaCursor + 1) % len(runVias)
+			}
+		case "g":
+			if m.tab == 9 {
+				m.operationExpanded = !m.operationExpanded
 			}
 		case "l":
 			if (m.tab == 3 || m.tab == 7 || m.tab == 9) && len(m.labProfiles) > 0 {
@@ -305,6 +316,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			next.statusFilter = m.statusFilter
 			next.runtimeFilter = m.runtimeFilter
 			next.artifactFilter = m.artifactFilter
+			next.operationExpanded = m.operationExpanded
 			m = next
 		}
 	case commandResultMsg:
@@ -841,12 +853,31 @@ func (m model) viewOperations() string {
 		fmt.Fprintf(&b, "\nRuntime  %s  Lab %s\nRun      bofbench operation run %s --via %s\n", hotStyle.Render(runVias[m.viaCursor]), labName, item.Qualified, runVias[m.viaCursor])
 		fmt.Fprintf(&b, "Test [x] bofbench operation test %s\nProve[p] bofbench operation prove %s --via %s\n", item.Qualified, item.Qualified, runVias[m.viaCursor])
 		fmt.Fprintf(&b, "Resume   bofbench operation resume runs/<id>/operation.json\nCleanup  bofbench operation cleanup runs/<id>/operation.json\n")
-		if graph, err := operationsvc.Graph(item.Document, "text"); err == nil {
-			b.WriteString("\nRoutes\n")
-			for _, line := range strings.Split(strings.TrimSpace(graph), "\n") {
-				if strings.Contains(line, " -> ") {
-					fmt.Fprintf(&b, "  %s\n", line)
+		if m.operationRegistry != nil {
+			graph, err := m.operationRegistry.Graph(item, "text", m.operationExpanded)
+			if err == nil {
+				mode := "collapsed"
+				if m.operationExpanded {
+					mode = "expanded"
 				}
+				fmt.Fprintf(&b, "\nRoutes  %s (g toggles)\n", mode)
+				for _, line := range strings.Split(strings.TrimSpace(graph), "\n") {
+					if strings.Contains(line, " -> ") {
+						fmt.Fprintf(&b, "  %s\n", line)
+					}
+				}
+			}
+		}
+		children := []string{}
+		for _, step := range item.Document.Steps {
+			if step.Operation != "" {
+				children = append(children, step.ID+" → "+step.Operation)
+			}
+		}
+		if len(children) > 0 {
+			b.WriteString("\nChild operations\n")
+			for _, child := range children {
+				fmt.Fprintf(&b, "  %s\n", child)
 			}
 		}
 		if len(m.operationArguments) == 0 {
@@ -1027,12 +1058,21 @@ func renderRunDetail(run runEntry) string {
 	}
 	if len(run.ActualPath) > 0 {
 		fmt.Fprintf(&b, "  path:   %s\n", strings.Join(run.ActualPath, " → "))
+		if len(run.ExpandedPath) > 0 && strings.Join(run.ExpandedPath, "|") != strings.Join(run.ActualPath, "|") {
+			fmt.Fprintf(&b, "  expanded: %s\n", strings.Join(run.ExpandedPath, " → "))
+		}
 		if len(run.SkippedSteps) > 0 {
 			fmt.Fprintf(&b, "  skipped: %s\n", strings.Join(run.SkippedSteps, ", "))
 		}
 		if len(run.MatchedRoutes) > 0 {
 			fmt.Fprintf(&b, "  outcomes: %s\n", strings.Join(run.MatchedRoutes, ", "))
 		}
+	}
+	if len(run.ChildReceipts) > 0 {
+		fmt.Fprintf(&b, "  child receipts: %s\n", strings.Join(run.ChildReceipts, ", "))
+	}
+	if len(run.NestedCleanup) > 0 {
+		fmt.Fprintf(&b, "  nested cleanup: %s\n", strings.Join(run.NestedCleanup, ", "))
 	}
 	if run.Summary != "" {
 		fmt.Fprintf(&b, "  summary: %s\n", run.Summary)
@@ -1218,17 +1258,28 @@ func readRunEntry(path string, modTime time.Time) runEntry {
 		case "operation.json":
 			run.Source = "operation"
 			run.ActualPath = stringSliceField(v, "actual_path")
+			run.ExpandedPath = stringSliceField(v, "expanded_path")
 			run.SkippedSteps = stringSliceField(v, "skipped_steps")
 			if steps, ok := v["steps"].([]any); ok {
 				for _, raw := range steps {
 					step, ok := raw.(map[string]any)
-					if !ok || stringField(step, "matched_outcome") == "" {
+					if !ok {
 						continue
 					}
-					run.MatchedRoutes = append(run.MatchedRoutes, stringField(step, "id")+"="+stringField(step, "matched_outcome"))
+					if outcome := stringField(step, "matched_outcome"); outcome != "" {
+						run.MatchedRoutes = append(run.MatchedRoutes, stringField(step, "id")+"="+outcome)
+					}
+					if child := stringField(step, "child_receipt"); child != "" {
+						run.ChildReceipts = append(run.ChildReceipts, stringField(step, "id")+"="+child)
+						run.NestedCleanup = append(run.NestedCleanup, stringField(step, "id")+"="+emptyDash(stringField(step, "child_cleanup_state")))
+					}
 				}
 			}
-			run.Summary = strings.Join(run.ActualPath, " → ")
+			if len(run.ExpandedPath) > 0 {
+				run.Summary = strings.Join(run.ExpandedPath, " → ")
+			} else {
+				run.Summary = strings.Join(run.ActualPath, " → ")
+			}
 		case "analysis.json":
 			run.Source = "analysis"
 			if run.Status == "" {

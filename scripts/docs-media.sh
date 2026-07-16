@@ -14,6 +14,11 @@ cd "$ROOT"
 go build -o "$BIN" ./cmd/bofbench
 export PATH="$ROOT/work/bin:$PATH"
 export BOFBENCH_DOCS_LAB="$LAB"
+MEDIA_ONLY="${BOFBENCH_MEDIA_ONLY:-}"
+if [[ -n "$MEDIA_ONLY" && ! "$MEDIA_ONLY" =~ ^[a-z0-9-]+$ ]]; then
+	echo "BOFBENCH_MEDIA_ONLY must be a media stem such as operation-lifecycle" >&2
+	exit 1
+fi
 MEDIA_TARGET_DEPLOYED=0
 MEDIA_RUN_STASH="$(mktemp -d "${TMPDIR:-/tmp}/bofbench-media-runs.XXXXXX")"
 MEDIA_RUNS_STASHED=0
@@ -22,13 +27,13 @@ cleanup() {
 	if [[ "$MEDIA_TARGET_DEPLOYED" == "1" ]]; then
 		"$BIN" lab target remove --lab "$LAB" >/dev/null 2>&1 || true
 	fi
-	rm -f /tmp/bofbench-ret.bin
+	rm -f /tmp/bofbench-ret.bin /tmp/bofbench-docs-request.bin
   rm -rf \
     bofs/docs-capture bofs/docs-lab bofs/docs-export \
     export/docs-capture-* export/docs-lab-* export/docs-export-* \
     dist/docs-capture.* dist/docs-lab.* dist/docs-export.* || true
 	if [[ "$MEDIA_RUNS_STASHED" == "1" ]]; then
-		rm -rf runs/*operation-adaptive-memory-execute* || true
+		rm -rf runs/*operation-coordination-matrix* || true
 		for saved in "$MEDIA_RUN_STASH"/*; do
 			[[ -e "$saved" ]] || continue
 			mv "$saved" runs/
@@ -37,34 +42,47 @@ cleanup() {
 	rm -rf "$MEDIA_RUN_STASH"
 }
 trap cleanup EXIT
-rm -f /tmp/bofbench-ret.bin
+rm -f /tmp/bofbench-ret.bin /tmp/bofbench-docs-request.bin
 rm -rf \
   bofs/docs-capture bofs/docs-lab bofs/docs-export \
   export/docs-capture-* export/docs-lab-* export/docs-export-* \
   dist/docs-capture.* dist/docs-lab.* dist/docs-export.* || true
-for existing in runs/*operation-adaptive-memory-execute*; do
+for existing in runs/*operation-coordination-matrix*; do
 	[[ -e "$existing" ]] || continue
 	mv "$existing" "$MEDIA_RUN_STASH"/
 done
 MEDIA_RUNS_STASHED=1
 printf '\303' > /tmp/bofbench-ret.bin
+printf 'BOFBenchDocsRequest' > /tmp/bofbench-docs-request.bin
 
-if [[ -f docs/media-src/operation-lifecycle.tape ]]; then
+if [[ -f docs/media-src/operation-lifecycle.tape && ( -z "$MEDIA_ONLY" || "$MEDIA_ONLY" == "operation-lifecycle" ) ]]; then
 	if ! target_json="$("$BIN" lab target status --lab "$LAB" --format json 2>/dev/null)"; then
 		target_json="$("$BIN" lab target deploy --lab "$LAB" --format json)"
 		MEDIA_TARGET_DEPLOYED=1
 	fi
-	export BOFBENCH_TARGET_PID
+	export BOFBENCH_TARGET_PID BOFBENCH_HOLDER_PID BOFBENCH_DOCS_REQUEST BOFBENCH_DOCS_REQUEST_SIZE BOFBENCH_DOCS_REQUEST_SHA256
 	BOFBENCH_TARGET_PID="$(printf '%s' "$target_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"]["pid"])')"
+	BOFBENCH_HOLDER_PID="$(printf '%s' "$target_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"]["holder_pid"])')"
+	BOFBENCH_DOCS_REQUEST=/tmp/bofbench-docs-request.bin
+	BOFBENCH_DOCS_REQUEST_SIZE="$(wc -c < "$BOFBENCH_DOCS_REQUEST" | tr -d ' ')"
+	BOFBENCH_DOCS_REQUEST_SHA256="$(shasum -a 256 "$BOFBENCH_DOCS_REQUEST" | awk '{print $1}')"
 	[[ "$BOFBENCH_TARGET_PID" =~ ^[0-9]+$ ]] || { echo "operation recording target returned no PID" >&2; exit 1; }
+	[[ "$BOFBENCH_HOLDER_PID" =~ ^[0-9]+$ ]] || { echo "operation recording target returned no holder PID" >&2; exit 1; }
 fi
 
-for tape in docs/media-src/*.tape; do
+if [[ -n "$MEDIA_ONLY" ]]; then
+	TAPES=("docs/media-src/$MEDIA_ONLY.tape")
+	[[ -f "${TAPES[0]}" ]] || { echo "unknown media tape: $MEDIA_ONLY" >&2; exit 1; }
+else
+	TAPES=(docs/media-src/*.tape)
+fi
+for tape in "${TAPES[@]}"; do
   BOFBENCH_DOCS_LAB="$LAB" vhs "$tape"
 done
 
 for video in docs/assets/media/*.webm; do
   name="$(basename "$video" .webm)"
+  [[ -z "$MEDIA_ONLY" || "$name" == "$MEDIA_ONLY" ]] || continue
   case "$name" in
     arsenal-search) poster_second=12 ;;
     build-analyze) poster_second=10 ;;

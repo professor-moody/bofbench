@@ -20,10 +20,10 @@ import (
 
 const (
 	Schema                = "bofbench.operation"
-	SchemaVersion         = 3
+	SchemaVersion         = 4
 	MinimumSchemaVersion  = 1
 	ReceiptSchema         = "bofbench.operation-receipt"
-	ReceiptSchemaVersion  = 3
+	ReceiptSchemaVersion  = 4
 	MinimumReceiptVersion = 1
 )
 
@@ -40,8 +40,9 @@ type Input struct {
 }
 
 type Capture struct {
-	Tag   string `json:"tag"`
-	Field string `json:"field"`
+	Tag     string `json:"tag,omitempty"`
+	Field   string `json:"field,omitempty"`
+	Capture string `json:"capture,omitempty"`
 }
 
 type Cleanup struct {
@@ -60,7 +61,8 @@ type Outcome struct {
 
 type Step struct {
 	ID        string                    `json:"id"`
-	Pack      string                    `json:"pack"`
+	Pack      string                    `json:"pack,omitempty"`
+	Operation string                    `json:"operation,omitempty"`
 	Arguments map[string]string         `json:"arguments,omitempty"`
 	Captures  map[string]Capture        `json:"captures,omitempty"`
 	Cleanup   *Cleanup                  `json:"cleanup,omitempty"`
@@ -69,15 +71,16 @@ type Step struct {
 }
 
 type ProofCase struct {
-	ID             string                    `json:"id"`
-	Via            []string                  `json:"via"`
-	Architectures  []string                  `json:"architectures,omitempty"`
-	Roles          []string                  `json:"roles,omitempty"`
-	Inputs         map[string]string         `json:"inputs,omitempty"`
-	ExpectCaptures map[string]string         `json:"expect_captures,omitempty"`
-	Cleanup        bool                      `json:"cleanup,omitempty"`
-	StateChecks    []packsvc.ProofStateCheck `json:"state_checks,omitempty"`
-	ExpectPath     []string                  `json:"expect_path,omitempty"`
+	ID                 string                    `json:"id"`
+	Via                []string                  `json:"via"`
+	Architectures      []string                  `json:"architectures,omitempty"`
+	Roles              []string                  `json:"roles,omitempty"`
+	Inputs             map[string]string         `json:"inputs,omitempty"`
+	ExpectCaptures     map[string]string         `json:"expect_captures,omitempty"`
+	Cleanup            bool                      `json:"cleanup,omitempty"`
+	StateChecks        []packsvc.ProofStateCheck `json:"state_checks,omitempty"`
+	ExpectPath         []string                  `json:"expect_path,omitempty"`
+	ExpectExpandedPath []string                  `json:"expect_expanded_path,omitempty"`
 }
 
 type Document struct {
@@ -116,50 +119,56 @@ type Registry struct {
 }
 
 type StepReceipt struct {
-	ID              string                  `json:"id"`
-	Pack            string                  `json:"pack"`
-	PackSHA256      string                  `json:"pack_sha256"`
-	CleanupPack     string                  `json:"cleanup_pack,omitempty"`
-	CleanupSHA256   string                  `json:"cleanup_pack_sha256,omitempty"`
-	State           string                  `json:"state"`
-	ObjectSHA256    string                  `json:"object_sha256,omitempty"`
-	OutputComplete  bool                    `json:"output_complete"`
-	Runtime         runtimeadapter.Receipt  `json:"runtime_receipt,omitempty"`
-	Captures        map[string]string       `json:"captures,omitempty"`
-	Error           string                  `json:"error,omitempty"`
-	CleanupState    string                  `json:"cleanup_state,omitempty"`
-	CleanupRuntime  *runtimeadapter.Receipt `json:"cleanup_runtime_receipt,omitempty"`
-	ContractState   string                  `json:"contract_state,omitempty"`
-	MatchedTag      string                  `json:"matched_tag,omitempty"`
-	MatchedFields   []string                `json:"matched_fields,omitempty"`
-	PayloadVerified bool                    `json:"payload_verified,omitempty"`
-	MatchedOutcome  string                  `json:"matched_outcome,omitempty"`
-	NextStep        string                  `json:"next_step,omitempty"`
+	ID                string                  `json:"id"`
+	Pack              string                  `json:"pack"`
+	PackSHA256        string                  `json:"pack_sha256"`
+	CleanupPack       string                  `json:"cleanup_pack,omitempty"`
+	CleanupSHA256     string                  `json:"cleanup_pack_sha256,omitempty"`
+	State             string                  `json:"state"`
+	ObjectSHA256      string                  `json:"object_sha256,omitempty"`
+	OutputComplete    bool                    `json:"output_complete"`
+	Runtime           runtimeadapter.Receipt  `json:"runtime_receipt,omitempty"`
+	Captures          map[string]string       `json:"captures,omitempty"`
+	Error             string                  `json:"error,omitempty"`
+	CleanupState      string                  `json:"cleanup_state,omitempty"`
+	CleanupRuntime    *runtimeadapter.Receipt `json:"cleanup_runtime_receipt,omitempty"`
+	ContractState     string                  `json:"contract_state,omitempty"`
+	MatchedTag        string                  `json:"matched_tag,omitempty"`
+	MatchedFields     []string                `json:"matched_fields,omitempty"`
+	PayloadVerified   bool                    `json:"payload_verified,omitempty"`
+	MatchedOutcome    string                  `json:"matched_outcome,omitempty"`
+	NextStep          string                  `json:"next_step,omitempty"`
+	Operation         string                  `json:"operation,omitempty"`
+	OperationSHA256   string                  `json:"operation_sha256,omitempty"`
+	ChildReceipt      string                  `json:"child_receipt,omitempty"`
+	ChildCleanupState string                  `json:"child_cleanup_state,omitempty"`
 }
 
 type Receipt struct {
-	Schema          string            `json:"schema"`
-	SchemaVersion   int               `json:"schema_version"`
-	Operation       string            `json:"operation"`
-	OperationSHA256 string            `json:"operation_sha256"`
-	Status          string            `json:"status"`
-	Runtime         string            `json:"runtime"`
-	Lab             string            `json:"lab,omitempty"`
-	Topology        string            `json:"topology,omitempty"`
-	Architecture    string            `json:"architecture"`
-	Compiler        string            `json:"compiler"`
-	Inputs          map[string]string `json:"inputs,omitempty"`
-	RedactedInputs  []string          `json:"redacted_inputs,omitempty"`
-	Captures        map[string]string `json:"captures,omitempty"`
-	ActualPath      []string          `json:"actual_path,omitempty"`
-	SkippedSteps    []string          `json:"skipped_steps,omitempty"`
-	Steps           []StepReceipt     `json:"steps"`
-	CleanupState    string            `json:"cleanup_state,omitempty"`
-	StartedAt       string            `json:"started_at"`
-	UpdatedAt       string            `json:"updated_at"`
-	CompletedAt     string            `json:"completed_at,omitempty"`
-	Path            string            `json:"path"`
-	Error           string            `json:"error,omitempty"`
+	Schema           string            `json:"schema"`
+	SchemaVersion    int               `json:"schema_version"`
+	Operation        string            `json:"operation"`
+	OperationSHA256  string            `json:"operation_sha256"`
+	Status           string            `json:"status"`
+	Runtime          string            `json:"runtime"`
+	Lab              string            `json:"lab,omitempty"`
+	Topology         string            `json:"topology,omitempty"`
+	Architecture     string            `json:"architecture"`
+	Compiler         string            `json:"compiler"`
+	Inputs           map[string]string `json:"inputs,omitempty"`
+	RedactedInputs   []string          `json:"redacted_inputs,omitempty"`
+	Captures         map[string]string `json:"captures,omitempty"`
+	ActualPath       []string          `json:"actual_path,omitempty"`
+	ExpandedPath     []string          `json:"expanded_path,omitempty"`
+	SkippedSteps     []string          `json:"skipped_steps,omitempty"`
+	DependencySHA256 map[string]string `json:"dependency_sha256,omitempty"`
+	Steps            []StepReceipt     `json:"steps"`
+	CleanupState     string            `json:"cleanup_state,omitempty"`
+	StartedAt        string            `json:"started_at"`
+	UpdatedAt        string            `json:"updated_at"`
+	CompletedAt      string            `json:"completed_at,omitempty"`
+	Path             string            `json:"path"`
+	Error            string            `json:"error,omitempty"`
 }
 
 func Load(opts LoadOptions) (*Registry, error) {
@@ -222,6 +231,9 @@ func Load(opts LoadOptions) (*Registry, error) {
 		}
 	}
 	if err := registry.validatePackReferences(); err != nil {
+		return nil, err
+	}
+	if err := registry.validateOperationReferences(); err != nil {
 		return nil, err
 	}
 	return registry, nil
@@ -360,11 +372,99 @@ func (r *Registry) validatePackReferences() error {
 	return nil
 }
 
+// ValidateDocumentReferences checks both pack and child-operation references
+// for a document that is not yet installed in the registry.
+func (r *Registry) ValidateDocumentReferences(document Document) error {
+	if err := ValidatePackReferences(document, r.packRegistry); err != nil {
+		return err
+	}
+	for _, step := range document.Steps {
+		if step.Operation == "" {
+			continue
+		}
+		child, err := r.Resolve(step.Operation)
+		if err != nil {
+			return fmt.Errorf("step %s: %w", step.ID, err)
+		}
+		if err := validateStepArguments(step.Arguments, operationArguments(child.Document.Inputs)); err != nil {
+			return fmt.Errorf("step %s: %w", step.ID, err)
+		}
+		available := operationCaptureNames(child.Document)
+		for name, capture := range step.Captures {
+			if capture.Capture == "" || !available[capture.Capture] {
+				return fmt.Errorf("step %s export %s selects unknown child capture %q", step.ID, name, capture.Capture)
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Registry) validateOperationReferences() error {
+	for _, item := range r.List() {
+		if err := r.ValidateDocumentReferences(item.Document); err != nil {
+			return fmt.Errorf("operation %s: %w", item.Qualified, err)
+		}
+	}
+	visiting, visited := map[string]bool{}, map[string]bool{}
+	var walk func(Resolved, []string) error
+	walk = func(item Resolved, path []string) error {
+		if visiting[item.Qualified] {
+			return fmt.Errorf("operation call cycle: %s", strings.Join(append(path, item.Qualified), " -> "))
+		}
+		if visited[item.Qualified] {
+			return nil
+		}
+		visiting[item.Qualified] = true
+		for _, step := range item.Document.Steps {
+			if step.Operation == "" {
+				continue
+			}
+			child, err := r.Resolve(step.Operation)
+			if err != nil {
+				return err
+			}
+			if err := walk(child, append(path, item.Qualified)); err != nil {
+				return err
+			}
+		}
+		visiting[item.Qualified] = false
+		visited[item.Qualified] = true
+		return nil
+	}
+	for _, item := range r.List() {
+		if err := walk(item, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func operationArguments(inputs []Input) []packsvc.Argument {
+	result := make([]packsvc.Argument, 0, len(inputs))
+	for _, input := range inputs {
+		result = append(result, packsvc.Argument{Name: input.Name, Type: input.Type, Required: input.Required, Default: input.Default, Sensitive: input.Sensitive})
+	}
+	return result
+}
+
+func operationCaptureNames(document Document) map[string]bool {
+	result := map[string]bool{}
+	for _, step := range document.Steps {
+		for name := range step.Captures {
+			result[name] = true
+		}
+	}
+	return result
+}
+
 // ValidatePackReferences checks a parsed operation against a resolved pack
 // registry. It is used both during catalog loading and when validating an
 // operation file before it is installed.
 func ValidatePackReferences(document Document, packs *packsvc.Registry) error {
 	for _, step := range document.Steps {
+		if step.Operation != "" {
+			continue
+		}
 		resolved, err := packs.Resolve(step.Pack)
 		if err != nil {
 			return fmt.Errorf("step %s: %w", step.ID, err)
@@ -448,8 +548,20 @@ func validate(document Document) error {
 	inputs, steps, captures := map[string]Input{}, map[string]bool{}, map[string]string{}
 	stepIndexes := map[string]int{}
 	for index, step := range document.Steps {
-		if !idPattern.MatchString(step.ID) || step.Pack == "" {
+		if !idPattern.MatchString(step.ID) {
+			return fmt.Errorf("each step needs a valid id")
+		}
+		if document.SchemaVersion < 4 && step.Pack == "" {
 			return fmt.Errorf("each step needs a valid id and pack")
+		}
+		if document.SchemaVersion < 4 && step.Operation != "" {
+			return fmt.Errorf("step %s operation references require schema version 4", step.ID)
+		}
+		if document.SchemaVersion >= 4 && (step.Pack == "") == (step.Operation == "") {
+			return fmt.Errorf("step %s must declare exactly one of pack or operation", step.ID)
+		}
+		if step.Operation != "" && step.Cleanup != nil {
+			return fmt.Errorf("step %s child operation owns its cleanup; cleanup cannot be declared on the parent step", step.ID)
 		}
 		if _, exists := stepIndexes[step.ID]; exists {
 			return fmt.Errorf("duplicate step %q", step.ID)
@@ -515,8 +627,14 @@ func validate(document Document) error {
 			}
 		}
 		for name, capture := range step.Captures {
-			if !idPattern.MatchString(name) || capture.Tag == "" || capture.Field == "" {
+			if !idPattern.MatchString(name) {
 				return fmt.Errorf("step %s has invalid capture %q", step.ID, name)
+			}
+			if step.Operation == "" && (capture.Tag == "" || capture.Field == "" || capture.Capture != "") {
+				return fmt.Errorf("step %s pack capture %q requires tag and field", step.ID, name)
+			}
+			if step.Operation != "" && (capture.Capture == "" || capture.Tag != "" || capture.Field != "") {
+				return fmt.Errorf("step %s operation capture %q requires child capture", step.ID, name)
 			}
 			if captures[name] != "" {
 				return fmt.Errorf("capture %q is declared more than once", name)
@@ -570,6 +688,13 @@ func validate(document Document) error {
 				return fmt.Errorf("proof case %s expect_path must follow definition order", proof.ID)
 			}
 			previous = index
+		}
+		for _, stepID := range proof.ExpectExpandedPath {
+			parts := strings.Split(stepID, "/")
+			_, known := stepIndexes[parts[0]]
+			if len(parts) == 0 || !known {
+				return fmt.Errorf("proof case %s expects unknown expanded path step %q", proof.ID, stepID)
+			}
 		}
 	}
 	return nil
@@ -776,6 +901,7 @@ func ApplyRoute(document Document, receipt *Receipt, index int) error {
 	if len(receipt.ActualPath) == 0 || receipt.ActualPath[len(receipt.ActualPath)-1] != id {
 		receipt.ActualPath = append(receipt.ActualPath, id)
 	}
+	receipt.ExpandedPath = appendUnique(receipt.ExpandedPath, id)
 	next := receipt.Steps[index].NextStep
 	target := index + 1
 	if next == "$complete" || next == "$fail" {
@@ -800,6 +926,18 @@ func ApplyRoute(document Document, receipt *Receipt, index int) error {
 		}
 	}
 	return nil
+}
+
+// RecordChildPath expands a completed child receipt beneath its parent step.
+func RecordChildPath(receipt *Receipt, stepID string, child Receipt) {
+	receipt.ExpandedPath = appendUnique(receipt.ExpandedPath, stepID)
+	path := child.ExpandedPath
+	if len(path) == 0 {
+		path = child.ActualPath
+	}
+	for _, childStep := range path {
+		receipt.ExpandedPath = appendUnique(receipt.ExpandedPath, stepID+"/"+childStep)
+	}
 }
 
 func appendUnique(values []string, value string) []string {
@@ -835,7 +973,9 @@ func CleanupStepIndexes(document Document, receipt Receipt) []int {
 			continue
 		}
 		step, state := document.Steps[index], receipt.Steps[index]
-		if state.State == "completed" && step.Cleanup != nil && state.CleanupState != "completed" && cleanupReferencesAvailable(step.Cleanup, receipt.Captures) {
+		childCleanup := step.Operation != "" && state.ChildReceipt != "" && state.ChildCleanupState != "completed"
+		packCleanup := step.Cleanup != nil && state.CleanupState != "completed" && cleanupReferencesAvailable(step.Cleanup, receipt.Captures)
+		if state.State == "completed" && (childCleanup || packCleanup) {
 			indexes = append(indexes, index)
 		}
 	}
@@ -921,6 +1061,20 @@ func CaptureAvailableOutput(lines []string, captures map[string]Capture) map[str
 		}
 	}
 	return result
+}
+
+// CaptureChildOutput exports selected non-sensitive captures from a completed
+// child operation into the parent receipt.
+func CaptureChildOutput(child Receipt, captures map[string]Capture) (map[string]string, error) {
+	result := map[string]string{}
+	for name, capture := range captures {
+		value, ok := child.Captures[capture.Capture]
+		if !ok || value == "" {
+			return nil, fmt.Errorf("capture %s did not find child capture %s", name, capture.Capture)
+		}
+		result[name] = value
+	}
+	return result, nil
 }
 
 // EvaluateExpectation verifies a completed step's structured output. Payload
@@ -1016,8 +1170,9 @@ func parseStructuredLine(line string) (string, map[string]string) {
 	return line[start+1 : end], fields
 }
 
-func NewReceipt(item Resolved, packs *packsvc.Registry, path, runtime, lab, topology, arch, compiler string, inputs map[string]string) Receipt {
-	receipt := Receipt{Schema: ReceiptSchema, SchemaVersion: ReceiptSchemaVersion, Operation: item.Qualified, OperationSHA256: item.SHA256, Status: "pending", Runtime: runtime, Lab: lab, Topology: topology, Architecture: arch, Compiler: compiler, Inputs: map[string]string{}, Captures: map[string]string{}, Path: path, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+func NewReceipt(item Resolved, registry *Registry, path, runtime, lab, topology, arch, compiler string, inputs map[string]string) Receipt {
+	receipt := Receipt{Schema: ReceiptSchema, SchemaVersion: ReceiptSchemaVersion, Operation: item.Qualified, OperationSHA256: item.SHA256, Status: "pending", Runtime: runtime, Lab: lab, Topology: topology, Architecture: arch, Compiler: compiler, Inputs: map[string]string{}, Captures: map[string]string{}, DependencySHA256: map[string]string{}, Path: path, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	receipt.DependencySHA256 = registry.DependencyHashes(item)
 	for _, input := range item.Document.Inputs {
 		if input.Sensitive {
 			if value, ok := inputs[input.Name]; ok && value != "" {
@@ -1031,20 +1186,56 @@ func NewReceipt(item Resolved, packs *packsvc.Registry, path, runtime, lab, topo
 	}
 	sort.Strings(receipt.RedactedInputs)
 	for _, step := range item.Document.Steps {
-		hash := ""
-		if resolved, err := packs.Resolve(step.Pack); err == nil {
-			hash = resolved.SHA256
+		hash, operationHash := "", ""
+		if step.Pack != "" {
+			if resolved, err := registry.packRegistry.Resolve(step.Pack); err == nil {
+				hash = resolved.SHA256
+			}
+		} else if resolved, err := registry.Resolve(step.Operation); err == nil {
+			operationHash = resolved.SHA256
 		}
 		cleanupPack, cleanupHash := "", ""
 		if step.Cleanup != nil {
 			cleanupPack = step.Cleanup.Pack
-			if resolved, err := packs.Resolve(step.Cleanup.Pack); err == nil {
+			if resolved, err := registry.packRegistry.Resolve(step.Cleanup.Pack); err == nil {
 				cleanupHash = resolved.SHA256
 			}
 		}
-		receipt.Steps = append(receipt.Steps, StepReceipt{ID: step.ID, Pack: step.Pack, PackSHA256: hash, CleanupPack: cleanupPack, CleanupSHA256: cleanupHash, State: "pending", ContractState: "pending"})
+		receipt.Steps = append(receipt.Steps, StepReceipt{ID: step.ID, Pack: step.Pack, PackSHA256: hash, Operation: step.Operation, OperationSHA256: operationHash, CleanupPack: cleanupPack, CleanupSHA256: cleanupHash, State: "pending", ContractState: "pending"})
 	}
 	return receipt
+}
+
+// DependencyHashes pins the complete operation/pack closure used by a run.
+func (r *Registry) DependencyHashes(item Resolved) map[string]string {
+	result, seen := map[string]string{}, map[string]bool{}
+	var walk func(Resolved)
+	walk = func(current Resolved) {
+		if seen[current.Qualified] {
+			return
+		}
+		seen[current.Qualified] = true
+		result["operation:"+current.Qualified] = current.SHA256
+		for _, step := range current.Document.Steps {
+			if step.Pack != "" {
+				if pack, err := r.packRegistry.Resolve(step.Pack); err == nil {
+					result["pack:"+pack.Qualified] = pack.SHA256
+				}
+			}
+			if step.Cleanup != nil {
+				if pack, err := r.packRegistry.Resolve(step.Cleanup.Pack); err == nil {
+					result["pack:"+pack.Qualified] = pack.SHA256
+				}
+			}
+			if step.Operation != "" {
+				if child, err := r.Resolve(step.Operation); err == nil {
+					walk(child)
+				}
+			}
+		}
+	}
+	walk(item)
+	return result
 }
 
 func SaveReceipt(path string, receipt *Receipt) error {
@@ -1082,6 +1273,7 @@ func LoadReceipt(path string) (Receipt, error) {
 			}
 			if receipt.Steps[index].State == "completed" {
 				receipt.ActualPath = appendUnique(receipt.ActualPath, receipt.Steps[index].ID)
+				receipt.ExpandedPath = appendUnique(receipt.ExpandedPath, receipt.Steps[index].ID)
 			}
 			if receipt.Steps[index].State == "skipped" {
 				receipt.SkippedSteps = appendUnique(receipt.SkippedSteps, receipt.Steps[index].ID)
@@ -1142,7 +1334,12 @@ func builtins() []Resolved {
 		{ID: "handles", Pack: "process-handle-type-summary", Arguments: map[string]string{"target_pid": "$input.target_pid", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "process-handle-type-summary", Fields: map[string]string{"status": "complete", "target_pid": "$input.target_pid"}}},
 		{ID: "waits", Pack: "thread-wait-chain-inventory", Arguments: map[string]string{"target_pid": "$input.target_pid", "target_tid": "$input.target_tid", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "thread-wait-chain-inventory", Fields: map[string]string{"status": "complete", "target_pid": "$input.target_pid"}}},
 	}, ProofCases: []ProofCase{{ID: "target-waits", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Inputs: map[string]string{"target_pid": "$TARGET_PID", "target_tid": "$TARGET_TID", "result_limit": "16"}, ExpectPath: []string{"process", "threads", "handles", "waits"}}}}
-	documents := []Document{triage, network, waitTriage}
+	coordination := Document{Schema: Schema, SchemaVersion: 4, ID: "coordination-surface-triage", Version: "1.0.0", Title: "Coordination Surface Triage", Summary: "Correlate detailed process handles, exact synchronization state, and the local mailslot namespace", Tier: "public", Inputs: []Input{{Name: "target_pid", Type: "int", Required: true}, {Name: "handle_type", Type: "string", Default: "Mutant"}, {Name: "object_type", Type: "string", Required: true}, {Name: "object_name", Type: "wstring", Required: true}, {Name: "mailslot_prefix", Type: "wstring", Default: "BOFBench"}, {Name: "result_limit", Type: "int", Default: "32"}}, Steps: []Step{
+		{ID: "handles", Pack: "process-handle-detail-inventory", Arguments: map[string]string{"target_pid": "$input.target_pid", "type_filter": "$input.handle_type", "name_filter": "BOFBench", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "process-handle-detail-inventory", Fields: map[string]string{"status": "complete", "target_pid": "$input.target_pid", "shown": "*"}}},
+		{ID: "state", Pack: "synchronization-object-state", Arguments: map[string]string{"object_type": "$input.object_type", "object_name": "$input.object_name"}, Expect: &packsvc.ProofExpectation{Tag: "synchronization-object-state", Fields: map[string]string{"status": "complete", "object_type": "$input.object_type"}}},
+		{ID: "mailslots", Pack: "mailslot-inventory", Arguments: map[string]string{"prefix": "$input.mailslot_prefix", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "mailslot-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+	}, ProofCases: []ProofCase{{ID: "target-coordination", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Inputs: map[string]string{"target_pid": "$TARGET_HOLDER_PID", "handle_type": "Mutant", "object_type": "mutex", "object_name": "$TARGET_MUTEX_NAME", "mailslot_prefix": "BOFBench", "result_limit": "16"}, ExpectPath: []string{"handles", "state", "mailslots"}, ExpectExpandedPath: []string{"handles", "state", "mailslots"}}}}
+	documents := []Document{triage, network, waitTriage, coordination}
 	items := make([]Resolved, 0, len(documents))
 	for _, document := range documents {
 		item := Resolved{Document: document, Catalog: "builtin", Qualified: "builtin/" + document.ID}
@@ -1153,8 +1350,10 @@ func builtins() []Resolved {
 }
 
 type GraphNode struct {
-	ID   string `json:"id"`
-	Pack string `json:"pack"`
+	ID        string `json:"id"`
+	Pack      string `json:"pack,omitempty"`
+	Operation string `json:"operation,omitempty"`
+	Kind      string `json:"kind"`
 }
 
 type GraphEdge struct {
@@ -1172,23 +1371,61 @@ type GraphDocument struct {
 }
 
 func Graph(document Document, format string) (string, error) {
-	graph := GraphDocument{Schema: "bofbench.operation-graph", SchemaVersion: 1, Operation: document.ID}
+	graph := graphDocument(document, "", nil, false)
+	return renderGraph(graph, format)
+}
+
+// Graph renders a resolved operation. Expanded graphs retain the parent node
+// and add slash-qualified child nodes and containment edges.
+func (r *Registry) Graph(item Resolved, format string, expand bool) (string, error) {
+	graph := graphDocument(item.Document, "", r, expand)
+	return renderGraph(graph, format)
+}
+
+func graphDocument(document Document, prefix string, registry *Registry, expand bool) GraphDocument {
+	graph := GraphDocument{Schema: "bofbench.operation-graph", SchemaVersion: 2, Operation: document.ID}
 	for index, step := range document.Steps {
-		graph.Nodes = append(graph.Nodes, GraphNode{ID: step.ID, Pack: step.Pack})
+		id := prefix + step.ID
+		kind := "pack"
+		if step.Operation != "" {
+			kind = "operation"
+		}
+		graph.Nodes = append(graph.Nodes, GraphNode{ID: id, Pack: step.Pack, Operation: step.Operation, Kind: kind})
 		if len(step.Outcomes) > 0 {
 			for _, outcome := range step.Outcomes {
-				graph.Edges = append(graph.Edges, GraphEdge{From: step.ID, To: outcome.Next, Outcome: outcome.ID})
+				to := outcome.Next
+				if !strings.HasPrefix(to, "$") {
+					to = prefix + to
+				}
+				graph.Edges = append(graph.Edges, GraphEdge{From: id, To: to, Outcome: outcome.ID})
 			}
 		} else if index+1 < len(document.Steps) {
-			graph.Edges = append(graph.Edges, GraphEdge{From: step.ID, To: document.Steps[index+1].ID})
+			graph.Edges = append(graph.Edges, GraphEdge{From: id, To: prefix + document.Steps[index+1].ID})
 		} else {
-			graph.Edges = append(graph.Edges, GraphEdge{From: step.ID, To: "$complete"})
+			graph.Edges = append(graph.Edges, GraphEdge{From: id, To: "$complete"})
+		}
+		if expand && registry != nil && step.Operation != "" {
+			if child, err := registry.Resolve(step.Operation); err == nil {
+				childGraph := graphDocument(child.Document, id+"/", registry, true)
+				graph.Nodes = append(graph.Nodes, childGraph.Nodes...)
+				graph.Edges = append(graph.Edges, GraphEdge{From: id, To: id + "/" + child.Document.Steps[0].ID, Outcome: "contains"})
+				for _, edge := range childGraph.Edges {
+					if edge.To == "$complete" || edge.To == "$fail" {
+						edge.To = id
+					}
+					graph.Edges = append(graph.Edges, edge)
+				}
+			}
 		}
 	}
+	return graph
+}
+
+func renderGraph(graph GraphDocument, format string) (string, error) {
 	switch strings.ToLower(format) {
 	case "", "text":
 		var body strings.Builder
-		fmt.Fprintf(&body, "OPERATION GRAPH\noperation  %s\n", document.ID)
+		fmt.Fprintf(&body, "OPERATION GRAPH\noperation  %s\n", graph.Operation)
 		for _, edge := range graph.Edges {
 			label := ""
 			if edge.Outcome != "" {
@@ -1201,7 +1438,11 @@ func Graph(document Document, format string) (string, error) {
 		var body strings.Builder
 		body.WriteString("flowchart TD\n")
 		for _, node := range graph.Nodes {
-			fmt.Fprintf(&body, "  %s[\"%s · %s\"]\n", mermaidID(node.ID), node.ID, strings.ReplaceAll(node.Pack, "\"", "'"))
+			target := node.Pack
+			if node.Operation != "" {
+				target = node.Operation
+			}
+			fmt.Fprintf(&body, "  %s[\"%s · %s\"]\n", mermaidID(node.ID), node.ID, strings.ReplaceAll(target, "\"", "'"))
 		}
 		body.WriteString("  complete([\"complete\"])\n  fail([\"fail\"])\n")
 		for _, edge := range graph.Edges {
@@ -1250,7 +1491,11 @@ func ReferenceMarkdown(items []Resolved) string {
 		}
 		body.WriteString("### Steps\n\n")
 		for i, step := range item.Document.Steps {
-			fmt.Fprintf(&body, "%d. `%s` → `%s`", i+1, step.ID, step.Pack)
+			target := step.Pack
+			if step.Operation != "" {
+				target = "operation:" + step.Operation
+			}
+			fmt.Fprintf(&body, "%d. `%s` → `%s`", i+1, step.ID, target)
 			if step.Cleanup != nil {
 				fmt.Fprintf(&body, "; cleanup `%s`", step.Cleanup.Pack)
 			}
@@ -1265,6 +1510,9 @@ func ReferenceMarkdown(items []Resolved) string {
 				fmt.Fprintf(&body, "- `%s`: via `%s`, architectures `%s`", proof.ID, strings.Join(proof.Via, ","), strings.Join(proof.Architectures, ","))
 				if len(proof.ExpectPath) > 0 {
 					fmt.Fprintf(&body, ", expected path `%s`", strings.Join(proof.ExpectPath, " → "))
+				}
+				if len(proof.ExpectExpandedPath) > 0 {
+					fmt.Fprintf(&body, ", expanded path `%s`", strings.Join(proof.ExpectExpandedPath, " → "))
 				}
 				body.WriteString("\n")
 			}

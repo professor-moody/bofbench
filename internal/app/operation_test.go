@@ -41,12 +41,16 @@ func TestPinnedOperationPacksIncludeCleanup(t *testing.T) {
 	}
 	document := operationsvc.Document{Steps: []operationsvc.Step{{ID: "one", Pack: "host-discovery", Cleanup: &operationsvc.Cleanup{Pack: "host-discovery"}}}}
 	item := operationsvc.Resolved{Document: document, Qualified: "test/one", SHA256: operationsvc.Fingerprint(document)}
-	receipt := operationsvc.NewReceipt(item, packs, "operation.json", "lab", "devbox", "", "x64", "auto", nil)
-	if err := validatePinnedOperationPacks(document, &receipt, packs); err != nil {
+	registry, err := operationsvc.Load(operationsvc.LoadOptions{PackRegistry: packs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := operationsvc.NewReceipt(item, registry, "operation.json", "lab", "devbox", "", "x64", "auto", nil)
+	if err := validatePinnedOperation(item, &receipt, registry); err != nil {
 		t.Fatal(err)
 	}
 	receipt.Steps[0].CleanupSHA256 = "changed"
-	if err := validatePinnedOperationPacks(document, &receipt, packs); err == nil || !strings.Contains(err.Error(), "cleanup pack") {
+	if err := validatePinnedOperation(item, &receipt, registry); err == nil || !strings.Contains(err.Error(), "cleanup pack") {
 		t.Fatalf("expected cleanup hash rejection, got %v", err)
 	}
 }

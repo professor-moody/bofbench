@@ -32,15 +32,22 @@ const (
 )
 
 var (
-	memoryCanary     = make([]byte, 64*1024)
-	advapi32         = windows.NewLazySystemDLL("advapi32.dll")
-	crypt32          = windows.NewLazySystemDLL("crypt32.dll")
-	kernel32         = windows.NewLazySystemDLL("kernel32.dll")
-	procCredWriteW   = advapi32.NewProc("CredWriteW")
-	procCredDeleteW  = advapi32.NewProc("CredDeleteW")
-	procCryptProtect = crypt32.NewProc("CryptProtectData")
-	procLocalFree    = kernel32.NewProc("LocalFree")
-	procModuleHandle = kernel32.NewProc("GetModuleHandleW")
+	memoryCanary        = make([]byte, 64*1024)
+	advapi32            = windows.NewLazySystemDLL("advapi32.dll")
+	crypt32             = windows.NewLazySystemDLL("crypt32.dll")
+	kernel32            = windows.NewLazySystemDLL("kernel32.dll")
+	ntdll               = windows.NewLazySystemDLL("ntdll.dll")
+	procCredWriteW      = advapi32.NewProc("CredWriteW")
+	procCredDeleteW     = advapi32.NewProc("CredDeleteW")
+	procCryptProtect    = crypt32.NewProc("CryptProtectData")
+	procLocalFree       = kernel32.NewProc("LocalFree")
+	procModuleHandle    = kernel32.NewProc("GetModuleHandleW")
+	procCreateMutex     = kernel32.NewProc("CreateMutexW")
+	procCreateSemaphore = kernel32.NewProc("CreateSemaphoreW")
+	procCreateTimer     = kernel32.NewProc("CreateWaitableTimerW")
+	procCreateMailslot  = kernel32.NewProc("CreateMailslotW")
+	procGetMailslotInfo = kernel32.NewProc("GetMailslotInfo")
+	procNtQuerySystem   = ntdll.NewProc("NtQuerySystemInformation")
 )
 
 type targetState struct {
@@ -63,6 +70,13 @@ type targetState struct {
 	EventName            string `json:"event_name,omitempty"`
 	SectionName          string `json:"section_name,omitempty"`
 	JobName              string `json:"job_name,omitempty"`
+	MutexName            string `json:"mutex_name,omitempty"`
+	SemaphoreName        string `json:"semaphore_name,omitempty"`
+	TimerName            string `json:"timer_name,omitempty"`
+	MailslotName         string `json:"mailslot_name,omitempty"`
+	MailslotHandle       string `json:"mailslot_handle,omitempty"`
+	MailslotSHA256       string `json:"mailslot_sha256,omitempty"`
+	MailslotAccess       uint32 `json:"mailslot_access,omitempty"`
 	User                 string `json:"user"`
 	CanaryFile           string `json:"canary_file"`
 	CanaryFileSHA256     string `json:"canary_file_sha256"`
@@ -141,7 +155,7 @@ func (service helperHandler) Execute(_ []string, requests <-chan svc.ChangeReque
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
-	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 5, Service: service.name, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 6, Service: service.name, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if module, _, _ := procModuleHandle.Call(0); module != 0 {
 		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
 	}
@@ -202,7 +216,7 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		return true, 2
 	}
 	defer knownFile.Close()
-	objectSD, err := windows.SecurityDescriptorFromString("D:(A;;0x001F001F;;;SY)(A;;0x001F001F;;;BA)(A;;0x001F001F;;;AU)S:(ML;;NW;;;LW)")
+	objectSD, err := windows.SecurityDescriptorFromString("D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;AU)S:(ML;;NW;;;LW)")
 	if err != nil {
 		return true, 2
 	}
@@ -214,6 +228,43 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		return true, 2
 	}
 	defer windows.CloseHandle(eventHandle)
+	mutexName := fmt.Sprintf(`Global\BOFBenchTargetMutex-%d`, os.Getpid())
+	mutexNamePtr, _ := windows.UTF16PtrFromString(mutexName)
+	mutexRaw, _, mutexErr := procCreateMutex.Call(uintptr(unsafe.Pointer(objectSA)), 0, uintptr(unsafe.Pointer(mutexNamePtr)))
+	if mutexRaw == 0 {
+		_ = mutexErr
+		return true, 2
+	}
+	mutexHandle := windows.Handle(mutexRaw)
+	defer windows.CloseHandle(mutexHandle)
+	semaphoreName := fmt.Sprintf(`Global\BOFBenchTargetSemaphore-%d`, os.Getpid())
+	semaphoreNamePtr, _ := windows.UTF16PtrFromString(semaphoreName)
+	semaphoreRaw, _, semaphoreErr := procCreateSemaphore.Call(uintptr(unsafe.Pointer(objectSA)), 1, 4, uintptr(unsafe.Pointer(semaphoreNamePtr)))
+	if semaphoreRaw == 0 {
+		_ = semaphoreErr
+		return true, 2
+	}
+	semaphoreHandle := windows.Handle(semaphoreRaw)
+	defer windows.CloseHandle(semaphoreHandle)
+	timerName := fmt.Sprintf(`Global\BOFBenchTargetTimer-%d`, os.Getpid())
+	timerNamePtr, _ := windows.UTF16PtrFromString(timerName)
+	timerRaw, _, timerErr := procCreateTimer.Call(uintptr(unsafe.Pointer(objectSA)), 0, uintptr(unsafe.Pointer(timerNamePtr)))
+	if timerRaw == 0 {
+		_ = timerErr
+		return true, 2
+	}
+	timerHandle := windows.Handle(timerRaw)
+	defer windows.CloseHandle(timerHandle)
+	mailslotName := fmt.Sprintf(`\\.\mailslot\BOFBenchTarget-%d`, os.Getpid())
+	mailslotNamePtr, _ := windows.UTF16PtrFromString(mailslotName)
+	mailslotRaw, _, mailslotErr := procCreateMailslot.Call(uintptr(unsafe.Pointer(mailslotNamePtr)), 65536, 5000, uintptr(unsafe.Pointer(objectSA)))
+	if windows.Handle(mailslotRaw) == windows.InvalidHandle {
+		_ = mailslotErr
+		return true, 2
+	}
+	mailslotHandle := windows.Handle(mailslotRaw)
+	defer windows.CloseHandle(mailslotHandle)
+	mailslotMessage := []byte(fmt.Sprintf("BOFBenchMailslotFixture-%d", os.Getpid()))
 	sectionName := fmt.Sprintf(`Global\BOFBenchTargetSection-%d`, os.Getpid())
 	sectionNamePtr, _ := windows.UTF16PtrFromString(sectionName)
 	sectionHandle, err := windows.CreateFileMapping(windows.InvalidHandle, objectSA, windows.PAGE_READWRITE, 0, 4096, sectionNamePtr)
@@ -276,13 +327,16 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	go alertableThread(stop, threadID)
 	pipeReady := make(chan namedPipeResult, 1)
 	go namedPipeFixture(stop, pipeReady)
+	go maintainMailslot(stop, mailslotHandle, mailslotName, mailslotMessage)
 	pipe := <-pipeReady
 	fixtureErr := launchFixtureInConsoleSession(service.root, "deploy")
 	state := targetState{
-		Schema: "bofbench.target", SchemaVersion: 5, Service: service.name,
+		Schema: "bofbench.target", SchemaVersion: 6, Service: service.name,
 		PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, NamedPipe: pipe.Name, User: `NT AUTHORITY\SYSTEM`,
 		KnownHandle: fmt.Sprintf("0x%X", knownFile.Fd()),
 		HolderPID:   os.Getpid(), JobMemberPID: jobChild.Process.Pid, EventName: eventName, SectionName: sectionName, JobName: jobName,
+		MutexName: mutexName, SemaphoreName: semaphoreName, TimerName: timerName, MailslotName: mailslotName,
+		MailslotHandle: fmt.Sprintf("0x%X", uintptr(mailslotHandle)), MailslotSHA256: hashBytes(mailslotMessage), MailslotAccess: systemHandleGrantedAccess(mailslotHandle),
 		CanaryFile: canaryPath, CanaryFileSHA256: hashBytes(fileCanary),
 		MemoryCanaryAddress: fmt.Sprintf("0x%X", uintptr(unsafe.Pointer(&memoryCanary[0]))),
 		MemoryCanarySize:    len(canary), MemoryCanarySHA256: hashBytes(canary),
@@ -462,6 +516,93 @@ func namedPipeFixture(stop <-chan struct{}, ready chan<- namedPipeResult) {
 		_ = windows.FlushFileBuffers(handle)
 		_ = windows.DisconnectNamedPipe(handle)
 	}
+}
+
+func maintainMailslot(stop <-chan struct{}, handle windows.Handle, name string, message []byte) {
+	write := func() {
+		namePtr, err := windows.UTF16PtrFromString(name)
+		if err != nil {
+			return
+		}
+		client, err := windows.CreateFile(namePtr, windows.GENERIC_WRITE, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+		if err != nil {
+			return
+		}
+		defer windows.CloseHandle(client)
+		var written uint32
+		_ = windows.WriteFile(client, message, &written, nil)
+	}
+	ensure := func() {
+		var maximum, next, count, timeout uint32
+		ok, _, _ := procGetMailslotInfo.Call(uintptr(handle), uintptr(unsafe.Pointer(&maximum)), uintptr(unsafe.Pointer(&next)), uintptr(unsafe.Pointer(&count)), uintptr(unsafe.Pointer(&timeout)))
+		if ok != 0 && count == 0 {
+			write()
+		}
+	}
+	ensure()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			ensure()
+		}
+	}
+}
+
+type extendedHandleEntry struct {
+	Object                uintptr
+	UniqueProcessID       uintptr
+	HandleValue           uintptr
+	GrantedAccess         uint32
+	CreatorBackTraceIndex uint16
+	ObjectTypeIndex       uint16
+	HandleAttributes      uint32
+	Reserved              uint32
+}
+
+func systemHandleGrantedAccess(handle windows.Handle) uint32 {
+	const (
+		systemExtendedHandleInformation = 64
+		statusInfoLengthMismatch        = uint32(0xC0000004)
+	)
+	size := uint32(1 << 20)
+	for attempt := 0; attempt < 8; attempt++ {
+		buffer := make([]byte, size)
+		var needed uint32
+		status, _, _ := procNtQuerySystem.Call(systemExtendedHandleInformation, uintptr(unsafe.Pointer(&buffer[0])), uintptr(size), uintptr(unsafe.Pointer(&needed)))
+		if uint32(status) == statusInfoLengthMismatch {
+			if needed > size {
+				size = needed + 1<<16
+			} else {
+				size *= 2
+			}
+			continue
+		}
+		if int32(status) < 0 {
+			return 0
+		}
+		count := *(*uintptr)(unsafe.Pointer(&buffer[0]))
+		headerSize := uintptr(unsafe.Sizeof(uintptr(0)) * 2)
+		entrySize := unsafe.Sizeof(extendedHandleEntry{})
+		available := (uintptr(len(buffer)) - headerSize) / entrySize
+		if count > available {
+			count = available
+		}
+		pid := uintptr(os.Getpid())
+		wanted := uintptr(handle)
+		base := uintptr(unsafe.Pointer(&buffer[0])) + headerSize
+		for index := uintptr(0); index < count; index++ {
+			entry := (*extendedHandleEntry)(unsafe.Pointer(base + index*entrySize))
+			if entry.UniqueProcessID == pid && entry.HandleValue == wanted {
+				return entry.GrantedAccess
+			}
+		}
+		return 0
+	}
+	return 0
 }
 
 func deployFixtures(root string) (fixtureState, error) {
@@ -731,7 +872,7 @@ func runArchitectureHelper(root string) error {
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
-	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 5, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 6, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if module, _, _ := procModuleHandle.Call(0); module != 0 {
 		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
 	}

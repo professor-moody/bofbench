@@ -37,6 +37,7 @@ Use these walkthroughs when you want an outcome, not a command catalog. Each sce
 | [Run Public Host and Process Capabilities](public-capabilities.md) | Discovery, access, module exports, policy, and neighbors |
 | [Operate Standalone and Domain Topologies](topologies.md) | Explicit multi-host roles and target selection |
 | [Export for Native and C2 Runtimes](export-packages.md) | Raw, Sliver, and Cobalt Strike packages |
+| [Compose Native IPC Operations](composable-native-ipc.md) | Nested synchronization and mailslot lifecycles with transitive receipts and cleanup |
 
 ## Recover and release
 

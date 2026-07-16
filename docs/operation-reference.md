@@ -2,6 +2,36 @@
 
 Generated from resolved `bofbench.operation` manifests.
 
+## `builtin/coordination-surface-triage`
+
+Correlate detailed process handles, exact synchronization state, and the local mailslot namespace
+
+- Schema version: `4`
+- Tier: `public`
+- Steps: `3`
+- Proof cases: `1`
+
+### Inputs
+
+| Name | Type | Required | Sensitive | Topology value |
+|---|---|---:|---:|---|
+| `target_pid` | `int` | true | false | `` |
+| `handle_type` | `string` | false | false | `` |
+| `object_type` | `string` | true | false | `` |
+| `object_name` | `wstring` | true | false | `` |
+| `mailslot_prefix` | `wstring` | false | false | `` |
+| `result_limit` | `int` | false | false | `` |
+
+### Steps
+
+1. `handles` → `process-handle-detail-inventory`
+2. `state` → `synchronization-object-state`
+3. `mailslots` → `mailslot-inventory`
+
+### Proof cases
+
+- `target-coordination`: via `lab,sliver`, architectures `x64,x86`, expected path `handles → state → mailslots`, expanded path `handles → state → mailslots`
+
 ## `builtin/network-posture`
 
 Inventory local adapters, forwarding routes, and proxy configuration

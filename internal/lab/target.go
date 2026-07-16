@@ -37,6 +37,13 @@ type TargetState struct {
 	EventName            string `json:"event_name,omitempty"`
 	SectionName          string `json:"section_name,omitempty"`
 	JobName              string `json:"job_name,omitempty"`
+	MutexName            string `json:"mutex_name,omitempty"`
+	SemaphoreName        string `json:"semaphore_name,omitempty"`
+	TimerName            string `json:"timer_name,omitempty"`
+	MailslotName         string `json:"mailslot_name,omitempty"`
+	MailslotHandle       string `json:"mailslot_handle,omitempty"`
+	MailslotSHA256       string `json:"mailslot_sha256,omitempty"`
+	MailslotAccess       uint32 `json:"mailslot_access,omitempty"`
 	User                 string `json:"user"`
 	CanaryFile           string `json:"canary_file"`
 	CanaryFileSHA256     string `json:"canary_file_sha256,omitempty"`
