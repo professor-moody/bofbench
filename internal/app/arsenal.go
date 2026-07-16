@@ -16,7 +16,7 @@ import (
 
 func arsenalCommand(stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{Use: "arsenal", Short: "Acquire, search, compare, and run external BOFs"}
-	cmd.AddCommand(arsenalAcquireCommand(stdout), arsenalListCommand(stdout), arsenalInventoryCommand(stdout), arsenalSearchCommand(stdout), arsenalCompareCommand(stdout), arsenalLockCommand(stdout), arsenalVerifyCommand(stdout), arsenalDiffCommand(stdout), arsenalRegressionCommand(stdout))
+	cmd.AddCommand(arsenalAcquireCommand(stdout), arsenalListCommand(stdout), arsenalInventoryCommand(stdout), arsenalSearchCommand(stdout), arsenalMatrixCommand(stdout), arsenalCompareCommand(stdout), arsenalLockCommand(stdout), arsenalVerifyCommand(stdout), arsenalDiffCommand(stdout), arsenalRegressionCommand(stdout))
 	return cmd
 }
 
@@ -131,12 +131,42 @@ func arsenalSearchCommand(stdout io.Writer) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, or md")
 	cmd.Flags().StringVar(&filters.Can, "can", "", "capability or behavior, for example token or process injection")
+	cmd.Flags().StringVar(&filters.API, "api", "", "imported API name or fragment, for example RpcBinding")
+	cmd.Flags().StringVar(&filters.Chain, "chain", "", "behavior-chain name or fragment, for example remote_registry")
 	cmd.Flags().StringVar(&filters.Effect, "effect", "", "effect, for example credentials, writes state, or starts execution")
 	cmd.Flags().StringVar(&filters.WorksWith, "works-with", "", "runtime target: native, lab, sliver, or cobaltstrike")
 	cmd.Flags().StringVar(&filters.Requires, "requires", "", "requirement, for example administrator, network, or target process")
 	cmd.Flags().StringVar(&filters.Arch, "arch", "", "object architecture: x64 or x86")
+	cmd.Flags().StringVar(&filters.Loader, "loader", "", "loader support, for example compatible or unsupported_relocation")
 	cmd.Flags().StringVar(&filters.Confidence, "confidence", "", "analysis confidence: confirmed primitive, strong chain, or possible")
 	cmd.Flags().BoolVar(&hasArgs, "has-args", false, "only show BOFs with typed or detected arguments")
+	return cmd
+}
+
+func arsenalMatrixCommand(stdout io.Writer) *cobra.Command {
+	var format string
+	cmd := &cobra.Command{
+		Use: "matrix <root>", Short: "Compare every x64 and x86 object independently", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "text" && format != "json" {
+				return fmt.Errorf("arsenal matrix format must be text or json")
+			}
+			registry, err := packsvc.Load(packsvc.LoadOptions{Project: args[0]})
+			if err != nil {
+				return err
+			}
+			report, err := arsenal.BuildArchitectureMatrix(args[0], declarativeSignatures(registry.List()))
+			if err != nil {
+				return err
+			}
+			if format == "json" {
+				return printJSON(stdout, report)
+			}
+			fmt.Fprint(stdout, arsenal.ArchitectureMatrixText(report))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
 	return cmd
 }
 

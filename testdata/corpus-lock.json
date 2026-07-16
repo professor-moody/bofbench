@@ -15,7 +15,23 @@
         {"path": "SA/wmi_query/wmi_query.x64.o", "sha256": "64cb86c48f5ca6c6595f3a5767928f9e45ca92b937a543a1815f3c16da22d97e"},
         {"path": "SA/wmi_query/wmi_query.x86.o", "sha256": "c33d2f6e309f02f857738430c5b33d87bcc9f035e937ea935316a055e3b2d2df"},
         {"path": "SA/sc_enum/sc_enum.x64.o", "sha256": "85ba4141c800cb6cf5258bf36c2657c71e01252ed287dcc680725e885304142a"},
-        {"path": "SA/sc_enum/sc_enum.x86.o", "sha256": "2ce766d5e52e33c4c2bc21492a65bea393aedf897e70828d0ba4a049f109141e"}
+        {"path": "SA/sc_enum/sc_enum.x86.o", "sha256": "2ce766d5e52e33c4c2bc21492a65bea393aedf897e70828d0ba4a049f109141e"},
+        {"path": "SA/schtasksquery/schtasksquery.x64.o", "sha256": "5b2a55c06a5fb92c2ac63a9f10ea832c822ab1fb99fff6e2f50460197ad3a091"},
+        {"path": "SA/schtasksquery/schtasksquery.x86.o", "sha256": "a72f47d3c13d6a38cf40f3dbb54a9d7ca63c1066c73c1e870a51de40e8f600d7"},
+        {"path": "SA/netshares/netshares.x64.o", "sha256": "9337655f67a226c723550be84b2152cd6e9ddca9ef729e0324b2629c3d67c7ae"},
+        {"path": "SA/netshares/netshares.x86.o", "sha256": "b96f0def609e8bc3656fdbf72d7cbc0f0d2891fd78f81e3dbd549877911bb0d9"},
+        {"path": "SA/get-netsession2/get-netsession2.x64.o", "sha256": "dc474ab4d3196450d91ae23ec7ca3dc864676948fea19196ccdb09a9250da679"},
+        {"path": "SA/get-netsession2/get-netsession2.x86.o", "sha256": "ca4ac30a2b130ed9ae2809af4f94060748fdfe47620cfcaf2a67cbacd2a20b74"},
+        {"path": "SA/reg_query/reg_query.x64.o", "sha256": "8d9846527a8fae2ac803ff6321a95a2f73a6582e80df16d63cafaa70622ab52b"},
+        {"path": "SA/reg_query/reg_query.x86.o", "sha256": "d59238a71ca451d75c3809d324b7ad34a416ee3005f5a067548f71fd6b762031"},
+        {"path": "SA/get_dpapi_system/get_dpapi_system.x64.o", "sha256": "f881eb3f54f82860856c49b6b818f5bf7bcf995b226fcccd462b41ee3e29af4b"},
+        {"path": "SA/get_dpapi_system/get_dpapi_system.x86.o", "sha256": "64e76107e111766f146e16aa150bd041dab6feb1ca53449be5cf9214fada39af"},
+        {"path": "SA/adcs_enum/adcs_enum.x64.o", "sha256": "3097b0801b5f3d4e61d3b42ba8f43f734a31b184f857e6549336309a51158489"},
+        {"path": "SA/adcs_enum/adcs_enum.x86.o", "sha256": "65bf97e10231b4d43a73cd2ca501ea0b3ed6a263b3cddc38fc7b9901bbea2bfd"},
+        {"path": "SA/get_session_info/get_session_info.x64.o", "sha256": "665f6464cbb9e6398b60ec4da8689deeeedcfbf53a03a4cbfea6515fd4e0b2f1"},
+        {"path": "SA/get_session_info/get_session_info.x86.o", "sha256": "4587e416ea24f2cae67a3d9d24b0ea296b039723d033b97f6431c9d883e62faf"},
+        {"path": "SA/netloggedon2/netloggedon2.x64.o", "sha256": "285b757a8c777be07859de88cf47374380aa4e8823eda0e358814202bf390c07"},
+        {"path": "SA/netloggedon2/netloggedon2.x86.o", "sha256": "c75535aaa895e86328b15ba67a00fb7e004b60fbb5abfe5c9365c08d913c83ce"}
       ]
     }
   ]

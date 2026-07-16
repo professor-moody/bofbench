@@ -137,6 +137,55 @@ func TestInventorySearchLockAndDiff(t *testing.T) {
 	}
 }
 
+func TestArchitectureMatrixAnalyzesEachObjectAndInvalidatesV1Cache(t *testing.T) {
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "arsenal", "matrix")
+	createArsenalObject(t, root, "equivalent", []string{"BeaconPrintf", "KERNEL32$GetCurrentProcessId"})
+	equivalentDir := filepath.Join(root, "SA", "equivalent")
+	if err := coff.CreateMockObject(filepath.Join(equivalentDir, "equivalent.x86.o"), "x86", "go", []string{"BeaconPrintf", "KERNEL32$GetCurrentProcessId"}); err != nil {
+		t.Fatal(err)
+	}
+	createArsenalObject(t, root, "different", []string{"BeaconPrintf", "KERNEL32$GetCurrentProcessId"})
+	differentDir := filepath.Join(root, "SA", "different")
+	if err := coff.CreateMockObject(filepath.Join(differentDir, "different.x86.o"), "x86", "go", []string{"BeaconPrintf", "ADVAPI32$OpenProcessToken"}); err != nil {
+		t.Fatal(err)
+	}
+
+	indexPath := arsenalAnalysisIndexPath(root)
+	if err := os.MkdirAll(filepath.Dir(indexPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := `{"schema":"bofbench.arsenal-index","schema_version":1,"root":"stale","entries":{"old":{}}}`
+	if err := os.WriteFile(indexPath, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	matrix, err := BuildArchitectureMatrix(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matrix.Summary.Pairs != 2 || matrix.Summary.Equivalent != 1 || matrix.Summary.Different != 1 || matrix.Summary.CacheHits+matrix.Summary.Refreshed != 4 {
+		t.Fatalf("matrix summary = %+v entries=%+v", matrix.Summary, matrix.Entries)
+	}
+	if matrix.Entries[0].X64 == nil || matrix.Entries[0].X86 == nil {
+		t.Fatalf("matrix did not retain both architectures: %+v", matrix.Entries)
+	}
+	cached, err := BuildArchitectureMatrix(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached.Summary.CacheHits != 4 || cached.Summary.Refreshed != 0 {
+		t.Fatalf("cached matrix summary = %+v", cached.Summary)
+	}
+	search, err := BuildInventoryWithFilters(root, InventoryFilters{API: "OpenProcessToken", Arch: "x86", Loader: "compatible"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(search.Entries) != 1 || search.Entries[0].Name != "different" {
+		t.Fatalf("architecture-aware search = %+v", search.Entries)
+	}
+}
+
 func TestComparePreflightRegressionEvidence(t *testing.T) {
 	tmp := t.TempDir()
 	workingDirectory, err := os.Getwd()

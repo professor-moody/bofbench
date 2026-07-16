@@ -21,7 +21,7 @@ const LockFileName = "arsenal.lock.json"
 
 const (
 	arsenalIndexSchema        = "bofbench.arsenal-index"
-	arsenalIndexSchemaVersion = 1
+	arsenalIndexSchemaVersion = 2
 	analyzerCacheVersion      = "behavior-v2"
 )
 
@@ -64,10 +64,13 @@ type InventorySummary struct {
 type InventoryFilters struct {
 	Query      string `json:"query,omitempty"`
 	Can        string `json:"can,omitempty"`
+	API        string `json:"api,omitempty"`
+	Chain      string `json:"chain,omitempty"`
 	Effect     string `json:"effect,omitempty"`
 	WorksWith  string `json:"works_with,omitempty"`
 	Requires   string `json:"requires,omitempty"`
 	Arch       string `json:"arch,omitempty"`
+	Loader     string `json:"loader,omitempty"`
 	Confidence string `json:"confidence,omitempty"`
 	HasArgs    *bool  `json:"has_args,omitempty"`
 }
@@ -96,6 +99,26 @@ type InventoryEntry struct {
 	VisibleStrings   []string                  `json:"visible_strings,omitempty"`
 	AnalysisError    string                    `json:"analysis_error,omitempty"`
 	AnalysisCached   bool                      `json:"analysis_cached,omitempty"`
+	Architectures    []ArchitectureInventory   `json:"architectures,omitempty"`
+}
+
+type ArchitectureInventory struct {
+	Arch           string                  `json:"arch"`
+	Path           string                  `json:"path"`
+	ObjectSHA256   string                  `json:"object_sha256"`
+	Compatibility  string                  `json:"loader_support,omitempty"`
+	Entrypoint     string                  `json:"entrypoint,omitempty"`
+	Relocations    int                     `json:"relocations,omitempty"`
+	NeedsArgs      bool                    `json:"needs_args,omitempty"`
+	APIs           []string                `json:"apis,omitempty"`
+	Capabilities   []string                `json:"capabilities,omitempty"`
+	CapabilityIDs  []string                `json:"capability_ids,omitempty"`
+	BehaviorChains []string                `json:"behavior_chains,omitempty"`
+	Effects        []string                `json:"effects,omitempty"`
+	WorksWith      []string                `json:"works_with,omitempty"`
+	Arguments      []artifact.ArgumentHint `json:"arguments,omitempty"`
+	AnalysisCached bool                    `json:"analysis_cached,omitempty"`
+	AnalysisError  string                  `json:"analysis_error,omitempty"`
 }
 
 type arsenalAnalysisIndex struct {
@@ -108,9 +131,45 @@ type arsenalAnalysisIndex struct {
 
 type arsenalAnalysisIndexItem struct {
 	ObjectSHA256 string            `json:"object_sha256"`
+	Architecture string            `json:"architecture"`
+	ObjectPath   string            `json:"object_path"`
 	Source       string            `json:"source_version"`
 	SignatureSet string            `json:"analyzer_signature_set"`
 	Analysis     artifact.Analysis `json:"analysis"`
+}
+
+type ArchitectureMatrix struct {
+	Schema        string                    `json:"schema"`
+	SchemaVersion int                       `json:"schema_version"`
+	Root          string                    `json:"root"`
+	GeneratedAt   string                    `json:"generated_at"`
+	IndexPath     string                    `json:"index_path"`
+	SignatureSet  string                    `json:"analyzer_signature_set"`
+	Summary       ArchitectureMatrixSummary `json:"summary"`
+	Entries       []ArchitectureMatrixEntry `json:"entries"`
+}
+
+type ArchitectureMatrixSummary struct {
+	Entries       int `json:"entries"`
+	Pairs         int `json:"pairs"`
+	Equivalent    int `json:"equivalent"`
+	Different     int `json:"different"`
+	X64Only       int `json:"x64_only"`
+	X86Only       int `json:"x86_only"`
+	AnalysisError int `json:"analysis_error"`
+	CacheHits     int `json:"cache_hits"`
+	Refreshed     int `json:"refreshed"`
+}
+
+type ArchitectureMatrixEntry struct {
+	Name           string                 `json:"name"`
+	Path           string                 `json:"path"`
+	SourceFiles    []string               `json:"source_files,omitempty"`
+	X64            *ArchitectureInventory `json:"x64,omitempty"`
+	X86            *ArchitectureInventory `json:"x86,omitempty"`
+	Equivalent     bool                   `json:"equivalent"`
+	Differences    []string               `json:"differences,omitempty"`
+	CorpusBlockers []string               `json:"corpus_blockers,omitempty"`
 }
 
 type Lock struct {
@@ -242,6 +301,88 @@ func BuildInventoryWithSignatures(root string, filters InventoryFilters, signatu
 		return Inventory{}, err
 	}
 	return report, nil
+}
+
+func BuildArchitectureMatrix(root string, signatures []artifact.DeclarativeSignature) (ArchitectureMatrix, error) {
+	inventory, err := BuildInventoryWithSignatures(root, InventoryFilters{}, signatures)
+	if err != nil {
+		return ArchitectureMatrix{}, err
+	}
+	report := ArchitectureMatrix{
+		Schema: "bofbench.arsenal-matrix", SchemaVersion: 1, Root: root,
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339), IndexPath: inventory.IndexPath, SignatureSet: inventory.SignatureSet,
+	}
+	for _, inventoryEntry := range inventory.Entries {
+		entry := ArchitectureMatrixEntry{Name: inventoryEntry.Name, Path: inventoryEntry.Path, SourceFiles: append([]string(nil), inventoryEntry.SourceFiles...)}
+		for index := range inventoryEntry.Architectures {
+			architecture := inventoryEntry.Architectures[index]
+			switch architecture.Arch {
+			case "x64":
+				entry.X64 = &architecture
+			case "x86":
+				entry.X86 = &architecture
+			}
+			if architecture.AnalysisError != "" {
+				report.Summary.AnalysisError++
+			}
+			if architecture.AnalysisCached {
+				report.Summary.CacheHits++
+			} else if architecture.AnalysisError == "" {
+				report.Summary.Refreshed++
+			}
+			if architecture.Compatibility != "" && architecture.Compatibility != "compatible" && architecture.Compatibility != "compatible_runtime_lookup" {
+				entry.CorpusBlockers = append(entry.CorpusBlockers, architecture.Arch+": "+architecture.Compatibility)
+			}
+		}
+		switch {
+		case entry.X64 != nil && entry.X86 != nil:
+			report.Summary.Pairs++
+			entry.Differences = architectureDifferences(*entry.X64, *entry.X86)
+			entry.Equivalent = len(entry.Differences) == 0
+			if entry.Equivalent {
+				report.Summary.Equivalent++
+			} else {
+				report.Summary.Different++
+			}
+		case entry.X64 != nil:
+			report.Summary.X64Only++
+			entry.Differences = []string{"x86 object unavailable"}
+		case entry.X86 != nil:
+			report.Summary.X86Only++
+			entry.Differences = []string{"x64 object unavailable"}
+		}
+		report.Entries = append(report.Entries, entry)
+	}
+	report.Summary.Entries = len(report.Entries)
+	return report, nil
+}
+
+func architectureDifferences(x64, x86 ArchitectureInventory) []string {
+	var differences []string
+	compare := func(label string, first, second []string) {
+		if strings.Join(first, "\x00") != strings.Join(second, "\x00") {
+			differences = append(differences, label)
+		}
+	}
+	if x64.Compatibility != x86.Compatibility {
+		differences = append(differences, "loader support")
+	}
+	compare("imports", x64.APIs, x86.APIs)
+	compare("capabilities", x64.CapabilityIDs, x86.CapabilityIDs)
+	compare("behavior chains", x64.BehaviorChains, x86.BehaviorChains)
+	compare("effects", x64.Effects, x86.Effects)
+	compare("runtime support", x64.WorksWith, x86.WorksWith)
+	compare("arguments", argumentMatrixKeys(x64.Arguments), argumentMatrixKeys(x86.Arguments))
+	return differences
+}
+
+func argumentMatrixKeys(arguments []artifact.ArgumentHint) []string {
+	keys := make([]string, 0, len(arguments))
+	for _, argument := range arguments {
+		keys = append(keys, argument.Name+":"+argument.Type)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func PersistInventory(report Inventory) (Inventory, error) {
@@ -486,6 +627,38 @@ func InventoryMarkdown(report Inventory) string {
 	return b.String()
 }
 
+func ArchitectureMatrixText(report ArchitectureMatrix) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "ARSENAL ARCHITECTURE MATRIX\nroot      %s\nsummary   entries=%d pairs=%d equivalent=%d different=%d x64-only=%d x86-only=%d errors=%d cached=%d refreshed=%d\n",
+		report.Root, report.Summary.Entries, report.Summary.Pairs, report.Summary.Equivalent, report.Summary.Different,
+		report.Summary.X64Only, report.Summary.X86Only, report.Summary.AnalysisError, report.Summary.CacheHits, report.Summary.Refreshed)
+	for _, entry := range report.Entries {
+		status := "equivalent"
+		if !entry.Equivalent {
+			status = strings.Join(entry.Differences, ", ")
+		}
+		fmt.Fprintf(&b, "%-32s %-12s %s\n", entry.Name, matrixArchitectureLabel(entry), status)
+		if len(entry.CorpusBlockers) > 0 {
+			fmt.Fprintf(&b, "  blockers  %s\n", strings.Join(entry.CorpusBlockers, "; "))
+		}
+	}
+	fmt.Fprintf(&b, "index     %s\n", report.IndexPath)
+	return b.String()
+}
+
+func matrixArchitectureLabel(entry ArchitectureMatrixEntry) string {
+	switch {
+	case entry.X64 != nil && entry.X86 != nil:
+		return "x64/x86"
+	case entry.X64 != nil:
+		return "x64"
+	case entry.X86 != nil:
+		return "x86"
+	default:
+		return "-"
+	}
+}
+
 func groupInventoryEntries(entries []InventoryEntry) (map[string][]InventoryEntry, []string) {
 	groups := map[string][]InventoryEntry{}
 	for _, entry := range entries {
@@ -635,10 +808,10 @@ func arsenalSourceVersion(source *SourceMetadata, root string) string {
 	return "local\x00" + absolute
 }
 
-func analyzeArsenalObject(path, objectSHA, sourceVersion, signatureSet string, signatures []artifact.DeclarativeSignature, index *arsenalAnalysisIndex) (artifact.Analysis, bool, error) {
-	keyHash := sha256.Sum256([]byte(objectSHA + "\x00" + sourceVersion + "\x00" + signatureSet))
+func analyzeArsenalObject(path, arch, objectSHA, sourceVersion, signatureSet string, signatures []artifact.DeclarativeSignature, index *arsenalAnalysisIndex) (artifact.Analysis, bool, error) {
+	keyHash := sha256.Sum256([]byte(arch + "\x00" + objectSHA + "\x00" + sourceVersion + "\x00" + signatureSet))
 	key := fmt.Sprintf("%x", keyHash[:])
-	if cached, ok := index.Entries[key]; ok && cached.ObjectSHA256 == objectSHA && cached.Source == sourceVersion && cached.SignatureSet == signatureSet {
+	if cached, ok := index.Entries[key]; ok && cached.ObjectSHA256 == objectSHA && cached.Architecture == arch && cached.Source == sourceVersion && cached.SignatureSet == signatureSet {
 		analysis := cached.Analysis
 		analysis.Path = path
 		return analysis, true, nil
@@ -648,36 +821,99 @@ func analyzeArsenalObject(path, objectSHA, sourceVersion, signatureSet string, s
 		return artifact.Analysis{}, false, err
 	}
 	artifact.ApplyDeclarativeSignatures(&analysis, signatures)
-	index.Entries[key] = arsenalAnalysisIndexItem{ObjectSHA256: objectSHA, Source: sourceVersion, SignatureSet: signatureSet, Analysis: analysis}
+	index.Entries[key] = arsenalAnalysisIndexItem{
+		ObjectSHA256: objectSHA, Architecture: arch, ObjectPath: filepath.ToSlash(path),
+		Source: sourceVersion, SignatureSet: signatureSet, Analysis: analysis,
+	}
 	return analysis, false, nil
 }
 
 func inventoryEntry(root string, entry Entry, sourceVersion, signatureSet string, signatures []artifact.DeclarativeSignature, index *arsenalAnalysisIndex) InventoryEntry {
 	sources := sourceFiles(root, entry.Path)
 	item := InventoryEntry{Name: entry.Name, Path: relativeSlash(root, entry.Path), HasSource: len(sources) > 0, SourceFiles: sources}
-	var analysisPath, analysisSHA string
+	allCached := true
 	for _, object := range []struct{ Arch, Path string }{{"x64", entry.X64}, {"x86", entry.X86}} {
 		if object.Path == "" {
 			continue
 		}
-		if fingerprint, err := evidence.FingerprintFile(object.Path); err == nil {
-			item.Objects = append(item.Objects, LockedObject{Arch: object.Arch, Path: relativeSlash(root, object.Path), Size: fingerprint.Size, SHA256: fingerprint.SHA256})
-			if analysisPath == "" || object.Arch == "x64" {
-				analysisPath, analysisSHA = object.Path, fingerprint.SHA256
+		fingerprint, err := evidence.FingerprintFile(object.Path)
+		if err != nil {
+			item.AnalysisError = strings.TrimSpace(strings.Join([]string{item.AnalysisError, object.Arch + ": " + err.Error()}, "; "))
+			allCached = false
+			continue
+		}
+		relativePath := relativeSlash(root, object.Path)
+		item.Objects = append(item.Objects, LockedObject{Arch: object.Arch, Path: relativePath, Size: fingerprint.Size, SHA256: fingerprint.SHA256})
+		analysis, cached, analyzeErr := analyzeArsenalObject(object.Path, object.Arch, fingerprint.SHA256, sourceVersion, signatureSet, signatures, index)
+		if analyzeErr != nil {
+			item.Architectures = append(item.Architectures, ArchitectureInventory{Arch: object.Arch, Path: relativePath, ObjectSHA256: fingerprint.SHA256, AnalysisError: analyzeErr.Error()})
+			item.AnalysisError = strings.TrimSpace(strings.Join([]string{item.AnalysisError, object.Arch + ": " + analyzeErr.Error()}, "; "))
+			allCached = false
+			continue
+		}
+		architecture := architectureInventory(object.Arch, relativePath, fingerprint.SHA256, analysis, cached)
+		item.Architectures = append(item.Architectures, architecture)
+		allCached = allCached && cached
+		if item.Entrypoint == "" || object.Arch == "x64" {
+			item.Entrypoint = architecture.Entrypoint
+			item.Relocations = architecture.Relocations
+			item.SourceAndVersion = analysis.SourceAndVersion
+		}
+		if item.Compatibility == "" {
+			item.Compatibility = architecture.Compatibility
+		} else if architecture.Compatibility != "" && item.Compatibility != architecture.Compatibility {
+			item.Compatibility = "mixed"
+		}
+		item.APIs = append(item.APIs, architecture.APIs...)
+		item.Capabilities = append(item.Capabilities, architecture.Capabilities...)
+		item.CapabilityIDs = append(item.CapabilityIDs, architecture.CapabilityIDs...)
+		item.BehaviorChains = append(item.BehaviorChains, architecture.BehaviorChains...)
+		item.Effects = append(item.Effects, architecture.Effects...)
+		item.WorksWith = append(item.WorksWith, architecture.WorksWith...)
+		item.Arguments = append(item.Arguments, architecture.Arguments...)
+		item.Requirements = append(item.Requirements, analysis.Requirements.Platform...)
+		item.Requirements = append(item.Requirements, analysis.Requirements.Privilege...)
+		item.Requirements = append(item.Requirements, analysis.Requirements.Network...)
+		item.Requirements = append(item.Requirements, analysis.Requirements.Host...)
+		for _, capability := range analysis.Capabilities {
+			item.Confidences = append(item.Confidences, capability.Confidence)
+		}
+		for _, chain := range analysis.BehaviorChains {
+			item.Confidences = append(item.Confidences, chain.Confidence)
+		}
+		for _, api := range architecture.APIs {
+			if strings.HasPrefix(api, "BeaconData") {
+				item.ArgumentAPIs = append(item.ArgumentAPIs, api)
 			}
 		}
+		for _, visible := range analysis.Strings {
+			if len(item.VisibleStrings) == 12 {
+				break
+			}
+			item.VisibleStrings = append(item.VisibleStrings, visible.Value)
+		}
 	}
-	if analysisPath == "" {
-		return item
+	item.AnalysisCached = len(item.Architectures) > 0 && allCached
+	item.NeedsArgs = len(item.Arguments) > 0 || len(item.ArgumentAPIs) > 0
+	item.APIs = uniqueSorted(item.APIs)
+	item.ArgumentAPIs = uniqueSorted(item.ArgumentAPIs)
+	item.Capabilities = uniqueSorted(item.Capabilities)
+	item.CapabilityIDs = uniqueSorted(item.CapabilityIDs)
+	item.BehaviorChains = uniqueSorted(item.BehaviorChains)
+	item.Confidences = uniqueSorted(item.Confidences)
+	item.Effects = uniqueSorted(item.Effects)
+	item.Requirements = uniqueSorted(item.Requirements)
+	item.WorksWith = uniqueSorted(item.WorksWith)
+	return item
+}
+
+func architectureInventory(arch, path, sha string, analysis artifact.Analysis, cached bool) ArchitectureInventory {
+	item := ArchitectureInventory{
+		Arch: arch, Path: path, ObjectSHA256: sha, Entrypoint: analysis.EntrypointSymbol,
+		Relocations: analysis.Relocations, Effects: uniqueSorted(append([]string(nil), analysis.Effects...)),
+		WorksWith: uniqueSorted(append([]string(nil), analysis.WorksWith...)),
+		Arguments: append([]artifact.ArgumentHint(nil), analysis.Arguments...), AnalysisCached: cached,
 	}
-	analysis, cached, err := analyzeArsenalObject(analysisPath, analysisSHA, sourceVersion, signatureSet, signatures, index)
-	if err != nil {
-		item.AnalysisError = err.Error()
-		return item
-	}
-	item.AnalysisCached = cached
-	item.Entrypoint = analysis.EntrypointSymbol
-	item.Relocations = analysis.Relocations
 	if analysis.LoaderCompatibility != nil {
 		item.Compatibility = analysis.LoaderCompatibility.Status
 	}
@@ -689,44 +925,20 @@ func inventoryEntry(root string, entry Entry, sourceVersion, signatureSet string
 		item.APIs = append(item.APIs, api)
 		if strings.HasPrefix(api, "BeaconData") {
 			item.NeedsArgs = true
-			item.ArgumentAPIs = append(item.ArgumentAPIs, api)
 		}
 	}
 	for _, capability := range analysis.Capabilities {
 		item.Capabilities = append(item.Capabilities, capability.Name)
 		item.CapabilityIDs = append(item.CapabilityIDs, capability.ID)
-		item.Confidences = append(item.Confidences, capability.Confidence)
 	}
 	for _, chain := range analysis.BehaviorChains {
 		item.BehaviorChains = append(item.BehaviorChains, chain.Name)
-		item.Confidences = append(item.Confidences, chain.Confidence)
-	}
-	item.Effects = append(item.Effects, analysis.Effects...)
-	item.Requirements = append(item.Requirements, analysis.Requirements.Platform...)
-	item.Requirements = append(item.Requirements, analysis.Requirements.Privilege...)
-	item.Requirements = append(item.Requirements, analysis.Requirements.Network...)
-	item.Requirements = append(item.Requirements, analysis.Requirements.Host...)
-	item.WorksWith = append(item.WorksWith, analysis.WorksWith...)
-	item.Arguments = append(item.Arguments, analysis.Arguments...)
-	item.SourceAndVersion = analysis.SourceAndVersion
-	if len(item.Arguments) > 0 {
-		item.NeedsArgs = true
-	}
-	for _, visible := range analysis.Strings {
-		if len(item.VisibleStrings) == 12 {
-			break
-		}
-		item.VisibleStrings = append(item.VisibleStrings, visible.Value)
 	}
 	item.APIs = uniqueSorted(item.APIs)
-	item.ArgumentAPIs = uniqueSorted(item.ArgumentAPIs)
 	item.Capabilities = uniqueSorted(item.Capabilities)
 	item.CapabilityIDs = uniqueSorted(item.CapabilityIDs)
 	item.BehaviorChains = uniqueSorted(item.BehaviorChains)
-	item.Confidences = uniqueSorted(item.Confidences)
-	item.Effects = uniqueSorted(item.Effects)
-	item.Requirements = uniqueSorted(item.Requirements)
-	item.WorksWith = uniqueSorted(item.WorksWith)
+	item.NeedsArgs = item.NeedsArgs || len(item.Arguments) > 0
 	return item
 }
 
@@ -745,25 +957,27 @@ func summarizeInventory(report *Inventory) {
 			}
 			hashes[object.SHA256]++
 		}
-		switch entry.Compatibility {
-		case "compatible":
-			report.Summary.Compatible++
-		case "compatible_runtime_lookup":
-			report.Summary.RuntimeLookup++
-		case "":
-			if entry.AnalysisError != "" {
-				report.Summary.AnalysisFailed++
+		for _, architecture := range entry.Architectures {
+			switch architecture.Compatibility {
+			case "compatible":
+				report.Summary.Compatible++
+			case "compatible_runtime_lookup":
+				report.Summary.RuntimeLookup++
+			case "":
+				if architecture.AnalysisError != "" {
+					report.Summary.AnalysisFailed++
+				}
+			default:
+				report.Summary.Blocked++
 			}
-		default:
-			report.Summary.Blocked++
+			if architecture.AnalysisCached {
+				report.Summary.CacheHits++
+			} else if architecture.AnalysisError == "" {
+				report.Summary.Refreshed++
+			}
 		}
 		if entry.NeedsArgs {
 			report.Summary.NeedsArguments++
-		}
-		if entry.AnalysisCached {
-			report.Summary.CacheHits++
-		} else if entry.AnalysisError == "" && len(entry.Objects) > 0 {
-			report.Summary.Refreshed++
 		}
 		capabilities := entry.CapabilityIDs
 		if len(capabilities) == 0 {
@@ -814,10 +1028,17 @@ func matchesInventoryFilters(entry InventoryEntry, filters InventoryFilters) boo
 	if filters.HasArgs != nil && entry.NeedsArgs != *filters.HasArgs {
 		return false
 	}
+	var loaderSupport []string
+	for _, architecture := range entry.Architectures {
+		loaderSupport = append(loaderSupport, architecture.Arch+" "+architecture.Compatibility)
+	}
 	return containsAllTerms(canDo, filters.Can) &&
+		containsAllTerms(entry.APIs, filters.API) &&
+		containsAllTerms(entry.BehaviorChains, filters.Chain) &&
 		containsAllTerms(entry.Effects, filters.Effect) &&
 		containsAllTerms(entry.WorksWith, filters.WorksWith) &&
 		containsAllTerms(entry.Requirements, filters.Requires) &&
+		containsAllTerms(loaderSupport, filters.Loader) &&
 		containsAllTerms(entry.Confidences, filters.Confidence)
 }
 
