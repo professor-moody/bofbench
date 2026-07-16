@@ -1,8 +1,11 @@
 package app
 
 import (
+	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	operationsvc "bofbench/internal/operation"
 	packsvc "bofbench/internal/pack"
@@ -19,6 +22,67 @@ func TestResolveOperationInputsValidatesTypesAndDuplicates(t *testing.T) {
 	resolved, err := resolveOperationInputs(document, []string{"pid=1234"}, nil, false)
 	if err != nil || resolved["pid"] != "1234" {
 		t.Fatalf("resolved=%#v err=%v", resolved, err)
+	}
+}
+
+func TestOperationCancelLeavesTerminalReceiptTerminal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "operation.json")
+	receipt := operationsvc.Receipt{
+		Schema: operationsvc.ReceiptSchema, SchemaVersion: operationsvc.ReceiptSchemaVersion,
+		Operation: "builtin/test", Status: "completed",
+	}
+	if err := operationsvc.SaveReceipt(path, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	command := operationCancelCommand(&output, func() (*operationsvc.Registry, error) {
+		t.Fatal("registry should not be loaded without cleanup")
+		return nil, nil
+	})
+	command.SetArgs([]string{path})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := operationsvc.LoadReceipt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "completed" || updated.CancellationState != "" {
+		t.Fatalf("terminal receipt changed: %+v", updated)
+	}
+	if !strings.Contains(output.String(), "cancellation_not_needed") {
+		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestWaitForOperationTasksToSettle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "operation.json")
+	receipt := operationsvc.Receipt{
+		Schema: operationsvc.ReceiptSchema, SchemaVersion: operationsvc.ReceiptSchemaVersion,
+		Operation: "builtin/test", Status: "canceled",
+		Steps: []operationsvc.StepReceipt{{ID: "watch", State: "canceled"}},
+	}
+	if err := operationsvc.SaveReceipt(path, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	settled, err := waitForOperationTasksToSettle(t.Context(), path, time.Second)
+	if err != nil || settled.Status != "canceled" {
+		t.Fatalf("settled=%+v err=%v", settled, err)
+	}
+}
+
+func TestWaitForOperationTasksDoesNotTreatTerminalLabelAsSettled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "operation.json")
+	receipt := operationsvc.Receipt{
+		Schema: operationsvc.ReceiptSchema, SchemaVersion: operationsvc.ReceiptSchemaVersion,
+		Operation: "builtin/test", Status: "canceled",
+		Steps: []operationsvc.StepReceipt{{ID: "watch", State: "ready"}},
+	}
+	if err := operationsvc.SaveReceipt(path, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := waitForOperationTasksToSettle(t.Context(), path, 25*time.Millisecond); err == nil {
+		t.Fatal("terminal operation with an active runtime task was treated as settled")
 	}
 }
 

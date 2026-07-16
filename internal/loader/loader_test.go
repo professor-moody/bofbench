@@ -48,6 +48,20 @@ func TestDecodeLoaderOutputPreservesMemoryProtocolEvent(t *testing.T) {
 	}
 }
 
+func TestObservedBufferPreservesMultipleProtocolLines(t *testing.T) {
+	var observed []string
+	buffer := newObservedBuffer(4096, func(line string) {
+		observed = append(observed, line)
+	})
+	input := []byte("{\"protocol_event\":\"beacon_output\",\"line\":\"first\"}\n{\"protocol_event\":\"beacon_output\",\"line\":\"second\"}\n")
+	if _, err := buffer.Write(input); err != nil {
+		t.Fatal(err)
+	}
+	if len(observed) != 2 || observed[0] != "first" || observed[1] != "second" {
+		t.Fatalf("observed = %#v", observed)
+	}
+}
+
 func TestWindowsExceptionClassification(t *testing.T) {
 	code, crashed := windowsExceptionCode(int(int32(-1073741819)))
 	if !crashed || code != "0xc0000005" {

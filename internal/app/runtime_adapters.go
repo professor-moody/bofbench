@@ -48,7 +48,9 @@ type runtimeRunContext struct {
 	sensitiveArgumentNames []string
 	sensitiveValues        []string
 	interactiveLab         bool
+	forceLocalLab          bool
 	progress               func(string)
+	controller             func(lab.RemoteTaskController)
 }
 
 func runtimeAdapterRegistry(run *runtimeRunContext) (*runtimeadapter.Registry, error) {
@@ -109,6 +111,17 @@ func (run *runtimeRunContext) refreshRuntimeReceipt(ctx context.Context, receipt
 		var updated runtimeadapter.Receipt
 		if err := json.Unmarshal(data, &updated); err != nil {
 			return normalized, err
+		}
+		if updated.CancelRequestedAt != "" && !runtimeTaskTerminal(updated.ExecutionState) {
+			runtimeTasks.Lock()
+			task, ok := runtimeTasks.items[updated.TaskID]
+			if !ok {
+				task, ok = runtimeTasks.items[updated.ReceiptPath]
+			}
+			runtimeTasks.Unlock()
+			if ok {
+				task.cancel()
+			}
 		}
 		return runtimeadapter.NormalizeReceipt(updated)
 	case "sliver":
@@ -255,6 +268,11 @@ func (run *runtimeRunContext) executeLab(ctx context.Context, _ runtimeadapter.P
 	if run.labExecutable != "" {
 		remoteOptions.Executable = run.labExecutable
 	}
+	if run.progress != nil || run.forceLocalLab {
+		// Background operation steps must stream output from the exact object
+		// that was built, analyzed, and pinned during wave preparation.
+		remoteOptions.BuildMode = "local"
+	}
 	ensured, err := lab.EnsureRuntime(ctx, run.bootstrapMode, lab.BootstrapOptions{ProfileName: resolvedLab.Name, Profile: resolvedLab.Profile})
 	if err != nil {
 		return runtimeadapter.Receipt{}, codedError{code: 1, err: err}
@@ -267,7 +285,7 @@ func (run *runtimeRunContext) executeLab(ctx context.Context, _ runtimeadapter.P
 		Runtime: "windows-coff", Args: run.resolved.Tokens, TimeoutMS: run.timeout,
 		SensitiveArguments: run.resolved.Sensitive, SensitiveArgumentNames: run.sensitiveArgumentNames,
 		SensitiveOutputFields: run.sensitiveOutputFields, SensitiveValues: run.sensitiveValues,
-		Interactive: run.interactiveLab, Progress: run.progress,
+		Interactive: run.interactiveLab, Progress: run.progress, Controller: run.controller,
 	})
 	fmt.Fprint(run.stdout, lab.RemoteRunText(report))
 	receipt := runtimeadapter.Receipt{}

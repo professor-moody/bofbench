@@ -380,7 +380,7 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 				report.Results = append(report.Results, result)
 				continue
 			}
-			args := operationProofRunArgs(item, via, labName, topologyName, arch, compiler, inputs, proof.Cleanup, parallelism)
+			args := operationProofRunArgs(item, via, labName, topologyName, arch, compiler, inputs, true, parallelism)
 			var output bytes.Buffer
 			runErr := Run(args, &output, &output)
 			result.Output = nonemptyLines(output.String())

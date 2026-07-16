@@ -157,29 +157,53 @@ func operationCancelCommand(stdout io.Writer, load func() (*operationsvc.Registr
 		if err != nil {
 			return err
 		}
-		now := time.Now().UTC()
-		receipt.CancelRequestedAt, receipt.CancellationState = now.Format(time.RFC3339Nano), "canceling"
-		var failures []string
-		for index := range receipt.Steps {
-			step := &receipt.Steps[index]
-			if step.State != "running" && step.State != "ready" && step.State != "incomplete" {
-				continue
+		if operationTerminal(receipt.Status) {
+			fmt.Fprintf(stdout, "operation  cancellation_not_needed\nreceipt    %s\n", path)
+			if !cleanup {
+				return nil
 			}
-			updated, cancelErr := cancelOperationRuntimeReceipt(cmd.Context(), step.Runtime, opts)
-			if cancelErr != nil {
-				step.CancellationState = "unsupported"
-				failures = append(failures, step.ID+": "+cancelErr.Error())
-				continue
+		} else {
+			now := time.Now().UTC()
+			receipt.CancelRequestedAt, receipt.CancellationState = now.Format(time.RFC3339Nano), "canceling"
+			var failures []string
+			for index := range receipt.Steps {
+				step := &receipt.Steps[index]
+				if step.State != "running" && step.State != "ready" && step.State != "incomplete" {
+					continue
+				}
+				if step.Runtime.Runtime == "" || step.Runtime.ReceiptPath == "" {
+					step.CancellationState = "pending-runtime-identity"
+					continue
+				}
+				updated, cancelErr := cancelOperationRuntimeReceipt(cmd.Context(), step.Runtime, opts)
+				if cancelErr != nil {
+					step.CancellationState = "unsupported"
+					failures = append(failures, step.ID+": "+cancelErr.Error())
+					continue
+				}
+				step.Runtime, step.CancellationState = updated, "requested"
 			}
-			step.Runtime, step.CancellationState = updated, "requested"
+			if len(failures) == 0 {
+				receipt.CancellationState = "requested"
+			}
+			if err := operationsvc.SaveReceipt(path, &receipt); err != nil {
+				return err
+			}
+			if err := os.WriteFile(path+".cancel", []byte(receipt.CancelRequestedAt+"\n"), 0o600); err != nil {
+				return err
+			}
+			fmt.Fprintf(stdout, "operation  cancellation_%s\nreceipt    %s\n", receipt.CancellationState, path)
+			if len(failures) == 0 {
+				settled, settleErr := waitForOperationTasksToSettle(cmd.Context(), path, 30*time.Second)
+				if settleErr != nil {
+					return settleErr
+				}
+				receipt = settled
+			}
+			if len(failures) > 0 {
+				return fmt.Errorf("some active runtime tasks could not be canceled: %s", strings.Join(failures, "; "))
+			}
 		}
-		if len(failures) == 0 {
-			receipt.CancellationState = "requested"
-		}
-		if err := operationsvc.SaveReceipt(path, &receipt); err != nil {
-			return err
-		}
-		fmt.Fprintf(stdout, "operation  cancellation_%s\nreceipt    %s\n", receipt.CancellationState, path)
 		if cleanup {
 			registry, loadErr := load()
 			if loadErr != nil {
@@ -198,9 +222,6 @@ func operationCancelCommand(stdout io.Writer, load func() (*operationsvc.Registr
 				return cleanupErr
 			}
 		}
-		if len(failures) > 0 {
-			return fmt.Errorf("some active runtime tasks could not be canceled: %s", strings.Join(failures, "; "))
-		}
 		return nil
 	}}
 	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "clean completed stateful steps after requesting cancellation")
@@ -208,6 +229,34 @@ func operationCancelCommand(stdout io.Writer, load func() (*operationsvc.Registr
 	cmd.Flags().StringVar(&opts.profiles, "profiles", lab.ProfilesPath(), "global lab profiles file")
 	cmd.Flags().IntVar(&opts.parallelism, "parallelism", 4, "maximum concurrent cleanup branches (1-16)")
 	return cmd
+}
+
+func waitForOperationTasksToSettle(ctx context.Context, path string, timeout time.Duration) (operationsvc.Receipt, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		receipt, err := operationsvc.LoadReceipt(path)
+		if err != nil {
+			return operationsvc.Receipt{}, err
+		}
+		active := false
+		for _, step := range receipt.Steps {
+			if step.State == "running" || step.State == "ready" || step.State == "incomplete" {
+				active = true
+				break
+			}
+		}
+		if !active {
+			return receipt, nil
+		}
+		if time.Now().After(deadline) {
+			return receipt, fmt.Errorf("operation tasks did not settle before cancellation timeout")
+		}
+		select {
+		case <-ctx.Done():
+			return receipt, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 func cancelOperationRuntimeReceipt(ctx context.Context, receipt runtimeadapter.Receipt, opts operationOptions) (runtimeadapter.Receipt, error) {
@@ -460,7 +509,7 @@ func refreshOperationRuntimeReceipt(ctx context.Context, receipt runtimeadapter.
 	if err != nil {
 		return receipt, err
 	}
-	if updated.ReceiptPath != "" {
+	if updated.ReceiptPath != "" && updated.Runtime != "native" && updated.Runtime != "lab" {
 		if err := writeJSON(updated.ReceiptPath, updated); err != nil {
 			return updated, err
 		}
@@ -1356,7 +1405,7 @@ func prepareOperationPack(ctx context.Context, packs *packsvc.Registry, item pac
 	}
 	// Operation output is intentionally compact. The adapter's full diagnostics
 	// and evidence remain available in its runtime receipt.
-	run := &runtimeRunContext{stdout: io.Discard, input: project, projectInput: true, entry: "go", timeout: operationPackTimeout(arguments), runtimeName: "auto", compiler: opts.compiler, arch: opts.arch, resolved: resolved, packed: packed, items: items, labName: opts.lab, labProfiles: opts.profiles, transportTimeout: 3 * time.Minute, bootstrapMode: "auto", interactiveLab: requiresInteractiveLabSession(project)}
+	run := &runtimeRunContext{stdout: io.Discard, input: project, projectInput: true, entry: "go", timeout: operationPackTimeout(arguments), runtimeName: "auto", compiler: opts.compiler, arch: opts.arch, resolved: resolved, packed: packed, items: items, labName: opts.lab, labProfiles: opts.profiles, transportTimeout: 3 * time.Minute, bootstrapMode: "auto", interactiveLab: requiresInteractiveLabSession(project), forceLocalLab: true}
 	run.sensitiveOutputFields, run.sensitiveArgumentNames, run.sensitiveValues = runtimeSensitivity(project, resolved)
 	adapters, err := runtimeAdapterRegistry(run)
 	if err != nil {

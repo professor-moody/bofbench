@@ -261,3 +261,23 @@ func withRemoteTestWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCancelRemoteTaskTargetsRecordedProcessTree(t *testing.T) {
+	var command string
+	withFakeTransport(t, func(_ context.Context, executable string, args ...string) ([]byte, []byte, error) {
+		if executable != "ssh-test" {
+			return nil, nil, fmt.Errorf("unexpected executable %s", executable)
+		}
+		command = strings.Join(args, " ")
+		return []byte("canceled\n"), nil, nil
+	})
+	controller := RemoteTaskController{PID: 4242, Workspace: `C:\bofbench\runs\one`, CancelPath: `C:\bofbench\runs\one\controller.cancel`}
+	if err := CancelRemoteTask(context.Background(), testRemoteOptions(), controller); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"4242", "Stop-Process", "controller.cancel", "ParentProcessId"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("controller command missing %q: %s", want, command)
+		}
+	}
+}

@@ -36,7 +36,7 @@ func (buffer *observedBuffer) Write(value []byte) (int, error) {
 		if index < 0 {
 			break
 		}
-		line := bytes.TrimSpace(buffer.partial[:index])
+		line := append([]byte(nil), bytes.TrimSpace(buffer.partial[:index])...)
 		buffer.partial = append(buffer.partial[:0], buffer.partial[index+1:]...)
 		if len(line) == 0 {
 			continue

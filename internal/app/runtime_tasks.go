@@ -26,7 +26,7 @@ type runtimeTaskView struct {
 func runtimeTasksCommand(stdout io.Writer) *cobra.Command {
 	var via, labName, format string
 	cmd := &cobra.Command{
-		Use: "tasks", Short: "List persisted C2 task receipts", Args: cobra.NoArgs,
+		Use: "tasks", Short: "List persisted runtime task receipts", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			tasks, err := loadRuntimeTaskReceipts("runs", via, labName)
 			if err != nil {
@@ -35,7 +35,7 @@ func runtimeTasksCommand(stdout io.Writer) *cobra.Command {
 			return printRuntimeTasks(stdout, tasks, format)
 		},
 	}
-	cmd.Flags().StringVar(&via, "via", "sliver", "runtime task source: sliver or cobaltstrike")
+	cmd.Flags().StringVar(&via, "via", "sliver", "runtime task source: native, lab, sliver, or cobaltstrike")
 	cmd.Flags().StringVar(&labName, "lab", "", "optional receipt profile filter")
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
 	return cmd
@@ -46,7 +46,7 @@ func runtimeTaskCommand(stdout io.Writer) *cobra.Command {
 	var wait, refresh, cancelTask bool
 	var timeout, interval time.Duration
 	cmd := &cobra.Command{
-		Use: "task <task-id|receipt-path>", Short: "Inspect or wait for one persisted C2 task", Args: cobra.ExactArgs(1),
+		Use: "task <task-id|receipt-path>", Short: "Inspect, cancel, or wait for one persisted runtime task", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			if wait {
@@ -79,7 +79,7 @@ func runtimeTaskCommand(stdout io.Writer) *cobra.Command {
 			}
 		},
 	}
-	cmd.Flags().StringVar(&via, "via", "", "optional runtime filter: sliver or cobaltstrike")
+	cmd.Flags().StringVar(&via, "via", "", "optional runtime filter: native, lab, sliver, or cobaltstrike")
 	cmd.Flags().StringVar(&labName, "lab", "", "optional receipt profile filter")
 	cmd.Flags().StringVar(&profilesPath, "profiles", lab.ProfilesPath(), "global lab profiles file")
 	cmd.Flags().BoolVar(&refresh, "refresh", false, "ask the selected runtime adapter for current task state and output")

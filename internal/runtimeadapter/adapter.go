@@ -108,6 +108,8 @@ type Receipt struct {
 	TerminalReason       string            `json:"terminal_reason,omitempty"`
 	OutputClassification string            `json:"output_classification,omitempty"`
 	WorkerPID            int               `json:"worker_pid,omitempty"`
+	RemoteWorkerPID      int               `json:"remote_worker_pid,omitempty"`
+	RemoteTaskName       string            `json:"remote_task_name,omitempty"`
 	RemoteReceiptPath    string            `json:"remote_receipt_path,omitempty"`
 	CancelSupported      bool              `json:"cancel_supported,omitempty"`
 	CancelRequestedAt    string            `json:"cancel_requested_at,omitempty"`

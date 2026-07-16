@@ -101,6 +101,19 @@ type RemoteRunOptions struct {
 	SensitiveValues        []string
 	Interactive            bool
 	Progress               func(string)
+	Controller             func(RemoteTaskController)
+}
+
+type RemoteTaskController struct {
+	Profile     string `json:"profile,omitempty"`
+	Host        string `json:"host,omitempty"`
+	PID         int    `json:"pid"`
+	TaskName    string `json:"task_name,omitempty"`
+	Workspace   string `json:"workspace"`
+	ReceiptPath string `json:"receipt_path"`
+	PIDPath     string `json:"pid_path"`
+	ExitPath    string `json:"exit_path"`
+	CancelPath  string `json:"cancel_path"`
 }
 
 type RemoteRunReport struct {
@@ -773,22 +786,29 @@ func runLocallyBuiltObject(ctx context.Context, runDir, project string, report *
 	loaderX86 := windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader-x86.exe")
 	script := fmt.Sprintf(`$ErrorActionPreference='Continue'; $env:BOFBENCH_LOADER=%s; $env:BOFBENCH_LOADER_X86=%s; $env:BOFBENCH_PROGRESS_FILE=%s; & %s %s 1> %s 2> %s; $exit=$LASTEXITCODE; $output=Get-Content -LiteralPath %s -Raw; $errors=if(Test-Path %s){Get-Content -LiteralPath %s -Raw}else{''}; Write-Output $output; if($errors){[Console]::Error.Write($errors)}; exit $exit`, powerShellQuote(loaderX64), powerShellQuote(loaderX86), powerShellQuote(progressPath), powerShellQuote(opts.Executable), strings.Join(quoted, " "), powerShellQuote(remoteResultPath), powerShellQuote(remoteStderrPath), powerShellQuote(remoteResultPath), powerShellQuote(remoteStderrPath), powerShellQuote(remoteStderrPath))
 	eventStart = time.Now()
-	stopProgress := startRemoteProgressPoller(ctx, opts.RemoteOptions, progressPath, opts.Progress)
-	stdout, stderr, executeErr := remoteExecute(ctx, opts.RemoteOptions, script)
-	stopProgress()
+	var executionStdout, executionStderr []byte
+	var executeErr error
+	if opts.Progress != nil && !opts.Interactive {
+		body := fmt.Sprintf(`$ErrorActionPreference='Continue'; $env:BOFBENCH_LOADER=%s; $env:BOFBENCH_LOADER_X86=%s; $env:BOFBENCH_PROGRESS_FILE=%s; & %s %s 1> %s 2> %s; $code=$LASTEXITCODE`, powerShellQuote(loaderX64), powerShellQuote(loaderX86), powerShellQuote(progressPath), powerShellQuote(opts.Executable), strings.Join(quoted, " "), powerShellQuote(remoteResultPath), powerShellQuote(remoteStderrPath))
+		executionStdout, executionStderr, executeErr = runRemoteControlledPowerShell(ctx, opts, remoteRun, body, remoteResultPath, remoteStderrPath, progressPath)
+	} else {
+		stopProgress := startRemoteProgressPoller(ctx, opts.RemoteOptions, progressPath, opts.Progress)
+		executionStdout, executionStderr, executeErr = remoteExecute(ctx, opts.RemoteOptions, script)
+		stopProgress()
+	}
 	_, _, _ = remoteExecute(context.Background(), opts.RemoteOptions, fmt.Sprintf(`Remove-Item -LiteralPath %s -Force -ErrorAction SilentlyContinue`, powerShellQuote(progressPath)))
-	report.TransportEvents = append(report.TransportEvents, transportEvent(opts.Transport+"-run-object", eventStart, executeErr, string(stderr)))
-	report.RemoteStderr = boundedText(string(stderr), 8192)
+	report.TransportEvents = append(report.TransportEvents, transportEvent(opts.Transport+"-run-object", eventStart, executeErr, string(executionStderr)))
+	report.RemoteStderr = boundedText(string(executionStderr), 8192)
 	var result runtimesvc.Result
-	if err := json.Unmarshal([]byte(strings.TrimSpace(string(stdout))), &result); err != nil {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(executionStdout))), &result); err != nil {
 		if executeErr != nil {
-			return fmt.Errorf("remote object execution failed: %w: %s", executeErr, boundedText(string(stderr), 4096))
+			return fmt.Errorf("remote object execution failed: %w: %s", executeErr, boundedText(string(executionStderr), 4096))
 		}
 		return fmt.Errorf("decode remote runtime result: %w", err)
 	}
 	report.RemoteResult = &result
 	localResult := filepath.Join(runDir, "remote-result.json")
-	if err := os.WriteFile(localResult, append(bytes.TrimSpace(stdout), '\n'), 0o600); err == nil {
+	if err := os.WriteFile(localResult, append(bytes.TrimSpace(executionStdout), '\n'), 0o600); err == nil {
 		if fingerprint, fingerprintErr := evidence.FingerprintFile(localResult); fingerprintErr == nil {
 			report.Collected = append(report.Collected, CollectedFile{RemotePath: remoteResultPath, LocalPath: localResult, Size: fingerprint.Size, SHA256: fingerprint.SHA256})
 		}
@@ -797,6 +817,152 @@ func runLocallyBuiltObject(ctx context.Context, runDir, project string, report *
 		return fmt.Errorf("remote object run failed: %s", emptyRemote(result.ExitState, result.Status))
 	}
 	report.Status = "pass"
+	return nil
+}
+
+func runRemoteControlledPowerShell(ctx context.Context, opts RemoteRunOptions, workspace, body, stdoutPath, stderrPath, progressPath string) ([]byte, []byte, error) {
+	scriptPath := windowsJoin(workspace, "controller.ps1")
+	pidPath := windowsJoin(workspace, "controller.pid")
+	exitPath := windowsJoin(workspace, "controller.exit")
+	cancelPath := windowsJoin(workspace, "controller.cancel")
+	receiptPath := windowsJoin(workspace, "controller.json")
+	taskName := remoteControllerTaskName(workspace)
+	wrapper := `[IO.File]::WriteAllText(` + powerShellQuote(pidPath) + `,[string]$PID,(New-Object Text.UTF8Encoding($false))); ` + body + `; [IO.File]::WriteAllText(` + powerShellQuote(exitPath) + `,[string]$code,(New-Object Text.UTF8Encoding($false)))`
+	encoded := base64.StdEncoding.EncodeToString([]byte(wrapper))
+	startScript := fmt.Sprintf(`$ErrorActionPreference='Stop'; $taskName=%s; Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue; foreach($path in @(%s,%s,%s,%s,%s)){Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue}; [IO.File]::WriteAllBytes(%s,[Convert]::FromBase64String(%s)); $action=New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument %s -WorkingDirectory %s; $user=[Security.Principal.WindowsIdentity]::GetCurrent().Name; $principal=New-ScheduledTaskPrincipal -UserId $user -LogonType S4U -RunLevel Highest; $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings -Force|Out-Null; Start-ScheduledTask -TaskName $taskName; $deadline=(Get-Date).AddSeconds(15); do{Start-Sleep -Milliseconds 100}until((Test-Path -LiteralPath %s)-or(Get-Date)-gt$deadline); if(-not(Test-Path -LiteralPath %s)){throw 'remote task controller did not record its PID'}; $pidValue=[int]([IO.File]::ReadAllText(%s).Trim()); $record=[ordered]@{schema='bofbench.remote-task';schema_version=1;pid=$pidValue;task_name=$taskName;workspace=%s;pid_path=%s;exit_path=%s;cancel_path=%s;started_at=[DateTime]::UtcNow.ToString('o')}; [IO.File]::WriteAllText(%s,($record|ConvertTo-Json -Compress),(New-Object Text.UTF8Encoding($false))); Write-Output $pidValue`,
+		powerShellQuote(taskName),
+		powerShellQuote(pidPath), powerShellQuote(exitPath), powerShellQuote(cancelPath), powerShellQuote(receiptPath), powerShellQuote(scriptPath),
+		powerShellQuote(scriptPath), powerShellQuote(encoded), powerShellQuote("-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \""+scriptPath+"\""), powerShellQuote(workspace),
+		powerShellQuote(pidPath), powerShellQuote(pidPath), powerShellQuote(pidPath),
+		powerShellQuote(workspace), powerShellQuote(pidPath), powerShellQuote(exitPath), powerShellQuote(cancelPath), powerShellQuote(receiptPath))
+	started, startStderr, startErr := remoteExecute(ctx, opts.RemoteOptions, startScript)
+	if startErr != nil {
+		return nil, startStderr, fmt.Errorf("start remote task controller: %w", startErr)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(started)))
+	if err != nil || pid <= 0 {
+		return nil, startStderr, fmt.Errorf("decode remote task controller PID: %s", boundedText(string(started), 256))
+	}
+	controller := RemoteTaskController{
+		Profile: opts.ProfileName, Host: opts.Host, PID: pid, TaskName: taskName, Workspace: workspace,
+		ReceiptPath: receiptPath, PIDPath: pidPath, ExitPath: exitPath, CancelPath: cancelPath,
+	}
+	if opts.Controller != nil {
+		opts.Controller(controller)
+	}
+	statusScript := fmt.Sprintf(`$ErrorActionPreference='Continue'; $state='LOST'; $exit=''; if(Test-Path -LiteralPath %s){$state='CANCELED'}elseif(Test-Path -LiteralPath %s){$state='DONE';$exit=([IO.File]::ReadAllText(%s)).Trim()}elseif(Get-Process -Id %d -ErrorAction SilentlyContinue){$state='RUNNING'}; $progress=if(Test-Path -LiteralPath %s){[IO.File]::ReadAllText(%s)}else{''}; $record=[ordered]@{state=$state;exit=$exit;progress=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($progress))}; [Console]::Out.Write(($record|ConvertTo-Json -Compress))`, powerShellQuote(cancelPath), powerShellQuote(exitPath), powerShellQuote(exitPath), pid, powerShellQuote(progressPath), powerShellQuote(progressPath))
+	exitCode := -1
+	progressLines := 0
+	for {
+		select {
+		case <-ctx.Done():
+			cancelCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			cancelErr := CancelRemoteTask(cancelCtx, opts.RemoteOptions, controller)
+			cancel()
+			if cancelErr != nil {
+				return nil, nil, errors.Join(ctx.Err(), cancelErr)
+			}
+			return nil, nil, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+		pollCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		stateBytes, stateStderr, stateErr := remoteExecute(pollCtx, opts.RemoteOptions, statusScript)
+		cancel()
+		if stateErr != nil {
+			if ctx.Err() != nil {
+				continue
+			}
+			return nil, stateStderr, fmt.Errorf("poll remote task controller: %w", stateErr)
+		}
+		var status struct {
+			State    string `json:"state"`
+			Exit     string `json:"exit"`
+			Progress string `json:"progress"`
+		}
+		if err := json.Unmarshal(bytes.TrimSpace(stateBytes), &status); err != nil {
+			return nil, stateStderr, fmt.Errorf("decode remote task controller state: %w", err)
+		}
+		if decoded, err := base64.StdEncoding.DecodeString(status.Progress); err == nil {
+			lines := nonemptyRemoteLines(string(decoded))
+			if len(lines) < progressLines {
+				progressLines = 0
+			}
+			for _, line := range lines[progressLines:] {
+				if opts.Progress != nil {
+					opts.Progress(line)
+				}
+			}
+			progressLines = len(lines)
+		}
+		switch status.State {
+		case "RUNNING":
+			continue
+		case "CANCELED":
+			return nil, nil, context.Canceled
+		case "DONE":
+			exitCode, err = strconv.Atoi(strings.TrimSpace(status.Exit))
+			if err != nil {
+				return nil, stateStderr, fmt.Errorf("decode remote task exit state %q", status.Exit)
+			}
+		case "LOST":
+			return nil, stateStderr, fmt.Errorf("remote task controller %d exited without a terminal record", pid)
+		default:
+			return nil, stateStderr, fmt.Errorf("unexpected remote task controller state %q", status.State)
+		}
+		break
+	}
+	readScript := fmt.Sprintf(`$ErrorActionPreference='Continue'; if(Test-Path -LiteralPath %s){[Console]::Out.Write([IO.File]::ReadAllText(%s))}; if(Test-Path -LiteralPath %s){[Console]::Error.Write([IO.File]::ReadAllText(%s))}`, powerShellQuote(stdoutPath), powerShellQuote(stdoutPath), powerShellQuote(stderrPath), powerShellQuote(stderrPath))
+	stdout, stderr, readErr := remoteExecute(ctx, opts.RemoteOptions, readScript)
+	_, _, _ = remoteExecute(context.Background(), opts.RemoteOptions, fmt.Sprintf(`Stop-ScheduledTask -TaskName %s -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName %s -Confirm:$false -ErrorAction SilentlyContinue`, powerShellQuote(taskName), powerShellQuote(taskName)))
+	if readErr != nil {
+		return stdout, stderr, fmt.Errorf("collect remote task output: %w", readErr)
+	}
+	if exitCode != 0 {
+		return stdout, stderr, fmt.Errorf("remote task exited with code %d", exitCode)
+	}
+	return stdout, stderr, nil
+}
+
+func nonemptyRemoteLines(text string) []string {
+	var lines []string
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func remoteControllerTaskName(workspace string) string {
+	workspace = strings.TrimRight(workspace, `\/`)
+	if index := strings.LastIndexAny(workspace, `\/`); index >= 0 {
+		workspace = workspace[index+1:]
+	}
+	name := regexp.MustCompile(`[^A-Za-z0-9_-]+`).ReplaceAllString(workspace, "-")
+	if len(name) > 72 {
+		name = name[len(name)-72:]
+	}
+	return "BOFBenchTask-" + name
+}
+
+func CancelRemoteTask(ctx context.Context, opts RemoteOptions, controller RemoteTaskController) error {
+	if controller.PID <= 0 {
+		return fmt.Errorf("remote task controller PID is required")
+	}
+	opts, err := normalizeRemoteOptions(opts)
+	if err != nil {
+		return err
+	}
+	cancelPath := controller.CancelPath
+	if cancelPath == "" {
+		cancelPath = windowsJoin(controller.Workspace, "controller.cancel")
+	}
+	taskName := controller.TaskName
+	script := fmt.Sprintf(`$ErrorActionPreference='Stop'; $rootPid=%d; $taskName=%s; if(%s -and (Test-Path -LiteralPath %s)){$record=Get-Content -LiteralPath %s -Raw|ConvertFrom-Json; if([int]$record.pid -ne $rootPid){throw 'remote task controller PID no longer matches its receipt'}; if($taskName -and [string]$record.task_name -ne $taskName){throw 'remote task name no longer matches its receipt'}}; [IO.File]::WriteAllText(%s,[DateTime]::UtcNow.ToString('o'),(New-Object Text.UTF8Encoding($false))); if($taskName){Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue}; $processes=@(Get-CimInstance Win32_Process); $pending=New-Object 'System.Collections.Generic.Queue[int]'; $pending.Enqueue($rootPid); $ids=New-Object 'System.Collections.Generic.List[int]'; while($pending.Count -gt 0){$current=$pending.Dequeue(); if(-not $ids.Contains($current)){$ids.Add($current); foreach($child in @($processes|Where-Object{$_.ParentProcessId -eq $current})){$pending.Enqueue([int]$child.ProcessId)}}}; for($index=$ids.Count-1;$index-ge 0;$index--){Stop-Process -Id $ids[$index] -Force -ErrorAction SilentlyContinue}; $deadline=(Get-Date).AddSeconds(10); do{$remaining=@($ids|Where-Object{Get-Process -Id $_ -ErrorAction SilentlyContinue}); if($remaining.Count -eq 0){break}; Start-Sleep -Milliseconds 100}while((Get-Date)-lt$deadline); if($taskName){Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue}; if($remaining.Count -gt 0){throw ('remote task processes remain: '+($remaining -join ','))}; Write-Output 'canceled'`, controller.PID, powerShellQuote(taskName), powerShellQuote(controller.ReceiptPath), powerShellQuote(controller.ReceiptPath), powerShellQuote(controller.ReceiptPath), powerShellQuote(cancelPath))
+	_, stderr, err := remoteExecute(ctx, opts, script)
+	if err != nil {
+		return fmt.Errorf("cancel remote task %d: %w: %s", controller.PID, err, boundedText(string(stderr), 2048))
+	}
 	return nil
 }
 

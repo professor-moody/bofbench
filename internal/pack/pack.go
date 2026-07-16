@@ -1479,8 +1479,10 @@ func validate(document Document, root string) error {
 			}
 		}
 		stateParameters := map[string][]string{
-			"file": {"path"}, "startup_file": {"name"}, "registry_value": {"hive", "path", "name"}, "service": {"name"},
-			"scheduled_task": {"name"}, "credential": {"target"}, "certificate": {"scope", "store", "thumbprint"},
+			"file": {"path"}, "file_sha256": {"path", "sha256"}, "startup_file": {"name"}, "registry_value": {"hive", "path", "name"}, "service": {"name"},
+			"service_state": {"name", "state"}, "process_id": {"pid"}, "process_image_path": {"path"}, "etw_session": {"name"}, "event_log_record": {"channel", "message"},
+			"active_loader_tasks": {},
+			"scheduled_task":      {"name"}, "credential": {"target"}, "certificate": {"scope", "store", "thumbprint"},
 			"dpapi_file": {"path", "sha256"}, "pfx": {"path", "password", "thumbprint"},
 			"process_memory": {"pid", "address", "size", "sha256"}, "process_protection": {"pid", "address", "protection"},
 			"process_memory_region": {"pid", "address"}, "thread_suspend_state": {"tid", "suspended"}, "thread_context": {"tid", "ip"},

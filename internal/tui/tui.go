@@ -93,6 +93,9 @@ type runEntry struct {
 	ExecutionMode  string
 	ExecutionWaves []string
 	BlockedSteps   []string
+	ReadinessRows  []string
+	ActiveTasks    []string
+	Cancellation   string
 	DependencyRows []string
 	ModTime        time.Time
 }
@@ -870,7 +873,7 @@ func (m model) viewOperations() string {
 		}
 		fmt.Fprintf(&b, "\nExecution %s  Runtime %s  Lab %s  Parallelism %d (+/-)\nRun      bofbench operation run %s --via %s --parallelism %d\n", operationsvc.ExecutionMode(item.Document), hotStyle.Render(runVias[m.viaCursor]), labName, max(1, m.operationParallel), item.Qualified, runVias[m.viaCursor], max(1, m.operationParallel))
 		fmt.Fprintf(&b, "Test [x] bofbench operation test %s\nProve[p] bofbench operation prove %s --via %s\n", item.Qualified, item.Qualified, runVias[m.viaCursor])
-		fmt.Fprintf(&b, "Resume   bofbench operation resume runs/<id>/operation.json\nCleanup  bofbench operation cleanup runs/<id>/operation.json\n")
+		fmt.Fprintf(&b, "Watch    bofbench operation watch runs/<id>/operation.json --follow\nCancel   bofbench operation cancel runs/<id>/operation.json [--cleanup]\nResume   bofbench operation resume runs/<id>/operation.json\nCleanup  bofbench operation cleanup runs/<id>/operation.json\n")
 		if m.operationRegistry != nil {
 			graph, err := m.operationRegistry.Graph(item, "text", m.operationExpanded)
 			if err == nil {
@@ -890,10 +893,16 @@ func (m model) viewOperations() string {
 		lanes := []string{}
 		dependencies := []string{}
 		for _, step := range item.Document.Steps {
-			if len(step.DependsOn) == 0 && operationsvc.IsDAG(item.Document) {
+			if len(step.DependsOn) == 0 && len(step.DependsOnReady) == 0 && operationsvc.IsDAG(item.Document) {
 				dependencies = append(dependencies, step.ID+" ← ready root")
 			} else if len(step.DependsOn) > 0 {
 				dependencies = append(dependencies, step.ID+" ← "+strings.Join(step.DependsOn, ", "))
+			}
+			if len(step.DependsOnReady) > 0 {
+				dependencies = append(dependencies, step.ID+" ⇠ ready("+strings.Join(step.DependsOnReady, ", ")+")")
+			}
+			if step.Mode == "background" {
+				dependencies = append(dependencies, step.ID+" background: ready → active → terminal")
 			}
 			if step.Operation != "" {
 				children = append(children, step.ID+" → "+step.Operation)
@@ -1135,6 +1144,15 @@ func renderRunDetail(run runEntry) string {
 	if len(run.DependencyRows) > 0 {
 		fmt.Fprintf(&b, "  dependency state: %s\n", strings.Join(run.DependencyRows, ", "))
 	}
+	if len(run.ReadinessRows) > 0 {
+		fmt.Fprintf(&b, "  readiness: %s\n", strings.Join(run.ReadinessRows, ", "))
+	}
+	if len(run.ActiveTasks) > 0 {
+		fmt.Fprintf(&b, "  active tasks: %s\n", strings.Join(run.ActiveTasks, ", "))
+	}
+	if run.Cancellation != "" {
+		fmt.Fprintf(&b, "  cancellation: %s\n", run.Cancellation)
+	}
 	if len(run.BlockedSteps) > 0 {
 		fmt.Fprintf(&b, "  blocked: %s\n", strings.Join(run.BlockedSteps, ", "))
 	}
@@ -1327,6 +1345,7 @@ func readRunEntry(path string, modTime time.Time) runEntry {
 			run.MaxConcurrency = int(intField(v, "max_observed_concurrency"))
 			run.ExecutionMode = stringField(v, "execution")
 			run.BlockedSteps = stringSliceField(v, "blocked_steps")
+			run.Cancellation = stringField(v, "cancellation_state")
 			if waves, ok := v["execution_waves"].([]any); ok {
 				for _, rawWave := range waves {
 					wave, ok := rawWave.(map[string]any)
@@ -1347,12 +1366,29 @@ func readRunEntry(path string, modTime time.Time) runEntry {
 						run.MatchedRoutes = append(run.MatchedRoutes, stringField(step, "id")+"="+outcome)
 					}
 					dependencies := stringSliceField(step, "depends_on")
-					if len(dependencies) > 0 || stringField(step, "state") == "blocked" {
+					readyDependencies := stringSliceField(step, "depends_on_ready")
+					if len(dependencies) > 0 || len(readyDependencies) > 0 || stringField(step, "state") == "blocked" {
 						label := stringField(step, "id") + "←" + strings.Join(dependencies, "+") + "=" + emptyDash(stringField(step, "state"))
+						if len(readyDependencies) > 0 {
+							label += "(ready:" + strings.Join(readyDependencies, "+") + ")"
+						}
 						if blocked := stringSliceField(step, "blocked_by"); len(blocked) > 0 {
 							label += "(blocked-by:" + strings.Join(blocked, "+") + ")"
 						}
 						run.DependencyRows = append(run.DependencyRows, label)
+					}
+					if mode := stringField(step, "mode"); mode == "background" || stringField(step, "ready_state") != "" {
+						label := stringField(step, "id") + "=" + emptyDash(stringField(step, "ready_state"))
+						if readyAt := stringField(step, "ready_at"); readyAt != "" {
+							label += "@" + readyAt
+						}
+						run.ReadinessRows = append(run.ReadinessRows, label)
+					}
+					if runtimeReceipt, ok := step["runtime_receipt"].(map[string]any); ok {
+						state := stringField(runtimeReceipt, "execution_state")
+						if state == "submitted" || state == "running" {
+							run.ActiveTasks = append(run.ActiveTasks, stringField(step, "id")+"="+stringField(runtimeReceipt, "task_id"))
+						}
 					}
 					if child := stringField(step, "child_receipt"); child != "" {
 						run.ChildReceipts = append(run.ChildReceipts, stringField(step, "id")+"="+child)

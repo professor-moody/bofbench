@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,5 +57,45 @@ func TestPrepareCleanupProjectLeavesActionProjectUnchanged(t *testing.T) {
 	}
 	if string(current) != string(original) {
 		t.Fatal("cleanup preparation changed the action project")
+	}
+}
+
+func TestCleanupNamedArgumentsPrefersExplicitMapping(t *testing.T) {
+	tmp := t.TempDir()
+	project, cleanupProject := filepath.Join(tmp, "action"), filepath.Join(tmp, "cleanup")
+	for _, path := range []string{project, cleanupProject} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeLock := func(path string, lock packsvc.Lock) {
+		t.Helper()
+		data, err := json.Marshal(lock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, packsvc.LockName), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeLock(project, packsvc.Lock{
+		Schema: packsvc.LockSchema, SchemaVersion: packsvc.LockSchemaVersion,
+		Packs: []packsvc.LockRecord{{
+			ID: "event-log-export", Cleanup: "file-remove",
+			CleanupArguments: map[string]string{"path": "$arg.output_path"},
+		}},
+	})
+	writeLock(cleanupProject, packsvc.Lock{
+		Schema: packsvc.LockSchema, SchemaVersion: packsvc.LockSchemaVersion,
+		Packs: []packsvc.LockRecord{{
+			ID: "file-remove", Arguments: []packsvc.Argument{{Name: "path", Type: "wstring", Required: true}},
+		}},
+	})
+	got := cleanupNamedArguments(project, cleanupProject, []string{
+		"path=System",
+		"output_path=C:\\bofbench\\proof\\events.evtx",
+	})
+	if len(got) != 1 || got[0] != `path=C:\bofbench\proof\events.evtx` {
+		t.Fatalf("cleanup arguments = %#v", got)
 	}
 }

@@ -31,6 +31,7 @@ type dagStepResult struct {
 }
 
 func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.Registry, item operationsvc.Resolved, inputs, topology map[string]string, opts operationOptions, receipt *operationsvc.Receipt, path string, resumed bool) error {
+	defer os.Remove(path + ".cancel")
 	ready, err := operationsvc.ReadyDAGSteps(item.Document, *receipt)
 	if err != nil {
 		return err
@@ -51,18 +52,43 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 		return err
 	}
 	for {
+		cancelRequested := syncDAGCancellationRequest(path, receipt)
 		ready, err = operationsvc.ReadyDAGSteps(item.Document, *receipt)
 		if err != nil {
 			return err
+		}
+		if cancelRequested {
+			ready = activeDAGStepIndexes(*receipt)
+			requestDAGActiveCancellation(ctx, receipt, ready, opts)
+			if len(ready) == 0 {
+				now := time.Now().UTC().Format(time.RFC3339Nano)
+				for index := range receipt.Steps {
+					if receipt.Steps[index].State == "pending" {
+						receipt.Steps[index].State = "blocked"
+						receipt.Steps[index].ContractState = "blocked"
+						receipt.Steps[index].BlockedBy = []string{"operator-cancel"}
+					}
+				}
+				receipt.Status, receipt.CancellationState, receipt.CanceledAt = "canceled", "completed", now
+				receipt.CompletedAt = now
+				if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+					return err
+				}
+				fmt.Fprintf(stdout, "operation  canceled\nreceipt    %s\n", path)
+				return nil
+			}
 		}
 		if len(ready) == 0 {
 			break
 		}
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		wave := operationsvc.ExecutionWave{Index: len(receipt.ExecutionWaves) + 1, State: "preparing", ReadyAt: now}
+		recordWave := false
 		for _, index := range ready {
-			wave.Steps = append(wave.Steps, item.Document.Steps[index].ID)
-			receipt.Steps[index].ReadyAt = now
+			if receipt.Steps[index].State == "pending" {
+				recordWave = true
+				wave.Steps = append(wave.Steps, item.Document.Steps[index].ID)
+			}
 		}
 		prepared, prepErr := prepareDAGWave(ctx, registry, item, inputs, topology, opts, *receipt, ready, work)
 		if prepErr != nil {
@@ -76,14 +102,44 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 			receipt.Steps[failed].State, receipt.Steps[failed].ContractState = "failed", "failed"
 			receipt.Steps[failed].Error = prepErr.Error()
 			wave.State, wave.CompletedAt = "failed", time.Now().UTC().Format(time.RFC3339Nano)
-			receipt.ExecutionWaves = append(receipt.ExecutionWaves, wave)
+			if recordWave {
+				receipt.ExecutionWaves = append(receipt.ExecutionWaves, wave)
+			}
 			operationsvc.BlockDAGDescendants(item.Document, receipt, []string{item.Document.Steps[failed].ID})
 			receipt.Status, receipt.Error = "failed", prepErr.Error()
+			settleDAGRuntimeTasks(ctx, receipt, opts, path, 30*time.Second)
 			_ = operationsvc.SaveReceipt(path, receipt)
 			if opts.cleanupOnFailure {
 				_ = cleanupOperation(ctx, stdout, registry, item, inputs, receipt, path, opts)
 			}
 			return prepErr
+		}
+		if syncDAGCancellationRequest(path, receipt) {
+			active := ready[:0]
+			for _, index := range ready {
+				switch receipt.Steps[index].State {
+				case "running", "ready", "incomplete":
+					active = append(active, index)
+				case "pending":
+					receipt.Steps[index].State = "blocked"
+					receipt.Steps[index].ContractState = "blocked"
+					receipt.Steps[index].BlockedBy = []string{"operator-cancel"}
+				}
+			}
+			ready = active
+			wave.Steps = wave.Steps[:0]
+			recordWave = false
+			requestDAGActiveCancellation(ctx, receipt, ready, opts)
+			if len(ready) == 0 {
+				now := time.Now().UTC().Format(time.RFC3339Nano)
+				receipt.Status, receipt.CancellationState, receipt.CanceledAt = "canceled", "completed", now
+				receipt.CompletedAt = now
+				if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+					return err
+				}
+				fmt.Fprintf(stdout, "operation  canceled\nreceipt    %s\n", path)
+				return nil
+			}
 		}
 		wave.State, wave.StartedAt = "running", time.Now().UTC().Format(time.RFC3339Nano)
 		for _, index := range ready {
@@ -97,7 +153,9 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 		if err := operationsvc.SaveReceipt(path, receipt); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "wave %d/%d  ready=%s\n", wave.Index, len(item.Document.Steps), joinDAGStepIDs(item.Document, ready))
+		if recordWave {
+			fmt.Fprintf(stdout, "wave %d/%d  ready=%v\n", wave.Index, len(item.Document.Steps), wave.Steps)
+		}
 		results := executeDAGWave(ctx, registry, item, inputs, topology, opts, *receipt, path, prepared, ready)
 		sort.Slice(results, func(i, j int) bool { return results[i].index < results[j].index })
 		var failed, incomplete, active, canceled []string
@@ -137,6 +195,10 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 		}
 		wave.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		switch {
+		case len(canceled) > 0 && len(active) > 0:
+			wave.State, receipt.Status = "canceling", "running"
+			receipt.CancellationState = "canceling"
+			receipt.Error = fmt.Sprintf("waiting for active tasks %s after cancellation at %s", active, canceled)
 		case len(canceled) > 0:
 			wave.State, receipt.Status = "canceled", "canceled"
 			receipt.CancellationState, receipt.CanceledAt = "completed", time.Now().UTC().Format(time.RFC3339Nano)
@@ -157,7 +219,13 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 			wave.State = "completed"
 			receipt.Status, receipt.Error = "running", ""
 		}
-		receipt.ExecutionWaves = append(receipt.ExecutionWaves, wave)
+		if recordWave {
+			wave.State = dagWaveState(wave.Steps, receipt.Steps)
+		}
+		refreshRecordedDAGWaves(receipt)
+		if recordWave {
+			receipt.ExecutionWaves = append(receipt.ExecutionWaves, wave)
+		}
 		concurrency := len(ready)
 		if concurrency > opts.parallelism {
 			concurrency = opts.parallelism
@@ -169,12 +237,21 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 			return err
 		}
 		if len(failed) > 0 {
+			settleDAGRuntimeTasks(ctx, receipt, opts, path, 30*time.Second)
 			if opts.cleanupOnFailure {
 				_ = cleanupOperation(ctx, stdout, registry, item, inputs, receipt, path, opts)
 			}
 			return fmt.Errorf("%s", receipt.Error)
 		}
-		if len(canceled) > 0 {
+		remainingActive := activeDAGStepIndexes(*receipt)
+		if len(canceled) > 0 && len(remainingActive) > 0 {
+			requestDAGActiveCancellation(ctx, receipt, remainingActive, opts)
+			receipt.Status, receipt.CancellationState, receipt.CanceledAt = "running", "canceling", ""
+			if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+				return err
+			}
+		}
+		if len(canceled) > 0 && len(remainingActive) == 0 {
 			fmt.Fprintf(stdout, "operation  canceled\nreceipt    %s\n", path)
 			return nil
 		}
@@ -202,6 +279,131 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 		return cleanupOperation(ctx, stdout, registry, item, inputs, receipt, path, opts)
 	}
 	return nil
+}
+
+func settleDAGRuntimeTasks(ctx context.Context, receipt *operationsvc.Receipt, opts operationOptions, path string, timeout time.Duration) {
+	if receipt == nil {
+		return
+	}
+	for index := range receipt.Steps {
+		step := &receipt.Steps[index]
+		if step.Runtime.Runtime == "" || step.Runtime.ReceiptPath == "" || runtimeTaskTerminal(step.Runtime.ExecutionState) {
+			continue
+		}
+		updated, err := cancelOperationRuntimeReceipt(ctx, step.Runtime, opts)
+		if err != nil {
+			step.CancellationState = "unsupported"
+			if step.Error == "" {
+				step.Error = err.Error()
+			}
+			continue
+		}
+		step.Runtime, step.CancellationState = updated, "requested"
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		active := false
+		for index := range receipt.Steps {
+			step := &receipt.Steps[index]
+			if step.Runtime.Runtime == "" || step.Runtime.ReceiptPath == "" || runtimeTaskTerminal(step.Runtime.ExecutionState) {
+				continue
+			}
+			active = true
+			updated, err := refreshOperationRuntimeReceipt(ctx, step.Runtime, opts)
+			if err == nil {
+				step.Runtime = updated
+				if runtimeTaskTerminal(updated.ExecutionState) {
+					step.CancellationState = "completed"
+					if step.State == "running" || step.State == "ready" || step.State == "incomplete" {
+						step.State = "canceled"
+					}
+				}
+			}
+		}
+		_ = operationsvc.SaveReceipt(path, receipt)
+		if !active || time.Now().After(deadline) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func activeDAGStepIndexes(receipt operationsvc.Receipt) []int {
+	var indexes []int
+	for index, step := range receipt.Steps {
+		switch step.State {
+		case "running", "ready", "incomplete":
+			indexes = append(indexes, index)
+		}
+	}
+	return indexes
+}
+
+func requestDAGActiveCancellation(ctx context.Context, receipt *operationsvc.Receipt, indexes []int, opts operationOptions) {
+	if receipt == nil {
+		return
+	}
+	for _, index := range indexes {
+		step := &receipt.Steps[index]
+		if step.Runtime.Runtime == "" || step.Runtime.ReceiptPath == "" || runtimeTaskTerminal(step.Runtime.ExecutionState) {
+			continue
+		}
+		updated, err := cancelOperationRuntimeReceipt(ctx, step.Runtime, opts)
+		if err != nil {
+			step.CancellationState = "unsupported"
+			if step.Error == "" {
+				step.Error = err.Error()
+			}
+			continue
+		}
+		step.Runtime, step.CancellationState = updated, "requested"
+	}
+}
+
+func dagWaveState(ids []string, steps []operationsvc.StepReceipt) string {
+	state := "completed"
+	for _, id := range ids {
+		for _, step := range steps {
+			if step.ID != id {
+				continue
+			}
+			switch step.State {
+			case "failed":
+				return "failed"
+			case "canceled":
+				state = "canceled"
+			case "incomplete":
+				if state != "canceled" {
+					state = "incomplete"
+				}
+			case "pending", "running", "ready":
+				if state == "completed" {
+					state = "active"
+				}
+			}
+			break
+		}
+	}
+	return state
+}
+
+func refreshRecordedDAGWaves(receipt *operationsvc.Receipt) {
+	if receipt == nil {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for index := range receipt.ExecutionWaves {
+		wave := &receipt.ExecutionWaves[index]
+		state := dagWaveState(wave.Steps, receipt.Steps)
+		wave.State = state
+		if state != "active" && wave.CompletedAt == "" {
+			wave.CompletedAt = now
+		}
+	}
 }
 
 func prepareDAGWave(ctx context.Context, registry *operationsvc.Registry, item operationsvc.Resolved, inputs, topology map[string]string, opts operationOptions, receipt operationsvc.Receipt, ready []int, work string) (map[int]dagPreparedStep, error) {
@@ -303,7 +505,7 @@ func executeDAGStep(ctx context.Context, stdout io.Writer, registry *operationsv
 		}
 		var updated runtimeadapter.Receipt
 		var err error
-		if step.Mode == "background" {
+		if step.Mode == "background" || item.Document.SchemaVersion >= 7 {
 			updated, err = startPreparedOperationPack(ctx, *prepared.pack, opts)
 		} else {
 			updated, err = executePreparedOperationPack(ctx, *prepared.pack, opts)
@@ -319,7 +521,16 @@ func executeDAGStep(ctx context.Context, stdout io.Writer, registry *operationsv
 		}
 	}
 	result.output = runtimeOutput
+	if step.Mode != "background" && item.Document.SchemaVersion >= 7 && !result.receipt.OutputComplete &&
+		(result.receipt.Runtime.Runtime == "native" || result.receipt.Runtime.Runtime == "lab") &&
+		(result.receipt.Runtime.ExecutionState == "submitted" || result.receipt.Runtime.ExecutionState == "running") {
+		result.receipt.State = "running"
+		return result
+	}
 	if step.Mode == "background" {
+		if result.receipt.State == "canceled" {
+			return result
+		}
 		if result.receipt.StartedAt != "" && step.TimeoutMS > 0 {
 			if started, parseErr := time.Parse(time.RFC3339Nano, result.receipt.StartedAt); parseErr == nil && time.Since(started) > time.Duration(step.TimeoutMS)*time.Millisecond {
 				result.receipt.State, result.receipt.ContractState, result.receipt.Error = "failed", "failed", "background step timed out"
@@ -342,7 +553,7 @@ func executeDAGStep(ctx context.Context, stdout io.Writer, registry *operationsv
 				result.receipt.ReadyCaptures, result.receipt.ReadyAt, result.receipt.LastProgressAt = captured, now, now
 			}
 		}
-		if !result.receipt.OutputComplete && result.receipt.State != "failed" {
+		if !result.receipt.OutputComplete && (result.receipt.State == "running" || result.receipt.State == "incomplete" || result.receipt.State == "ready") {
 			if result.receipt.ReadyState == "ready" {
 				result.receipt.State = "ready"
 			} else {
@@ -378,6 +589,24 @@ func executeDAGStep(ctx context.Context, stdout io.Writer, registry *operationsv
 	result.receipt.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	printOperationResult(stdout, result.receipt.Runtime.Output, captured)
 	return result
+}
+
+func syncDAGCancellationRequest(path string, receipt *operationsvc.Receipt) bool {
+	if receipt == nil {
+		return false
+	}
+	latest, err := operationsvc.LoadReceipt(path)
+	if err == nil && latest.CancelRequestedAt != "" {
+		receipt.CancelRequestedAt = latest.CancelRequestedAt
+		receipt.CancellationState = latest.CancellationState
+	}
+	if _, err := os.Stat(path + ".cancel"); err == nil {
+		if receipt.CancelRequestedAt == "" {
+			receipt.CancelRequestedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		receipt.CancellationState = "requested"
+	}
+	return receipt.CancelRequestedAt != ""
 }
 
 func executeDAGChild(ctx context.Context, stdout io.Writer, registry *operationsvc.Registry, parent operationsvc.Resolved, step operationsvc.Step, inputs, topology map[string]string, opts operationOptions, receipt operationsvc.Receipt, path string, index int) dagStepResult {

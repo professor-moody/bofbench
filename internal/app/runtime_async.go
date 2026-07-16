@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"bofbench/internal/evidence"
+	"bofbench/internal/lab"
 	"bofbench/internal/runlog"
 	"bofbench/internal/runtimeadapter"
 )
@@ -36,7 +38,7 @@ func (run *runtimeRunContext) startRuntimeTask(parent context.Context, runtimeNa
 	receipt := runtimeadapter.Receipt{
 		Schema: runtimeadapter.ReceiptSchema, SchemaVersion: runtimeadapter.ReceiptSchemaVersion,
 		Runtime: runtimeName, Status: "running", ExecutionState: "running", OutputComplete: false,
-		TaskID: taskID, ReceiptPath: path, WorkerPID: os.Getpid(), CancelSupported: runtimeName == "native" || runtimeName == "lab",
+		Profile: run.labName, TaskID: taskID, ReceiptPath: path, WorkerPID: os.Getpid(), CancelSupported: runtimeName == "native" || runtimeName == "lab",
 		StartedAt: started.Format(time.RFC3339Nano), OutputClassification: "partial", Object: prepared.Request.Object,
 	}
 	if prepared.Request.Object != "" {
@@ -72,6 +74,22 @@ func (run *runtimeRunContext) startRuntimeTask(parent context.Context, runtimeNa
 		current = run.redactReceipt(current)
 		_ = writeRuntimeTaskReceipt(path, current)
 	}
+	previousController := run.controller
+	run.controller = func(controller lab.RemoteTaskController) {
+		if previousController != nil {
+			previousController(controller)
+		}
+		current, loadErr := loadRuntimeTaskReceipt(path)
+		if loadErr != nil || runtimeTaskTerminal(current.ExecutionState) {
+			return
+		}
+		current.Profile = controller.Profile
+		current.RemoteHost = controller.Host
+		current.RemoteWorkerPID = controller.PID
+		current.RemoteTaskName = controller.TaskName
+		current.RemoteReceiptPath = controller.ReceiptPath
+		_ = writeRuntimeTaskReceipt(path, current)
+	}
 
 	go func() {
 		defer cancel()
@@ -80,6 +98,7 @@ func (run *runtimeRunContext) startRuntimeTask(parent context.Context, runtimeNa
 		if current.Schema == "" {
 			current = receipt
 		}
+		mergeRuntimeTaskMetadata(&final, current, receipt)
 		final.Schema, final.SchemaVersion = runtimeadapter.ReceiptSchema, runtimeadapter.ReceiptSchemaVersion
 		final.Runtime, final.TaskID, final.ReceiptPath = runtimeName, taskID, path
 		final.WorkerPID, final.CancelSupported = receipt.WorkerPID, receipt.CancelSupported
@@ -96,6 +115,7 @@ func (run *runtimeRunContext) startRuntimeTask(parent context.Context, runtimeNa
 			now := time.Now().UTC()
 			final.Status, final.ExecutionState, final.OutputComplete = "canceled", "canceled", false
 			final.CancelSupported, final.CanceledAt, final.TerminalReason = true, now.Format(time.RFC3339Nano), "operator_canceled"
+			final.CompletedAt, final.DurationMS = final.CanceledAt, now.Sub(started).Milliseconds()
 			final.OutputClassification = "partial"
 			runtimeadapter.AddTransition(&final, "canceled", "runtime task canceled", now)
 		} else if executeErr != nil && final.ExecutionState == "" {
@@ -113,6 +133,72 @@ func (run *runtimeRunContext) startRuntimeTask(parent context.Context, runtimeNa
 	return receipt, nil
 }
 
+func mergeRuntimeTaskMetadata(final *runtimeadapter.Receipt, current, initial runtimeadapter.Receipt) {
+	if final.Object == "" {
+		final.Object = firstNonempty(current.Object, initial.Object)
+	}
+	if final.ObjectSHA256 == "" {
+		final.ObjectSHA256 = firstNonempty(current.ObjectSHA256, initial.ObjectSHA256)
+	}
+	if final.Profile == "" {
+		final.Profile = current.Profile
+	}
+	if final.Transport == "" {
+		final.Transport = current.Transport
+	}
+	if final.RemoteHost == "" {
+		final.RemoteHost = current.RemoteHost
+	}
+	if final.RemoteComputer == "" {
+		final.RemoteComputer = current.RemoteComputer
+	}
+	if final.Session == "" {
+		final.Session = current.Session
+	}
+	if final.Entrypoint == "" {
+		final.Entrypoint = current.Entrypoint
+	}
+	if len(final.Arguments) == 0 {
+		final.Arguments = append([]string(nil), current.Arguments...)
+	}
+	if len(final.SensitiveArguments) == 0 {
+		final.SensitiveArguments = append([]string(nil), current.SensitiveArguments...)
+	}
+	if final.TimeoutMS == 0 {
+		final.TimeoutMS = current.TimeoutMS
+	}
+	if final.CancelRequestedAt == "" {
+		final.CancelRequestedAt = current.CancelRequestedAt
+	}
+	if final.CancelSource == "" {
+		final.CancelSource = current.CancelSource
+	}
+	if final.LastOutputAt == "" {
+		final.LastOutputAt = current.LastOutputAt
+	}
+	if final.RemoteWorkerPID == 0 {
+		final.RemoteWorkerPID = current.RemoteWorkerPID
+	}
+	if final.RemoteTaskName == "" {
+		final.RemoteTaskName = current.RemoteTaskName
+	}
+	if final.RemoteReceiptPath == "" {
+		final.RemoteReceiptPath = current.RemoteReceiptPath
+	}
+	if len(current.StateTransitions) > 0 {
+		final.StateTransitions = append(append([]runtimeadapter.StateTransition(nil), current.StateTransitions...), final.StateTransitions...)
+	}
+}
+
+func firstNonempty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func (run *runtimeRunContext) cancelRuntimeReceipt(_ context.Context, receipt runtimeadapter.Receipt) (runtimeadapter.Receipt, error) {
 	if receipt.ExecutionState == "completed" || receipt.ExecutionState == "failed" || receipt.ExecutionState == "timeout" || receipt.ExecutionState == "canceled" || receipt.ExecutionState == "cancelled" {
 		return receipt, nil
@@ -120,12 +206,22 @@ func (run *runtimeRunContext) cancelRuntimeReceipt(_ context.Context, receipt ru
 	if !receipt.CancelSupported {
 		return receipt, fmt.Errorf("runtime %s does not expose safe task cancellation", receipt.Runtime)
 	}
-	now := time.Now().UTC()
-	receipt.CancelRequestedAt, receipt.CancelSource = now.Format(time.RFC3339Nano), "operator"
-	runtimeadapter.AddTransition(&receipt, "canceling", "operator requested cancellation", now)
 	if receipt.ReceiptPath != "" {
-		if err := writeRuntimeTaskReceipt(receipt.ReceiptPath, receipt); err != nil {
-			return receipt, err
+		if current, err := loadRuntimeTaskReceipt(receipt.ReceiptPath); err == nil {
+			if runtimeTaskTerminal(current.ExecutionState) {
+				return current, nil
+			}
+			receipt = current
+		}
+	}
+	if receipt.CancelRequestedAt == "" {
+		now := time.Now().UTC()
+		receipt.CancelRequestedAt, receipt.CancelSource = now.Format(time.RFC3339Nano), "operator"
+		runtimeadapter.AddTransition(&receipt, "canceling", "operator requested cancellation", now)
+		if receipt.ReceiptPath != "" {
+			if err := writeRuntimeTaskReceipt(receipt.ReceiptPath, receipt); err != nil {
+				return receipt, err
+			}
 		}
 	}
 	runtimeTasks.Lock()
@@ -141,10 +237,57 @@ func (run *runtimeRunContext) cancelRuntimeReceipt(_ context.Context, receipt ru
 	if receipt.ReceiptPath == "" {
 		return receipt, fmt.Errorf("runtime task has no receipt path for cancellation")
 	}
-	if err := os.WriteFile(receipt.ReceiptPath+".cancel", []byte(receipt.CancelRequestedAt+"\n"), 0o600); err != nil {
-		return receipt, err
+	remoteCanceled := false
+	if receipt.Runtime == "lab" && receipt.RemoteWorkerPID > 0 {
+		profileName := receipt.Profile
+		if profileName == "" {
+			profileName = run.labName
+		}
+		resolved, resolveErr := lab.ResolveProfile(profileName, "", run.labProfiles)
+		if resolveErr != nil {
+			return receipt, resolveErr
+		}
+		remote, resolveErr := lab.ResolveRemoteOptions(context.Background(), resolved.Name, resolved.Profile)
+		if resolveErr != nil {
+			return receipt, resolveErr
+		}
+		controller := lab.RemoteTaskController{
+			Profile: resolved.Name, Host: remote.Host, PID: receipt.RemoteWorkerPID,
+			TaskName: receipt.RemoteTaskName, Workspace: remoteWindowsDirectory(receipt.RemoteReceiptPath), ReceiptPath: receipt.RemoteReceiptPath,
+		}
+		cancelCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		cancelErr := lab.CancelRemoteTask(cancelCtx, remote, controller)
+		cancel()
+		if cancelErr != nil {
+			return receipt, cancelErr
+		}
+		remoteCanceled = true
+	}
+	markerPath := receipt.ReceiptPath + ".cancel"
+	if _, markerErr := os.Stat(markerPath); os.IsNotExist(markerErr) {
+		if markerErr := os.WriteFile(markerPath, []byte(receipt.CancelRequestedAt+"\n"), 0o600); markerErr != nil {
+			return receipt, markerErr
+		}
+	}
+	if remoteCanceled {
+		now := time.Now().UTC()
+		receipt.Status, receipt.ExecutionState, receipt.OutputComplete = "canceled", "canceled", false
+		receipt.CanceledAt, receipt.CompletedAt = now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)
+		receipt.TerminalReason, receipt.OutputClassification = "remote_controller_canceled", "partial"
+		runtimeadapter.AddTransition(&receipt, "canceled", "remote task controller confirmed cancellation", now)
+		if err := writeRuntimeTaskReceipt(receipt.ReceiptPath, receipt); err != nil {
+			return receipt, err
+		}
 	}
 	return receipt, nil
+}
+
+func remoteWindowsDirectory(path string) string {
+	path = strings.TrimRight(path, `\/`)
+	if index := strings.LastIndexAny(path, `\/`); index >= 0 {
+		return path[:index]
+	}
+	return path
 }
 
 func watchRuntimeCancelFile(ctx context.Context, path string, cancel context.CancelFunc) {

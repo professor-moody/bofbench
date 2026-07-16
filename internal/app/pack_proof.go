@@ -812,11 +812,21 @@ func runDelegatedPackProof(ctx context.Context, item packsvc.Resolved, proof pac
 	if err != nil {
 		return packProofResult{}, err
 	}
+	phase := delegation.Phase
+	if phase == "" {
+		phase = "action"
+	}
+	if phase != "action" && phase != "cleanup" {
+		return packProofResult{}, fmt.Errorf("unsupported delegated operation proof phase %q", phase)
+	}
 	args := []string{"operation"}
 	if item.CatalogRoot != "" {
 		args = append(args, "--catalog", item.CatalogRoot)
 	}
 	args = append(args, "run", delegation.Operation, "--via", via, "--arch", arch)
+	if phase == "cleanup" {
+		args = append(args, "--cleanup")
+	}
 	if topology != nil {
 		args = append(args, "--topology", topology.Topology.Name)
 	} else if labName != "" && (via == "lab" || via == "sliver") {
@@ -855,10 +865,6 @@ func runDelegatedPackProof(ctx context.Context, item packsvc.Resolved, proof pac
 	if selected == nil {
 		return result, fmt.Errorf("delegated operation %s has no step %s", delegation.Operation, delegation.Step)
 	}
-	phase := delegation.Phase
-	if phase == "" {
-		phase = "action"
-	}
 	switch phase {
 	case "action":
 		if selected.State != "completed" || selected.PackSHA256 != item.SHA256 {
@@ -872,8 +878,6 @@ func runDelegatedPackProof(ctx context.Context, item packsvc.Resolved, proof pac
 		if selected.CleanupRuntime != nil {
 			result.ObjectSHA256, result.Receipt = selected.CleanupRuntime.ObjectSHA256, selected.CleanupRuntime.ReceiptPath
 		}
-	default:
-		return result, fmt.Errorf("unsupported delegated operation proof phase %q", phase)
 	}
 	if runErr != nil {
 		return result, runErr
@@ -1266,6 +1270,8 @@ func proofStateCheckScript(kind, expect string, parameters map[string]string) (s
 	switch kind {
 	case "file":
 		probe = `$present=Test-Path -LiteralPath ` + q(parameters["path"])
+	case "file_sha256":
+		probe = `$path=` + q(parameters["path"]) + `; $present=Test-Path -LiteralPath $path; $matches=$false; if($present){$hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash; $matches=$hash -ieq ` + q(parameters["sha256"]) + `}`
 	case "startup_file":
 		leaf := parameters["name"]
 		if leaf == "" || strings.ContainsAny(leaf, `\/:`) {
@@ -1281,6 +1287,18 @@ func proofStateCheckScript(kind, expect string, parameters map[string]string) (s
 		probe = `$key=Join-Path ` + q(prefix) + ` ` + q(parameters["path"]) + `; $present=$false; $matches=$false; if(Test-Path -LiteralPath $key){$property=Get-ItemProperty -LiteralPath $key -Name ` + q(parameters["name"]) + ` -ErrorAction SilentlyContinue; $present=$null -ne $property; if($present -and ` + q(parameters["sha256"]) + `){$value=$property.PSObject.Properties[` + q(parameters["name"]) + `].Value; if($value -is [byte[]]){$bytes=$value}else{$bytes=[Text.Encoding]::Unicode.GetBytes([string]$value)}; $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)); $kind=(Get-Item -LiteralPath $key).GetValueKind(` + q(parameters["name"]) + `); $type=@{String=1;ExpandString=2;Binary=3;DWord=4;MultiString=7;QWord=11}[[string]$kind]; $matches=($hash -ieq ` + q(parameters["sha256"]) + `) -and ((-not ` + q(parameters["type"]) + `) -or ([int]$type -eq [int]` + q(parameters["type"]) + `))}}`
 	case "service":
 		probe = `$present=$null -ne (Get-Service -Name ` + q(parameters["name"]) + ` -ErrorAction SilentlyContinue)`
+	case "service_state":
+		probe = `$service=Get-Service -Name ` + q(parameters["name"]) + ` -ErrorAction SilentlyContinue; $present=$null -ne $service; $matches=$present -and ([string]$service.Status -ieq ` + q(parameters["state"]) + `)`
+	case "process_id":
+		probe = `$present=$null -ne (Get-Process -Id ([int]` + q(parameters["pid"]) + `) -ErrorAction SilentlyContinue); $matches=$present`
+	case "process_image_path":
+		probe = `$processes=@(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {[string]$_.ExecutablePath -ieq ` + q(parameters["path"]) + `}); $present=$processes.Count -gt 0; $matches=$present`
+	case "etw_session":
+		probe = `$text=(& logman.exe query ` + q(parameters["name"]) + ` -ets 2>&1 | Out-String); $present=$LASTEXITCODE -eq 0; $matches=$present`
+	case "event_log_record":
+		probe = `$events=@(Get-WinEvent -LogName ` + q(parameters["channel"]) + ` -MaxEvents 256 -ErrorAction SilentlyContinue | Where-Object {[string]$_.Message -like ('*'+` + q(parameters["message"]) + `+'*')}); $present=$events.Count -gt 0; $matches=$present`
+	case "active_loader_tasks":
+		probe = `$tasks=@(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {$_.Name -like 'bofbench-loader*.exe' -or ($_.Name -ieq 'bofbench.exe' -and [string]$_.CommandLine -match '\btask\s+(run|worker)\b')}); $present=$tasks.Count -gt 0; $matches=$present`
 	case "scheduled_task":
 		probe = `$present=$null -ne (Get-ScheduledTask -TaskName ` + q(parameters["name"]) + ` -ErrorAction SilentlyContinue)`
 	case "credential":

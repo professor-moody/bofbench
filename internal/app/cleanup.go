@@ -102,6 +102,9 @@ func cleanupNamedArguments(sourceProject, cleanupProject string, values []string
 	}
 	for name, raw := range provided {
 		if allowed[name] {
+			if _, mappedByContract := mapped[name]; mappedByContract {
+				continue
+			}
 			mapped[name] = raw
 		}
 	}

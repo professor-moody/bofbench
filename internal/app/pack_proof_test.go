@@ -91,3 +91,29 @@ func TestProofCapturesAndTopologyDefaults(t *testing.T) {
 		t.Fatalf("topology arguments = %#v", arguments)
 	}
 }
+
+func TestEventingProofStateChecksProduceIndependentProbes(t *testing.T) {
+	tests := []struct {
+		kind       string
+		expect     string
+		parameters map[string]string
+		needle     string
+	}{
+		{"file_sha256", "matches", map[string]string{"path": `C:\bofbench\proof\event.bin`, "sha256": "abc"}, "Get-FileHash"},
+		{"service_state", "matches", map[string]string{"name": "BOFBench-Async", "state": "Running"}, "Get-Service"},
+		{"process_id", "absent", map[string]string{"pid": "4242"}, "Get-Process"},
+		{"process_image_path", "absent", map[string]string{"path": `C:\bofbench\target\fixture.exe`}, "ExecutablePath"},
+		{"etw_session", "absent", map[string]string{"name": "BOFBench-ETW"}, "logman.exe"},
+		{"event_log_record", "matches", map[string]string{"channel": "Application", "message": "BOFBench-run"}, "Get-WinEvent"},
+		{"active_loader_tasks", "absent", map[string]string{}, "bofbench-loader"},
+	}
+	for _, test := range tests {
+		script, err := proofStateCheckScript(test.kind, test.expect, test.parameters)
+		if err != nil {
+			t.Fatalf("%s: %v", test.kind, err)
+		}
+		if !strings.Contains(script, test.needle) || !strings.Contains(script, "BOFBENCH_STATE_VERIFIED") {
+			t.Fatalf("%s script does not contain %q: %s", test.kind, test.needle, script)
+		}
+	}
+}
