@@ -241,7 +241,7 @@ func executeDAGStep(ctx context.Context, stdout io.Writer, registry *operationsv
 	}
 	var runtimeOutput []string
 	if prepared.pack == nil && (state.State == "incomplete" || state.State == "running") {
-		updated, err := operationsvc.RefreshRuntimeReceipt(state.Runtime)
+		updated, err := refreshOperationRuntimeReceipt(ctx, state.Runtime, opts)
 		if err != nil {
 			result.err = err
 			result.receipt.State, result.receipt.ContractState, result.receipt.Error = "failed", "failed", err.Error()

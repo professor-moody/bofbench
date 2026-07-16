@@ -49,3 +49,16 @@ func TestRuntimeTaskStateTransitions(t *testing.T) {
 		t.Fatalf("transitions = %+v", receipt.StateTransitions)
 	}
 }
+
+func TestRuntimeTaskTerminalAcceptsBothCanceledSpellings(t *testing.T) {
+	for _, state := range []string{"completed", "failed", "canceled", "cancelled", "timeout"} {
+		if !runtimeTaskTerminal(state) {
+			t.Fatalf("%q should be terminal", state)
+		}
+	}
+	for _, state := range []string{"submitted", "running", ""} {
+		if runtimeTaskTerminal(state) {
+			t.Fatalf("%q should remain refreshable", state)
+		}
+	}
+}

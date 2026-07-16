@@ -60,6 +60,7 @@ func runtimeAdapterRegistry(run *runtimeRunContext) (*runtimeadapter.Registry, e
 				return runtimeadapter.Prepared{Runtime: name, Request: request, PreparedAt: time.Now().UTC().Format(time.RFC3339Nano)}, nil
 			},
 			Execute: execute,
+			Refresh: run.refreshRuntimeReceipt,
 			Cleanup: execute,
 		})
 	}
@@ -80,6 +81,23 @@ func runtimeAdapterRegistry(run *runtimeRunContext) (*runtimeadapter.Registry, e
 		return nil, err
 	}
 	return runtimeadapter.NewRegistry(native, remoteLab, sliver, cobaltStrike)
+}
+
+func (run *runtimeRunContext) refreshRuntimeReceipt(ctx context.Context, receipt runtimeadapter.Receipt) (runtimeadapter.Receipt, error) {
+	normalized, err := runtimeadapter.NormalizeReceipt(receipt)
+	if err != nil {
+		return receipt, err
+	}
+	switch normalized.Runtime {
+	case "native", "lab":
+		return normalized, nil
+	case "sliver":
+		return refreshSliverRuntimeReceipt(ctx, normalized, sliverOptions{Client: run.sliverClient, SessionFilter: normalized.Session, Lab: run.labName, Profiles: run.labProfiles, ProfileName: normalized.Profile, RemoteHost: normalized.RemoteHost})
+	case "cobaltstrike":
+		return refreshCobaltStrikeRuntimeReceipt(ctx, normalized)
+	default:
+		return normalized, fmt.Errorf("runtime %s does not support receipt refresh", normalized.Runtime)
+	}
 }
 
 func convertRuntimeArguments(arguments []runtimeadapter.Argument) ([]string, error) {
@@ -359,11 +377,20 @@ func persistNativeRuntimeReceipt(runDir string, started time.Time, result runtim
 		receipt.Status = "pass"
 		receipt.ExecutionState = "completed"
 		receipt.OutputComplete = true
+		receipt.OutputClassification = "complete"
+		receipt.FinalChunk = true
+		receipt.CompletionSource = "native-loader"
+		receipt.TerminalReason = "loader_completed"
+		receipt.OutputChunks = append(receipt.OutputChunks, runtimeadapter.OutputChunk{Number: 1, LineCount: len(receipt.Output), Final: true, ReceivedAt: receipt.CompletedAt})
 		runtimeadapter.AddTransition(&receipt, "completed", "native loader returned complete output", time.Now())
 	} else if result.ExitState == "timeout" {
 		receipt.ExecutionState = "timeout"
+		receipt.OutputClassification = "partial"
+		receipt.TerminalReason = "loader_timeout"
 		runtimeadapter.AddTransition(&receipt, "timeout", "native loader timed out", time.Now())
 	} else {
+		receipt.OutputClassification = "partial"
+		receipt.TerminalReason = "loader_failed"
 		runtimeadapter.AddTransition(&receipt, "failed", emptyText(receipt.Error, result.ExitState), time.Now())
 	}
 	if result.ObjectFingerprint != nil {

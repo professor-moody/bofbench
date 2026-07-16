@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	ReceiptSchema        = "bofbench.runtime-receipt"
-	ReceiptSchemaVersion = 4
+	ReceiptSchema         = "bofbench.runtime-receipt"
+	ReceiptSchemaVersion  = 5
+	MinimumReceiptVersion = 4
 )
 
 type Availability struct {
@@ -61,6 +62,13 @@ type StateTransition struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+type OutputChunk struct {
+	Number     int    `json:"number"`
+	LineCount  int    `json:"line_count,omitempty"`
+	Final      bool   `json:"final,omitempty"`
+	ReceivedAt string `json:"received_at,omitempty"`
+}
+
 type Receipt struct {
 	Schema               string            `json:"schema"`
 	SchemaVersion        int               `json:"schema_version"`
@@ -92,6 +100,13 @@ type Receipt struct {
 	DurationMS           int64             `json:"duration_ms"`
 	Error                string            `json:"error,omitempty"`
 	ReceiptPath          string            `json:"receipt_path,omitempty"`
+	LastRefreshAt        string            `json:"last_refresh_at,omitempty"`
+	CompletionSource     string            `json:"completion_source,omitempty"`
+	OutputChunks         []OutputChunk     `json:"output_chunks,omitempty"`
+	FinalChunk           bool              `json:"final_chunk,omitempty"`
+	RemoteTaskError      string            `json:"remote_task_error,omitempty"`
+	TerminalReason       string            `json:"terminal_reason,omitempty"`
+	OutputClassification string            `json:"output_classification,omitempty"`
 	// TransientOutput carries unredacted runtime output only inside the current
 	// process so result contracts can verify sensitive payload hashes before
 	// persistence. It is deliberately excluded from every serialized receipt.
@@ -115,6 +130,7 @@ type Adapter interface {
 	ConvertArguments([]Argument) ([]string, error)
 	Prepare(context.Context, Request) (Prepared, error)
 	Execute(context.Context, Prepared) (Receipt, error)
+	Refresh(context.Context, Receipt) (Receipt, error)
 	Cleanup(context.Context, Prepared) (Receipt, error)
 }
 
@@ -124,6 +140,7 @@ type Hooks struct {
 	ConvertArguments func([]Argument) ([]string, error)
 	Prepare          func(context.Context, Request) (Prepared, error)
 	Execute          func(context.Context, Prepared) (Receipt, error)
+	Refresh          func(context.Context, Receipt) (Receipt, error)
 	Cleanup          func(context.Context, Prepared) (Receipt, error)
 }
 
@@ -186,6 +203,13 @@ func (adapter *Functional) Execute(ctx context.Context, prepared Prepared) (Rece
 	return adapter.hooks.Execute(ctx, prepared)
 }
 
+func (adapter *Functional) Refresh(ctx context.Context, receipt Receipt) (Receipt, error) {
+	if adapter.hooks.Refresh == nil {
+		return receipt, nil
+	}
+	return adapter.hooks.Refresh(ctx, receipt)
+}
+
 func (adapter *Functional) Cleanup(ctx context.Context, prepared Prepared) (Receipt, error) {
 	if adapter.hooks.Cleanup == nil {
 		return Receipt{}, fmt.Errorf("runtime adapter %s does not implement cleanup", adapter.name)
@@ -230,4 +254,24 @@ func (registry *Registry) Names() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func NormalizeReceipt(receipt Receipt) (Receipt, error) {
+	if receipt.Schema != ReceiptSchema || receipt.SchemaVersion < MinimumReceiptVersion || receipt.SchemaVersion > ReceiptSchemaVersion {
+		return receipt, fmt.Errorf("unsupported runtime receipt schema %q version %d", receipt.Schema, receipt.SchemaVersion)
+	}
+	if receipt.SchemaVersion < ReceiptSchemaVersion {
+		receipt.SchemaVersion = ReceiptSchemaVersion
+	}
+	if receipt.OutputClassification == "" {
+		if receipt.OutputComplete {
+			receipt.OutputClassification = "complete"
+		} else {
+			receipt.OutputClassification = "partial"
+		}
+	}
+	if receipt.FinalChunk && len(receipt.OutputChunks) > 0 {
+		receipt.OutputChunks[len(receipt.OutputChunks)-1].Final = true
+	}
+	return receipt, nil
 }

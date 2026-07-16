@@ -150,12 +150,55 @@ func TestCobaltAutomationUsesTypedArgumentsWithoutCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"bof_pack", `"zi"`, "beacon_inline_execute", "BOFBENCH_TASK_SUBMITTED", "closeClient"} {
+	for _, want := range []string{"bof_pack", `"zi"`, "beacon_inline_execute", "BOFBENCH_TASK_SUBMITTED", "task_completed", "BOFBENCH_CALLBACK_TIMEOUT", "closeClient"} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
 		}
 	}
 	if !reflect.DeepEqual(types, []string{"z", "i"}) {
 		t.Fatalf("types = %v", types)
+	}
+}
+
+func TestParseCobaltCallbacksTracksChunksAndTerminalStates(t *testing.T) {
+	tests := []struct {
+		name      string
+		lines     []string
+		state     string
+		task      string
+		chunks    int
+		final     bool
+		remoteErr string
+	}{
+		{
+			name: "completed",
+			lines: []string{
+				"BOFBENCH_CALLBACK type=output chunk=0 final=0 task=task-1",
+				"[window-message-send] status=complete",
+				"BOFBENCH_CALLBACK type=task_completed chunk=1 final=1 task=task-1",
+			},
+			state: "completed", task: "task-1", chunks: 2, final: true,
+		},
+		{
+			name: "failed",
+			lines: []string{
+				"BOFBENCH_CALLBACK type=error chunk=0 final=1 task=task-2",
+				"remote BOF error",
+			},
+			state: "failed", task: "task-2", chunks: 1, final: true, remoteErr: "remote BOF error",
+		},
+		{name: "running", lines: []string{"BOFBENCH_CALLBACK type=output chunk=0 final=0 task=task-3"}, state: "submitted", task: "task-3", chunks: 1},
+		{name: "timeout", lines: []string{cobaltTimeoutMarker}, state: "timeout"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state, chunks, task, remoteErr := parseCobaltCallbacks(test.lines)
+			if state != test.state || task != test.task || len(chunks) != test.chunks || remoteErr != test.remoteErr {
+				t.Fatalf("state=%q task=%q chunks=%+v error=%q", state, task, chunks, remoteErr)
+			}
+			if test.chunks > 0 && chunks[len(chunks)-1].Final != test.final {
+				t.Fatalf("final chunk = %+v", chunks[len(chunks)-1])
+			}
+		})
 	}
 }

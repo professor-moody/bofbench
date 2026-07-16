@@ -302,6 +302,28 @@ func bindOperationRunFlags(cmd *cobra.Command, opts *operationOptions, includeRu
 	cmd.MarkFlagsMutuallyExclusive("lab", "topology")
 }
 
+func refreshOperationRuntimeReceipt(ctx context.Context, receipt runtimeadapter.Receipt, opts operationOptions) (runtimeadapter.Receipt, error) {
+	run := &runtimeRunContext{stdout: io.Discard, input: ".", runtimeName: receipt.Runtime, labName: opts.lab, labProfiles: opts.profiles, sliverSession: receipt.Session}
+	registry, err := runtimeAdapterRegistry(run)
+	if err != nil {
+		return receipt, err
+	}
+	adapter, err := registry.Resolve(receipt.Runtime)
+	if err != nil {
+		return receipt, err
+	}
+	updated, err := adapter.Refresh(ctx, receipt)
+	if err != nil {
+		return receipt, err
+	}
+	if updated.ReceiptPath != "" {
+		if err := writeJSON(updated.ReceiptPath, updated); err != nil {
+			return updated, err
+		}
+	}
+	return updated, nil
+}
+
 func resolveOperationInputs(document operationsvc.Document, values []string, persisted map[string]string, allowMissingSensitive bool) (map[string]string, error) {
 	definitions := map[string]operationsvc.Input{}
 	result := map[string]string{}
@@ -511,7 +533,7 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 			}
 		}
 		if stepReceipt.State == "incomplete" {
-			updated, err := operationsvc.RefreshRuntimeReceipt(stepReceipt.Runtime)
+			updated, err := refreshOperationRuntimeReceipt(ctx, stepReceipt.Runtime, opts)
 			if err != nil {
 				return failOperation(stdout, path, &receipt, stepReceipt, fmt.Errorf("refresh runtime task for step %s: %w", step.ID, err))
 			}
@@ -913,7 +935,7 @@ func executeOperationParallelBranch(ctx context.Context, stdout io.Writer, regis
 	}
 	var runtimeReceipt runtimeadapter.Receipt
 	if current.Runtime.ExecutionState != "" && !current.OutputComplete {
-		runtimeReceipt, err = operationsvc.RefreshRuntimeReceipt(current.Runtime)
+		runtimeReceipt, err = refreshOperationRuntimeReceipt(ctx, current.Runtime, opts)
 	} else if prepared != nil {
 		runtimeReceipt, err = executePreparedOperationPack(ctx, *prepared, opts)
 	} else {

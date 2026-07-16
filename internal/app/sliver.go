@@ -229,6 +229,10 @@ func executeSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath,
 		receipt.OutputComplete = true
 		receipt.ExitState = "success"
 		runtimeadapter.AddTransition(&receipt, "completed", "Sliver reported successful execution and complete output", time.Now())
+		receipt.CompletionSource = "sliver-console"
+		receipt.OutputClassification = "complete"
+		receipt.FinalChunk = true
+		receipt.OutputChunks = append(receipt.OutputChunks, runtimeadapter.OutputChunk{Number: 1, LineCount: len(receipt.Output), Final: true, ReceivedAt: receipt.CompletedAt})
 	} else {
 		receipt.Error = runErr.Error()
 		receipt.ExitState = "error"
@@ -255,6 +259,105 @@ func executeSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath,
 		fmt.Fprintln(stdout, line)
 	}
 	return receipt, nil
+}
+
+func refreshSliverRuntimeReceipt(ctx context.Context, receipt runtimeadapter.Receipt, opts sliverOptions) (runtimeadapter.Receipt, error) {
+	if runtimeTaskTerminal(receipt.ExecutionState) {
+		return receipt, nil
+	}
+	if strings.TrimSpace(receipt.TaskID) == "" {
+		return receipt, fmt.Errorf("Sliver receipt has no persisted task ID")
+	}
+	if opts.Client == "" {
+		client, err := discoverSliverClient()
+		if err != nil {
+			return receipt, err
+		}
+		opts.Client = client
+	}
+	session := strings.TrimSpace(receipt.Session)
+	if session == "" {
+		return receipt, fmt.Errorf("Sliver receipt has no selected session")
+	}
+	quotedSession, err := sliverConsoleQuote(session)
+	if err != nil {
+		return receipt, err
+	}
+	quotedTask, err := sliverConsoleQuote(receipt.TaskID)
+	if err != nil {
+		return receipt, err
+	}
+	select {
+	case <-ctx.Done():
+		return receipt, ctx.Err()
+	default:
+	}
+	output, runErr := runSliverRCContext(ctx, opts.Client, fmt.Sprintf("use %s\ntasks fetch %s\nexit\n", quotedSession, quotedTask))
+	now := time.Now().UTC()
+	receipt.LastRefreshAt = now.Format(time.RFC3339Nano)
+	receipt.CompletionSource = "sliver-task-store"
+	clean := strings.TrimSpace(stripANSI(output))
+	lines := nonemptyLines(clean)
+	if len(lines) > 0 {
+		receipt.Output = redactRuntimeLines(lines, receipt.RedactedOutputFields, nil)
+		receipt.OutputChunks = append(receipt.OutputChunks, runtimeadapter.OutputChunk{Number: len(receipt.OutputChunks) + 1, LineCount: len(lines), ReceivedAt: receipt.LastRefreshAt})
+	}
+	state := sliverFetchedTaskState(lines)
+	switch state {
+	case "completed":
+		receipt.Status, receipt.ExecutionState, receipt.OutputComplete = "pass", "completed", true
+		receipt.OutputClassification, receipt.FinalChunk, receipt.TerminalReason = "complete", true, "completed"
+		receipt.CompletedAt = receipt.LastRefreshAt
+		if len(receipt.OutputChunks) > 0 {
+			receipt.OutputChunks[len(receipt.OutputChunks)-1].Final = true
+		}
+		runtimeadapter.AddTransition(&receipt, "completed", "Sliver persisted task output reached completed state", now)
+	case "failed", "canceled":
+		receipt.Status, receipt.ExecutionState, receipt.OutputComplete = "fail", state, true
+		receipt.OutputClassification, receipt.FinalChunk, receipt.TerminalReason = "complete", true, state
+		receipt.RemoteTaskError = sliverTaskError(lines)
+		receipt.Error = receipt.RemoteTaskError
+		receipt.CompletedAt = receipt.LastRefreshAt
+		if len(receipt.OutputChunks) > 0 {
+			receipt.OutputChunks[len(receipt.OutputChunks)-1].Final = true
+		}
+		runtimeadapter.AddTransition(&receipt, state, receipt.RemoteTaskError, now)
+	case "pending", "sent", "running":
+		receipt.Status, receipt.ExecutionState, receipt.OutputComplete = "incomplete", "running", false
+		receipt.OutputClassification = "partial"
+		runtimeadapter.AddTransition(&receipt, "running", "Sliver persisted task is not terminal", now)
+	default:
+		if runErr != nil {
+			return receipt, runErr
+		}
+		return receipt, fmt.Errorf("Sliver task %s returned no recognizable state", receipt.TaskID)
+	}
+	return receipt, nil
+}
+
+func sliverFetchedTaskState(lines []string) string {
+	for _, line := range lines {
+		lower := strings.ToLower(strings.TrimSpace(line))
+		if !strings.Contains(lower, "state") {
+			continue
+		}
+		for _, state := range []string{"completed", "canceled", "failed", "pending", "sent", "running"} {
+			if strings.Contains(lower, state) {
+				return state
+			}
+		}
+	}
+	return ""
+}
+
+func sliverTaskError(lines []string) string {
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "error") || strings.Contains(lower, "failed") {
+			return strings.TrimSpace(line)
+		}
+	}
+	return "Sliver task ended without successful completion"
 }
 
 func sliverExtensionCommandLine(commandName string, extension sliverExtension, commandArgs []string) (string, error) {
@@ -419,6 +522,12 @@ func findSliverSession(opts sliverOptions) (string, error) {
 }
 
 func runSliverRC(client, body string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	return runSliverRCContext(ctx, client, body)
+}
+
+func runSliverRCContext(ctx context.Context, client, body string) (string, error) {
 	file, err := os.CreateTemp("", "bofbench-sliver-*.rc")
 	if err != nil {
 		return "", err
@@ -432,13 +541,11 @@ func runSliverRC(client, body string) (string, error) {
 	if err := file.Close(); err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
 	command := exec.CommandContext(ctx, client, "console", "--rc", path)
 	command.Stdin = strings.NewReader("1\n")
 	output, err := command.CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return string(output), fmt.Errorf("Sliver console timed out after 90s")
+	if ctx.Err() != nil {
+		return string(output), fmt.Errorf("Sliver console stopped before completion: %w", ctx.Err())
 	}
 	if err != nil {
 		return string(output), fmt.Errorf("Sliver console failed: %w\n%s", err, stripANSI(string(output)))

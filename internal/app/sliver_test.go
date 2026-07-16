@@ -1,9 +1,13 @@
 package app
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+
+	"bofbench/internal/runtimeadapter"
 )
 
 func TestSliverExtensionCommandLineUsesNamedFlags(t *testing.T) {
@@ -90,5 +94,46 @@ func TestDiscoverSliverConfigsPrefersExplicitConfig(t *testing.T) {
 	got := discoverSliverConfigs()
 	if len(got) != 2 || got[0] != explicit || got[1] != discovered {
 		t.Fatalf("configs = %#v, want explicit config first", got)
+	}
+}
+
+func TestSliverFetchedTaskState(t *testing.T) {
+	for state, line := range map[string]string{
+		"completed": "State: completed",
+		"failed":    "Task State FAILED",
+		"canceled":  "state=canceled",
+		"pending":   "State pending",
+		"sent":      "State: sent",
+		"running":   "task state running",
+	} {
+		if got := sliverFetchedTaskState([]string{line}); got != state {
+			t.Fatalf("state for %q = %q, want %q", line, got, state)
+		}
+	}
+}
+
+func TestRefreshSliverRuntimeReceiptFromPersistedTaskOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a temporary POSIX Sliver client fixture")
+	}
+	client := filepath.Join(t.TempDir(), "sliver-client")
+	script := "#!/bin/sh\nprintf '%s\\n' 'Task ID: deadbeef' 'State: completed' '[named-pipe-transact] status=complete response_sha256=abc'\n"
+	if err := os.WriteFile(client, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	receipt := runtimeadapter.Receipt{
+		Schema: runtimeadapter.ReceiptSchema, SchemaVersion: runtimeadapter.ReceiptSchemaVersion,
+		Runtime: "sliver", Status: "incomplete", ExecutionState: "submitted",
+		Session: "0123abcd", TaskID: "deadbeef", OutputClassification: "partial",
+	}
+	refreshed, err := refreshSliverRuntimeReceipt(context.Background(), receipt, sliverOptions{Client: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.ExecutionState != "completed" || !refreshed.OutputComplete || refreshed.OutputClassification != "complete" || !refreshed.FinalChunk {
+		t.Fatalf("refreshed receipt = %+v", refreshed)
+	}
+	if refreshed.CompletionSource != "sliver-task-store" || len(refreshed.OutputChunks) != 1 || !refreshed.OutputChunks[0].Final {
+		t.Fatalf("refresh metadata = %+v", refreshed)
 	}
 }

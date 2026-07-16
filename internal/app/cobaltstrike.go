@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,11 @@ import (
 	"bofbench/internal/runlog"
 	"bofbench/internal/runtimeadapter"
 	"bofbench/internal/stage"
+)
+
+var (
+	cobaltCallbackPattern = regexp.MustCompile(`BOFBENCH_CALLBACK\s+type=([A-Za-z_]+)\s+chunk=([0-9]+)\s+final=([01])(?:\s+task=([^\s]+))?`)
+	cobaltTimeoutMarker   = "BOFBENCH_CALLBACK_TIMEOUT"
 )
 
 type cobaltStrikeRunOptions struct {
@@ -108,7 +114,7 @@ func executeCobaltStrike(parent context.Context, stdout io.Writer, opts cobaltSt
 		TimeoutMS: 90000, StartedAt: started.UTC().Format(time.RFC3339Nano), ReceiptPath: filepath.Join(runDir, "result.json"),
 	}
 	runtimeadapter.AddTransition(&receipt, "submitted", "Aggressor client started", started)
-	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 100*time.Second)
 	defer cancel()
 	output, runErr := exec.CommandContext(ctx, agscript, host, port, user, password, scriptPath).CombinedOutput()
 	clean := strings.TrimSpace(stripANSI(string(output)))
@@ -120,11 +126,34 @@ func executeCobaltStrike(parent context.Context, stdout io.Writer, opts cobaltSt
 		receipt.TimedOut = true
 	}
 	if runErr == nil && strings.Contains(clean, "BOFBENCH_TASK_SUBMITTED") {
-		receipt.Status = "submitted"
-		receipt.ExecutionState = "submitted"
-		receipt.OutputComplete = false
-		receipt.ExitState = "submitted"
-		runtimeadapter.AddTransition(&receipt, "acknowledged", "Cobalt Strike accepted the inline-execute request", time.Now())
+		callbackState, chunks, taskID, remoteError := parseCobaltCallbacks(strings.Split(clean, "\n"))
+		receipt.OutputChunks = chunks
+		receipt.TaskID = taskID
+		receipt.CompletionSource = "cobaltstrike-callback"
+		receipt.RemoteTaskError = remoteError
+		switch callbackState {
+		case "completed":
+			receipt.Status, receipt.ExecutionState, receipt.OutputComplete = "pass", "completed", true
+			receipt.OutputClassification, receipt.FinalChunk, receipt.ExitState, receipt.TerminalReason = "complete", true, "success", "task_completed"
+			runtimeadapter.AddTransition(&receipt, "completed", "Cobalt Strike callback reported task completion", time.Now())
+		case "failed":
+			receipt.Status, receipt.ExecutionState, receipt.OutputComplete = "fail", "failed", true
+			receipt.OutputClassification, receipt.FinalChunk, receipt.ExitState, receipt.TerminalReason = "complete", true, "error", "callback_error"
+			receipt.Error = remoteError
+			runtimeadapter.AddTransition(&receipt, "failed", remoteError, time.Now())
+			runErr = fmt.Errorf("%s", emptyText(remoteError, "Cobalt Strike callback reported failure"))
+		case "timeout":
+			receipt.Status, receipt.ExecutionState, receipt.OutputComplete = "fail", "timeout", false
+			receipt.OutputClassification, receipt.ExitState, receipt.TerminalReason = "partial", "timeout", "callback_timeout"
+			receipt.TimedOut = true
+			receipt.Error = "Cobalt Strike task did not deliver a terminal callback before timeout"
+			runtimeadapter.AddTransition(&receipt, "timeout", receipt.Error, time.Now())
+			runErr = fmt.Errorf("%s", receipt.Error)
+		default:
+			receipt.Status, receipt.ExecutionState, receipt.OutputComplete = "submitted", "submitted", false
+			receipt.OutputClassification, receipt.ExitState = "partial", "submitted"
+			runtimeadapter.AddTransition(&receipt, "acknowledged", "Cobalt Strike accepted the inline-execute request without terminal callback", time.Now())
+		}
 	} else if runErr == nil {
 		runErr = fmt.Errorf("agscript exited without confirming BOF task submission")
 	}
@@ -150,6 +179,29 @@ func executeCobaltStrike(parent context.Context, stdout io.Writer, opts cobaltSt
 	if runErr != nil {
 		return receipt, codedError{code: 1, err: runErr}
 	}
+	return receipt, nil
+}
+
+func refreshCobaltStrikeRuntimeReceipt(_ context.Context, receipt runtimeadapter.Receipt) (runtimeadapter.Receipt, error) {
+	if runtimeTaskTerminal(receipt.ExecutionState) {
+		return receipt, nil
+	}
+	now := time.Now().UTC()
+	receipt.LastRefreshAt = now.Format(time.RFC3339Nano)
+	receipt.CompletionSource = "cobaltstrike-callback"
+	if strings.TrimSpace(receipt.ReceiptPath) != "" {
+		if data, err := os.ReadFile(receipt.ReceiptPath); err == nil {
+			var persisted runtimeadapter.Receipt
+			if json.Unmarshal(data, &persisted) == nil {
+				normalized, normalizeErr := runtimeadapter.NormalizeReceipt(persisted)
+				if normalizeErr == nil && (runtimeTaskTerminal(normalized.ExecutionState) || len(normalized.OutputChunks) > len(receipt.OutputChunks)) {
+					normalized.LastRefreshAt = receipt.LastRefreshAt
+					return normalized, nil
+				}
+			}
+		}
+	}
+	receipt.OutputClassification = "partial"
 	return receipt, nil
 }
 
@@ -202,8 +254,20 @@ func cobaltAutomationScript(beacon, object, entry string, tokens, cliValues []st
 	}
 	var b strings.Builder
 	b.WriteString("# Ephemeral BOFBench licensed Cobalt Strike adapter\n")
+	b.WriteString("global('$bofbench_done $bofbench_failed');\n")
+	b.WriteString("sub bofbench_callback {\n")
+	b.WriteString("  local('$type $chunk $final $task');\n")
+	b.WriteString("  $type = $3[\"type\"];\n  $chunk = $3[\"chunk_num\"];\n  $final = $3[\"is_final\"];\n  $task = $3[\"task_id\"];\n")
+	b.WriteString("  if ($task eq \"\") { $task = $3[\"jid\"]; }\n")
+	b.WriteString("  println(\"BOFBENCH_CALLBACK type=\" $+ $type $+ \" chunk=\" $+ $chunk $+ \" final=\" $+ $final $+ \" task=\" $+ $task);\n")
+	b.WriteString("  if ($2 ne \"\") { println($2); }\n")
+	b.WriteString("  if ($type eq \"error\") { $bofbench_failed = 1; $bofbench_done = 1; }\n")
+	b.WriteString("  if ($type eq \"task_completed\" || $type eq \"job_completed\" || $final) { $bofbench_done = 1; }\n")
+	b.WriteString("}\n")
 	b.WriteString("on ready {\n")
+	locals = append(locals, "$bofbench_elapsed")
 	fmt.Fprintf(&b, "  local('%s');\n", strings.Join(locals, " "))
+	b.WriteString("  $bofbench_done = 0; $bofbench_failed = 0; $bofbench_elapsed = 0;\n")
 	fmt.Fprintf(&b, "  $bofbench_handle = openf(%s);\n", sleepString(object))
 	b.WriteString("  $bofbench_object = readb($bofbench_handle, -1);\n  closef($bofbench_handle);\n")
 	for _, line := range setup {
@@ -218,11 +282,52 @@ func cobaltAutomationScript(beacon, object, entry string, tokens, cliValues []st
 		}
 		b.WriteString(");\n")
 	}
-	fmt.Fprintf(&b, "  beacon_inline_execute(%s, $bofbench_object, %s, $bofbench_args);\n", sleepString(beacon), sleepString(entry))
+	fmt.Fprintf(&b, "  beacon_inline_execute(%s, $bofbench_object, %s, $bofbench_args, &bofbench_callback);\n", sleepString(beacon), sleepString(entry))
 	fmt.Fprintf(&b, "  println(\"BOFBENCH_TASK_SUBMITTED beacon=%s\");\n", sleepEscapeInline(beacon))
-	b.WriteString("  sleep(5000);\n  closeClient();\n}\n")
-	b.WriteString("on beacon_output { println($2); }\n")
+	b.WriteString("  while (!$bofbench_done && $bofbench_elapsed < 90000) { sleep(250); $bofbench_elapsed += 250; }\n")
+	b.WriteString("  if (!$bofbench_done) { println(\"BOFBENCH_CALLBACK_TIMEOUT\"); }\n")
+	b.WriteString("  closeClient();\n}\n")
 	return b.String(), types, nil
+}
+
+func parseCobaltCallbacks(lines []string) (string, []runtimeadapter.OutputChunk, string, string) {
+	state, taskID, remoteError := "submitted", "", ""
+	var chunks []runtimeadapter.OutputChunk
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for index, line := range lines {
+		if strings.Contains(line, cobaltTimeoutMarker) {
+			state = "timeout"
+			continue
+		}
+		match := cobaltCallbackPattern.FindStringSubmatch(line)
+		if len(match) == 0 {
+			continue
+		}
+		number, _ := strconv.Atoi(match[2])
+		final := match[3] == "1"
+		if match[4] != "" && match[4] != "null" {
+			taskID = match[4]
+		}
+		chunk := runtimeadapter.OutputChunk{Number: number, Final: final, ReceivedAt: now}
+		if index+1 < len(lines) && !strings.Contains(lines[index+1], "BOFBENCH_CALLBACK") {
+			chunk.LineCount = 1
+		}
+		chunks = append(chunks, chunk)
+		switch match[1] {
+		case "error", "failed", "canceled", "cancelled":
+			state = "failed"
+			if index+1 < len(lines) {
+				remoteError = strings.TrimSpace(lines[index+1])
+			}
+		case "task_completed", "job_completed", "success":
+			state = "completed"
+		default:
+			if final && state != "failed" {
+				state = "completed"
+			}
+		}
+	}
+	return state, chunks, taskID, remoteError
 }
 
 func sleepString(value string) string {
