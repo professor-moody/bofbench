@@ -71,12 +71,17 @@ bofbench operation run internal/ipc-coordination-matrix \
 bofbench operation graph internal/ipc-dependency-matrix --expand
 bofbench operation run internal/ipc-dependency-matrix \
   --via lab --lab devbox --parallelism 4 <typed arguments>
+bofbench operation run internal/registry-change-observe \
+  --via lab --lab devbox --parallelism 4 <typed arguments>
+bofbench operation watch runs/<run-id>/operation.json --follow
+bofbench operation cancel runs/<run-id>/operation.json
+bofbench operation cancel runs/<run-id>/operation.json --cleanup
 bofbench operation resume runs/<run-id>/operation.json --parallelism 4
 bofbench operation cleanup runs/<run-id>/operation.json --parallelism 4
 bofbench operation docs --output docs/operation-reference.md
 ```
 
-See [multi-step operations](operations.md) for result routing, parallel groups, dependency-aware DAGs, ready waves, contracts, captures, sensitive inputs, static tests, live proof, incomplete C2 tasks, and reverse-topological cleanup. `--parallelism` accepts `1–16` and defaults to `4`.
+See [multi-step operations](operations.md) for result routing, parallel groups, dependency-aware DAGs, background readiness, live watching, cancellation, contracts, captures, sensitive inputs, proof, resume, and reverse-topological cleanup. `--parallelism` accepts `1–16` and defaults to `4`.
 
 ## Build
 
@@ -235,7 +240,9 @@ bofbench runtime status --lab devbox
 bofbench runtime sessions --via sliver --lab devbox
 bofbench runtime wait --via sliver --lab devbox --timeout 10m
 bofbench runtime tasks --via sliver --lab devbox
+bofbench runtime tasks --via lab
 bofbench runtime task <TASK_ID> --refresh
 bofbench runtime task <TASK_ID> --refresh --wait --timeout 10m
+bofbench runtime task <TASK_ID> --cancel
 bofbench runtime watch --via sliver --lab devbox --refresh --timeout 10m
 ```

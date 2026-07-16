@@ -30,16 +30,17 @@ bofbench runtime task <TASK_ID> \
   --refresh --wait --timeout 10m --interval 2s
 ```
 
-Runtime-receipt version 5 records:
+Runtime-receipt version 6 records:
 
 - last refresh time and completion source;
 - session and task ID;
 - numbered output chunks and final-chunk state;
 - complete versus partial output classification;
 - remote task error and terminal reason;
+- worker or remote task identity, progress timestamps, cancellation support, and cancellation request/completion state;
 - exact object hash and redaction metadata.
 
-Sliver refresh retrieves the exact persisted task using the recorded session/task pair. Cobalt Strike live completion requires the licensed callback path and waits for `task_completed`, error, or timeout.
+Sliver refresh retrieves the exact persisted task using the recorded session/task pair. Cobalt Strike live completion requires the licensed callback path and waits for `task_completed`, error, cancellation, or timeout.
 
 ## Watch all incomplete tasks
 
@@ -83,4 +84,3 @@ Recovered sensitive bytes may be verified in memory before redaction. Persisted 
 - task expired from remote storage: retain the incomplete receipt and record coverage as unavailable or failed according to the runtime response;
 - callback timeout: do not treat submission as completion;
 - object hash mismatch: observed output cannot be correlated to a different analyzed object.
-

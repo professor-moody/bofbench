@@ -8,6 +8,8 @@
 | BOF | Beacon Object File: a COFF object loaded into an existing runtime rather than a standalone executable |
 | Catalog | Named source of capability packs |
 | DAG operation | A version-6 operation whose steps run when their declared dependencies are complete |
+| Background step | A bounded version-7 DAG step that emits a readiness result, remains active, and later must satisfy a terminal result contract |
+| Readiness dependency | `depends_on_ready`; permits a descendant to start after an exact ready contract without waiting for the background producer to finish |
 | Cleanup companion | Pack that reverses or removes a named action when the operator requests it |
 | Effects | Data read, state write, execution, persistence, authentication-material access, or remote reach |
 | Exact-hash correlation | Attaching runtime observation only when receipt and analysis object hashes match |

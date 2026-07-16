@@ -188,3 +188,33 @@ Correlate process images, thread state, handle types, and Windows wait chains fo
 
 - `target-waits`: via `lab,sliver`, architectures `x64,x86`, expected path `process → threads → handles → waits`
 
+## `builtin/windows-eventing-posture`
+
+Inventory Event Log channels, query bounded events, and enumerate ETW providers as concurrent roots
+
+- Schema version: `7`
+- Execution: `dag`
+- Tier: `public`
+- Steps: `3`
+- Proof cases: `1`
+
+### Inputs
+
+| Name | Type | Required | Sensitive | Topology value |
+|---|---|---:|---:|---|
+| `channel_filter` | `wstring` | false | false | `` |
+| `channel` | `wstring` | false | false | `` |
+| `xpath` | `wstring` | false | false | `` |
+| `provider_filter` | `wstring` | false | false | `` |
+| `result_limit` | `int` | false | false | `` |
+
+### Steps
+
+1. `channels` → `event-log-channel-inventory`
+2. `events` → `event-log-query`
+3. `providers` → `etw-provider-inventory`
+
+### Proof cases
+
+- `local-eventing`: via `lab,sliver`, architectures `x64,x86`, waves `channels+events+providers`
+

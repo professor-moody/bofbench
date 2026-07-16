@@ -1,6 +1,6 @@
 # Composable, Provable Multi-Step Operations
 
-Operations connect capability packs into result-aware workflows. A step can capture a structured output field—such as a PID, address, hash, path, object name, pipe name, window handle, or retained handle—and pass it to later work. Version 3 can route a completed, understood result to a later step. Version 4 can invoke another catalog operation as an atomic child step. Version 5 can run explicit parallel groups. Version 6 adds dependency-aware DAG execution, ready waves, blocked descendants, and reverse-topological cleanup. Work advances only when both conditions are true:
+Operations connect capability packs into result-aware workflows. A step can capture a structured output field—such as a PID, address, hash, path, object name, pipe name, window handle, or retained handle—and pass it to later work. Version 3 can route a completed, understood result to a later step. Version 4 can invoke another catalog operation as an atomic child step. Version 5 can run explicit parallel groups. Version 6 adds dependency-aware DAG execution. Version 7 adds bounded background steps, readiness dependencies, live progress, and cancellation. Work advances only when the relevant contract is true:
 
 1. the runtime task completed with complete output; and
 2. the step's declared structured-result contract matched.
@@ -52,7 +52,7 @@ bofbench operation run internal/virtual-memory-execute \
 
 Normal operation accepts operator-selected targets and payloads. Proof fixtures and benign proof payloads are acceptance infrastructure, not runtime restrictions. `--cleanup` and `--cleanup-on-failure` remain optional.
 
-The run creates `runs/<run-id>/operation.json`. The version-6 receipt pins the complete transitive operation and pack set, action and cleanup pack hashes, child receipt paths, object hashes, runtime receipts, contract state, matched outcomes, dependencies, ready waves, blocked steps, timestamps, maximum concurrency, parent and expanded execution paths, skipped steps, non-sensitive captures, and nested cleanup results. Sensitive values are never stored.
+The run creates `runs/<run-id>/operation.json`. The version-7 receipt pins the complete transitive operation and pack set, action and cleanup pack hashes, child receipt paths, object hashes, runtime receipts, terminal and readiness contract state, matched outcomes, completion/readiness dependencies, waves, blocked steps, active task identity, timestamps, cancellation state, parent and expanded execution paths, non-sensitive captures, and cleanup results. Sensitive values are never stored.
 
 ```mermaid
 flowchart LR
@@ -143,6 +143,82 @@ bofbench operation run internal/ipc-dependency-matrix \
 ```
 
 Proof definitions can assert both `expect_waves` and `expect_steps`, so scheduling shape is part of repeatable acceptance rather than an informal terminal observation.
+
+## Background readiness and asynchronous control
+
+Schema version 7 permits a direct pack step in a DAG to remain active after emitting a declared readiness result:
+
+```json
+{
+  "schema": "bofbench.operation",
+  "schema_version": 7,
+  "execution": "dag",
+  "id": "registry-change-observe",
+  "steps": [
+    {
+      "id": "watch",
+      "pack": "registry-change-wait",
+      "mode": "background",
+      "ready": {
+        "tag": "registry-change-wait",
+        "fields": {"status": "ready"}
+      },
+      "expect": {
+        "tag": "registry-change-wait",
+        "fields": {"status": "complete"}
+      },
+      "timeout_ms": 120000
+    },
+    {
+      "id": "trigger",
+      "pack": "remote-registry-write",
+      "depends_on_ready": ["watch"],
+      "expect": {
+        "tag": "remote-registry-write",
+        "fields": {"status": "*"}
+      }
+    }
+  ]
+}
+```
+
+The lifecycle is explicit:
+
+```mermaid
+stateDiagram-v2
+  [*] --> Pending
+  Pending --> Running: task starts
+  Running --> Ready: ready contract matches
+  Ready --> Completed: terminal contract matches
+  Running --> Failed: exits before ready
+  Ready --> Failed: timeout or terminal mismatch
+  Running --> Canceled: exact cancellation
+  Ready --> Canceled: exact cancellation
+```
+
+Rules:
+
+- background steps exist only in version-7 DAGs;
+- each background step declares `ready`, terminal `expect`, and a bounded `timeout_ms`;
+- `depends_on` waits for terminal completion;
+- `depends_on_ready` waits only for the readiness contract;
+- ready captures may flow only to transitive descendants;
+- runtime failure or incomplete output never selects a fallback;
+- cleanup visits completed stateful work in reverse topological order.
+
+Monitor and control live work directly:
+
+```bash
+bofbench operation watch runs/<run-id>/operation.json --follow
+bofbench runtime tasks --via lab
+bofbench runtime task <task-id> --refresh
+bofbench operation cancel runs/<run-id>/operation.json
+bofbench operation cancel runs/<run-id>/operation.json --cleanup
+```
+
+Native and lab execution use isolated task workers and atomically written receipts. Lab background work runs beneath a run-specific Windows scheduled-task controller so cancellation can terminate the recorded worker and every descendant loader process instead of merely closing the transport. Cancellation stops new scheduling first, cancels every active exact task, waits for terminal receipts, and only then performs requested cleanup. Sliver and Cobalt Strike cancellation is reported only when the detected runtime provides an exact supported mechanism.
+
+Pack schema version 5 can delegate a pack's live proof to an operation step. The proof passes only when the operation used the exact resolved pack hash and the selected action or cleanup phase completed successfully.
 
 ## Parallel groups
 
@@ -417,6 +493,8 @@ bofbench operation resume runs/<run-id>/operation.json \
 
 Resume refuses changed operation or pack definitions because persisted captures belong to the pinned code.
 
+Submitted, running, or ready native/lab background work is visible through `operation watch`; a ready state is progress, not completion. Resume reevaluates readiness and terminal contracts from the persisted task output before scheduling descendants.
+
 ## Cleanup
 
 Cleanup executes completed stateful steps in reverse order:
@@ -441,7 +519,7 @@ Topologies contain profile names only. Authentication values continue to use `@p
 
 ## TUI
 
-Open `bofbench tui` and select **Operations**. Choose a definition, runtime, lab, architecture, and typed inputs. Press `x` for static test or `p` for declared proof; execute ordinary runs with `enter`. The definition view shows available routes. The result view separates runtime task state from contract state and shows the actual path, matched outcomes, skipped steps, captures, resume, and cleanup commands.
+Open `bofbench tui` and select **Operations**. Choose a definition, runtime, lab, architecture, and typed inputs. Press `x` for static test or `p` for declared proof; execute ordinary runs with `enter`. The definition view shows completion dependencies, readiness dependencies, background lifecycles, routes, and child operations. The result view separates runtime, ready, terminal-contract, cancellation, and cleanup state.
 
 ## Common failures
 
@@ -458,5 +536,8 @@ Open `bofbench tui` and select **Operations**. Choose a definition, runtime, lab
 - **Parallel preparation failed:** no branch was launched. Fix the named build, analysis, argument, or runtime preparation error and start or resume again.
 - **Parallel group incomplete:** inspect `steps[].parallel.branches`, finish the named runtime task, then resume the parent receipt.
 - **Parallel group failed:** inspect every terminal branch; output remains declaration-ordered even though branches ran concurrently.
+- **Background completed before ready:** the runtime ended without matching its readiness contract; inspect the exact watched target and structured output.
+- **Ready but terminal timeout:** the dependent action may have run, but the watcher never matched its terminal contract. Inspect both receipts before cleanup.
+- **Cancellation unsupported:** the selected runtime does not expose exact task cancellation; BOFBench leaves that state explicit.
 
 See the [generated operation reference](operation-reference.md), [testing and proof guidance](pack-testing.md), and [operation lifecycle scenario](scenarios/operation-lifecycle.md).

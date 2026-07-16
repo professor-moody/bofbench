@@ -12,10 +12,10 @@
 </div>
 
 <div class="bb-proof">
-  <div><strong>218 packs</strong><span>84 public · 134 private</span></div>
+  <div><strong>231 packs</strong><span>87 public · 144 private</span></div>
   <div><strong>x64 + x86</strong><span>separate native loaders</span></div>
   <div><strong>4 runtimes</strong><span>native · lab · Sliver · CS</span></div>
-  <div><strong class="bb-impact">36 operations</strong><span>linear · routed · parallel · DAG</span></div>
+  <div><strong class="bb-impact">43 operations</strong><span>linear · routed · parallel · async DAG</span></div>
 </div>
 
 # The operator loop
@@ -71,6 +71,17 @@ bofbench operation graph internal/ipc-dependency-matrix --expand
 bofbench operation run internal/ipc-dependency-matrix \
   --via lab --lab devbox --parallelism 4
 ```
+
+Version-7 operations can keep bounded watchers active while a dependent action waits only for a declared readiness result:
+
+```bash
+bofbench operation run internal/registry-change-observe \
+  --via lab --lab devbox --parallelism 4 <typed arguments>
+bofbench operation watch runs/<run-id>/operation.json --follow
+bofbench operation cancel runs/<run-id>/operation.json --cleanup
+```
+
+Native and lab tasks stream structured progress into atomically readable receipts. A trigger is not scheduled until its watcher emits the exact `status=ready` contract, and cancellation is reported separately from ordinary runtime failure.
 
 ## Use the same interface at different depths
 

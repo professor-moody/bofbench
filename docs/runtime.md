@@ -14,9 +14,10 @@ Before running, get a concise readiness view instead of a long diagnostic report
 bofbench runtime status --lab devbox
 bofbench runtime sessions --via sliver --lab devbox
 bofbench runtime wait --via sliver --lab devbox --timeout 10m
-bofbench runtime tasks --via sliver --lab devbox
+bofbench runtime tasks --via lab
 bofbench runtime task <task-id> --refresh
 bofbench runtime task <task-id> --refresh --wait --timeout 10m
+bofbench runtime task <task-id> --cancel
 bofbench runtime watch --via sliver --lab devbox --refresh
 ```
 
@@ -29,7 +30,7 @@ bofbench runtime wait --via sliver --lab devbox --timeout 10m --interval 2s
 bofbench pack prove internal/thread-hijack-execute --via sliver --lab devbox
 ```
 
-`runtime tasks` gives a compact view of submitted, running, completed, failed, canceled, and timed-out C2 work from stored receipts. `runtime task` resolves either a task ID or receipt path. `--refresh` asks the adapter for current remote state and retained output; combining it with `--wait` repeats that refresh until a terminal state or timeout. `runtime watch --refresh` refreshes every incomplete receipt for the selected adapter and profile.
+`runtime tasks` gives a compact view of submitted, running, completed, failed, canceled, and timed-out native, lab, or C2 work from stored receipts. `runtime task` resolves either a task ID or receipt path. `--refresh` asks the adapter for current state and retained output; combining it with `--wait` repeats that refresh until a terminal state or timeout. `--cancel` requests exact task cancellation when the runtime exposes it. Native work uses an isolated local worker. Lab work records a run-specific Windows scheduled-task controller, its PowerShell worker PID, and the full descendant process tree; cancellation stops that exact tree and removes the controller task. Unsupported C2 cancellation remains explicitly unsupported.
 
 Interrupted catalog proof runs can resume from their previous report:
 
@@ -87,7 +88,7 @@ The licensed adapter generates an ephemeral Aggressor script, uses `agscript`, p
 
 ## One receipt schema
 
-Every adapter writes `runs/<id>/result.json` using `bofbench.runtime-receipt` version 5. Receipts include:
+Every adapter writes `runs/<id>/result.json` using `bofbench.runtime-receipt` version 6. Receipts include:
 
 - selected profile and remote computer identity;
 - runtime, session, and task identifier when present;
@@ -95,9 +96,10 @@ Every adapter writes `runs/<id>/result.json` using `bofbench.runtime-receipt` ve
 - named values and BOF argument types;
 - captured output, timeout, exit state, duration, and error;
 - last refresh time, completion source, numbered output chunks, final-chunk state, remote task error, terminal reason, and complete-versus-partial output classification;
+- isolated worker PID, remote controller task/PID, last-output time, cancellation support, request time, completion time, source, and terminal cancellation reason;
 - cleanup invocation and result when requested.
 
-Version 5 retains version-4 state compatibility and adds refresh-aware completion. Sliver refresh retrieves the exact persisted task for the recorded session/task pair. The licensed Cobalt Strike adapter waits for BOF callback output and a terminal `task_completed`, error, or timeout callback. A C2 task is never reported as passed merely because it was submitted or produced an early output chunk.
+Version 6 retains version-4/v5 compatibility and adds progress-aware asynchronous start and cancellation state. Sliver refresh retrieves the exact persisted task for the recorded session/task pair. The licensed Cobalt Strike adapter waits for BOF callback output and a terminal `task_completed`, error, cancellation, or timeout callback. A task is never reported as passed merely because it was submitted, became ready, or produced an early output chunk.
 
 Sensitive receipts record the names of protected arguments and redacted output fields, never their values. Remote-lab runs apply that policy to the remote developer report, collected lab report, event stream, final receipt, and proof report. Credential Manager packs automatically use the existing interactive Windows session because the SSH transport has a different logon-session credential context.
 

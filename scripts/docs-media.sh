@@ -33,7 +33,7 @@ cleanup() {
     export/docs-capture-* export/docs-lab-* export/docs-export-* \
     dist/docs-capture.* dist/docs-lab.* dist/docs-export.* || true
 	if [[ "$MEDIA_RUNS_STASHED" == "1" ]]; then
-		rm -rf runs/*operation-named-pipe-duplex-roundtrip* || true
+		rm -rf runs/*operation-process-lifecycle-observe* || true
 		for saved in "$MEDIA_RUN_STASH"/*; do
 			[[ -e "$saved" ]] || continue
 			mv "$saved" runs/
@@ -47,7 +47,7 @@ rm -rf \
   bofs/docs-capture bofs/docs-lab bofs/docs-export \
   export/docs-capture-* export/docs-lab-* export/docs-export-* \
   dist/docs-capture.* dist/docs-lab.* dist/docs-export.* || true
-for existing in runs/*operation-named-pipe-duplex-roundtrip*; do
+for existing in runs/*operation-process-lifecycle-observe*; do
 	[[ -e "$existing" ]] || continue
 	mv "$existing" "$MEDIA_RUN_STASH"/
 done
@@ -88,7 +88,7 @@ for video in docs/assets/media/*.webm; do
     build-analyze) poster_second=10 ;;
     export-verify) poster_second=12 ;;
     lab-run) poster_second=12 ;;
-    operation-lifecycle) poster_second=39 ;;
+    operation-lifecycle) poster_second=30 ;;
     runtime-tasks) poster_second=27 ;;
     third-party-analysis) poster_second=6 ;;
     *) poster_second=6 ;;

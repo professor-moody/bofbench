@@ -215,6 +215,59 @@ Enumerate bounded trusted-domain direction, type, and attribute metadata
 | `attributes` | `string` | no | no | `name,trustDirection,trustType,trustAttributes` | comma-separated attributes (maximum eight) |
 | `result_limit` | `int` | no | no | `25` | maximum directory entries (1-100) |
 
+## `builtin/etw-provider-inventory`
+
+enumerate bounded Event Tracing for Windows provider names and identifiers
+
+- Can do: bounded Event Tracing for Windows provider name and GUID discovery
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `etw_provider_inventory`
+- Live proofs: bounded-providers (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `name_filter` | `wstring` | no | no | `` | case-insensitive provider-name substring |
+| `result_limit` | `int` | no | no | `64` | maximum providers (1-1024) |
+
+## `builtin/event-log-channel-inventory`
+
+enumerate bounded Windows Event Log channel configuration and record metadata
+
+- Can do: bounded Windows Event Log channel configuration and record inventory
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `event_log_channel_inventory`
+- Live proofs: bounded-system (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `channel_filter` | `wstring` | no | no | `` | case-insensitive channel-name substring |
+| `result_limit` | `int` | no | no | `64` | maximum channels (1-512) |
+
+## `builtin/event-log-query`
+
+query bounded structured event metadata from one exact channel or exported log
+
+- Can do: bounded structured event metadata query for one exact channel or exported log
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `event_log_query`
+- Live proofs: recent-system (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `path` | `wstring` | yes | no | `` | exact channel name or exported log path |
+| `xpath` | `wstring` | no | no | `*` | exact XPath query |
+| `direction` | `string` | no | no | `reverse` | forward or reverse |
+| `result_limit` | `int` | no | no | `32` | maximum events (1-512) |
+
 ## `builtin/filesystem`
 
 report the current Windows temporary directory

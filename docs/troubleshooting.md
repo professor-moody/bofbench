@@ -116,6 +116,26 @@ bofbench operation resume runs/<operation-run>/operation.json --parallelism 4
 
 BOFBench does not schedule a fallback after a runtime crash or partial output because the remote effect is unknown.
 
+## Background step never becomes ready
+
+Inspect the operation and task receipts together:
+
+```sh
+bofbench operation watch runs/<operation-run>/operation.json --follow
+bofbench runtime task runs/<task-run>/result.json --refresh
+```
+
+The watcher must emit the exact tag and fields declared under `ready`. A terminal result before readiness is a failure, even if the loader itself exited normally. Confirm that the watched key, directory, service, process, channel, ETW session, or event exists in the selected Windows view and user context. For 32-bit registry work, select the intended `view=32|64|native`.
+
+## Cancel an active operation
+
+```sh
+bofbench operation cancel runs/<operation-run>/operation.json
+bofbench operation cancel runs/<operation-run>/operation.json --cleanup
+```
+
+Cancellation stops new scheduling and asks each active runtime task to stop. Native and lab receipts show `cancel_supported`, request/completion timestamps, and the terminal reason. If a detected C2 runtime cannot cancel an exact task, BOFBench records `unsupported` instead of claiming success. `--cleanup` visits only already-completed stateful steps.
+
 ## C2 receipt remains partial
 
 Confirm the recorded runtime, session, and task ID still exist:
