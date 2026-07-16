@@ -9,8 +9,8 @@ BOFBench writes detailed JSON and Markdown automatically while keeping terminal 
 | Native run | `result.json`, `result.md` |
 | Lab | local transport/run receipt plus collected remote reports |
 | Cobalt Strike | redacted `cobaltstrike.json` receipt |
-| Operation | `operation.json` with step, route, child, parallel branch, capture, and cleanup state |
-| Operation proof | `operation-proof.json` with contracts, expected paths/branches, state checks, and coverage |
+| Operation | `operation.json` with execution mode, dependencies, waves, step, route, child, parallel branch, capture, blocked-step, and cleanup state |
+| Operation proof | `operation-proof.json` with contracts, expected paths/waves/steps, state checks, and coverage |
 | Export | manifest, analysis, argument contract, target metadata, checksums |
 
 ## Correlation
@@ -23,7 +23,9 @@ Static capabilities and observed runtime evidence are intentionally separate:
 - `observed` records matching runtime output or state evidence when available;
 - `source_and_version` records repository/ref/commit/object hash context.
 
-Operation receipt version 5 additionally records the selected `parallelism`, maximum observed concurrency, per-group and per-branch timestamps, branch runtime/contract states, explicit exports, nested child receipt paths, deterministic expanded paths, and reverse cleanup state. A branch that is submitted or still running remains incomplete. A group is not complete until every `join=all` branch has complete output and a matching contract.
+Operation receipt version 6 additionally records execution mode, stable topological order, dependency lists, ready/start/completion timestamps, execution waves, blocked descendants, selected `parallelism`, maximum observed concurrency, explicit parallel-group state, nested child receipt paths, deterministic expanded paths, and reverse-topological cleanup state. A submitted or running C2 task remains incomplete. A DAG dependent is not scheduled until every dependency has complete output and a matching contract.
+
+Runtime receipt version 5 adds refresh metadata, completion source, numbered output chunks, final-chunk state, remote task errors, terminal reason, and complete-versus-partial output classification. Version-4 runtime receipts remain readable and are normalized in memory.
 
 ## Quiet automation
 

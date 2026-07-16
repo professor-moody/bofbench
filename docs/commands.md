@@ -68,12 +68,15 @@ bofbench operation run internal/section-map-start-unmap \
   --arg target_pid=1234 --arg payload=@file:/tmp/payload.bin
 bofbench operation run internal/ipc-coordination-matrix \
   --via lab --lab devbox --parallelism 3 <typed arguments>
+bofbench operation graph internal/ipc-dependency-matrix --expand
+bofbench operation run internal/ipc-dependency-matrix \
+  --via lab --lab devbox --parallelism 4 <typed arguments>
 bofbench operation resume runs/<run-id>/operation.json --parallelism 4
 bofbench operation cleanup runs/<run-id>/operation.json --parallelism 4
 bofbench operation docs --output docs/operation-reference.md
 ```
 
-See [multi-step operations](operations.md) for result routing, parallel groups, contracts, captures, sensitive inputs, static tests, live proof, incomplete C2 tasks, and reverse cleanup. `--parallelism` accepts `1–16` and defaults to `4`.
+See [multi-step operations](operations.md) for result routing, parallel groups, dependency-aware DAGs, ready waves, contracts, captures, sensitive inputs, static tests, live proof, incomplete C2 tasks, and reverse-topological cleanup. `--parallelism` accepts `1–16` and defaults to `4`.
 
 ## Build
 
@@ -198,6 +201,9 @@ bofbench arsenal inventory arsenal/team
 bofbench arsenal search arsenal/team --can token
 bofbench arsenal search arsenal/team --effect writes-state --works-with sliver
 bofbench arsenal search arsenal/team --arch x64 --confidence 'strong chain' --has-args
+bofbench arsenal search arsenal/team --api RpcBinding --chain remote_registry --loader compatible
+bofbench arsenal matrix arsenal/team
+bofbench arsenal matrix arsenal/team --format json
 bofbench arsenal compare old.x64.o new.x64.o
 ```
 
@@ -229,6 +235,7 @@ bofbench runtime status --lab devbox
 bofbench runtime sessions --via sliver --lab devbox
 bofbench runtime wait --via sliver --lab devbox --timeout 10m
 bofbench runtime tasks --via sliver --lab devbox
-bofbench runtime task <TASK_ID> --wait --timeout 10m
-bofbench runtime watch --via sliver --lab devbox --timeout 10m
+bofbench runtime task <TASK_ID> --refresh
+bofbench runtime task <TASK_ID> --refresh --wait --timeout 10m
+bofbench runtime watch --via sliver --lab devbox --refresh --timeout 10m
 ```

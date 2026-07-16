@@ -69,6 +69,7 @@ nav:
       - TrustedSec whoami: scenarios/trustedsec-whoami.md
       - Compare Arbitrary Objects: scenarios/arbitrary-object.md
       - Arsenal Workflow: scenarios/arsenal-workflow.md
+      - Arsenal Architecture Matrix: scenarios/arsenal-architecture-matrix.md
       - External Pack: scenarios/external-pack.md
       - Move to Another VM: scenarios/portable-vm.md
       - Compiler-Free Lab: scenarios/compiler-free-lab.md
@@ -76,6 +77,7 @@ nav:
       - Native and Lab Execution: scenarios/runtime-execution.md
       - Receipts and Observation: scenarios/receipts.md
       - Sliver Sessions and Tasks: scenarios/c2-tasks.md
+      - C2 Task Refresh: scenarios/c2-task-refresh.md
       - Export Packages: scenarios/export-packages.md
       - Multi-Host Topologies: scenarios/topologies.md
       - Operator TUI Workflow: scenarios/tui-workflow.md
@@ -85,6 +87,7 @@ nav:
       - Adaptive Native Coordination: scenarios/adaptive-native-coordination.md
       - Composable Native IPC: scenarios/composable-native-ipc.md
       - Parallel Native IPC and RPC: scenarios/parallel-native-ipc.md
+      - Dependency-Aware IPC: scenarios/dependency-aware-ipc.md
       - Operator Playbooks: playbooks.md
       - Deep Capability Workflows: deep-capabilities.md
       - Native Process Depth: native-process-depth.md

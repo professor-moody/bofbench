@@ -18,6 +18,7 @@ Use these walkthroughs when you want an outcome, not a command catalog. Each sce
 | [Explain TrustedSec `whoami`](trustedsec-whoami.md) | Operator-language explanation of a popular public BOF |
 | [Compare Arbitrary Objects](arbitrary-object.md) | Behavioral and argument differences between unknown objects |
 | [Build and Search an Arsenal](arsenal-workflow.md) | Locked, indexed, searchable external BOF corpus |
+| [Compare an Arsenal Across Architectures](arsenal-architecture-matrix.md) | Per-object x64/x86 behavior, arguments, loader, and cache comparison |
 
 ## Configure and operate runtimes
 
@@ -28,6 +29,7 @@ Use these walkthroughs when you want an outcome, not a command catalog. Each sce
 | [Execute Through Native and Lab Runtimes](runtime-execution.md) | Same object, typed arguments, and normalized receipts across adapters |
 | [Inspect Receipts and Observed Behavior](receipts.md) | Exact-hash static/runtime correlation |
 | [Operate Sliver Sessions and Tasks](c2-tasks.md) | Session selection, task completion, proof resumption |
+| [Refresh and Complete a C2 Task](c2-task-refresh.md) | Persisted task refresh, chunk completion, and operation resume |
 | [Use the Operator TUI](tui-workflow.md) | Interactive composition, arguments, runtime, and results |
 
 ## Exercise capabilities
@@ -39,6 +41,7 @@ Use these walkthroughs when you want an outcome, not a command catalog. Each sce
 | [Export for Native and C2 Runtimes](export-packages.md) | Raw, Sliver, and Cobalt Strike packages |
 | [Compose Native IPC Operations](composable-native-ipc.md) | Nested synchronization and mailslot lifecycles with transitive receipts and cleanup |
 | [Run Parallel Native IPC and RPC Workflows](parallel-native-ipc.md) | Concurrent named-pipe, redirected-process, RPC, COM, and discovery branches with deterministic receipts |
+| [Run a Dependency-Aware IPC Operation](dependency-aware-ipc.md) | Ready-wave scheduling, dependent captures, C2 resume, and reverse-topological cleanup |
 
 ## Recover and release
 

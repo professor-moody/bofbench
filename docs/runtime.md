@@ -15,8 +15,9 @@ bofbench runtime status --lab devbox
 bofbench runtime sessions --via sliver --lab devbox
 bofbench runtime wait --via sliver --lab devbox --timeout 10m
 bofbench runtime tasks --via sliver --lab devbox
-bofbench runtime task <task-id> --wait --timeout 10m
-bofbench runtime watch --via sliver --lab devbox
+bofbench runtime task <task-id> --refresh
+bofbench runtime task <task-id> --refresh --wait --timeout 10m
+bofbench runtime watch --via sliver --lab devbox --refresh
 ```
 
 The first command shows the native loader, remote lab, Sliver configuration/session match, and licensed Cobalt Strike availability. The second lists selectable Sliver sessions for the named profile.
@@ -28,7 +29,7 @@ bofbench runtime wait --via sliver --lab devbox --timeout 10m --interval 2s
 bofbench pack prove internal/thread-hijack-execute --via sliver --lab devbox
 ```
 
-`runtime tasks` gives a compact view of submitted, running, completed, failed, and timed-out C2 work from stored receipts. `runtime task` resolves either a task ID or receipt path; `--wait` follows state changes until output is complete. `runtime watch` continuously refreshes incomplete work for the selected adapter and profile.
+`runtime tasks` gives a compact view of submitted, running, completed, failed, canceled, and timed-out C2 work from stored receipts. `runtime task` resolves either a task ID or receipt path. `--refresh` asks the adapter for current remote state and retained output; combining it with `--wait` repeats that refresh until a terminal state or timeout. `runtime watch --refresh` refreshes every incomplete receipt for the selected adapter and profile.
 
 Interrupted catalog proof runs can resume from their previous report:
 
@@ -86,16 +87,17 @@ The licensed adapter generates an ephemeral Aggressor script, uses `agscript`, p
 
 ## One receipt schema
 
-Every adapter writes `runs/<id>/result.json` using `bofbench.runtime-receipt` version 4. Receipts include:
+Every adapter writes `runs/<id>/result.json` using `bofbench.runtime-receipt` version 5. Receipts include:
 
 - selected profile and remote computer identity;
 - runtime, session, and task identifier when present;
 - exact object SHA-256;
 - named values and BOF argument types;
 - captured output, timeout, exit state, duration, and error;
+- last refresh time, completion source, numbered output chunks, final-chunk state, remote task error, terminal reason, and complete-versus-partial output classification;
 - cleanup invocation and result when requested.
 
-Version 4 distinguishes `submitted`, `running`, `completed`, `failed`, and `timeout`, and records whether task output is complete. A C2 task is never reported as passed merely because it was submitted.
+Version 5 retains version-4 state compatibility and adds refresh-aware completion. Sliver refresh retrieves the exact persisted task for the recorded session/task pair. The licensed Cobalt Strike adapter waits for BOF callback output and a terminal `task_completed`, error, or timeout callback. A C2 task is never reported as passed merely because it was submitted or produced an early output chunk.
 
 Sensitive receipts record the names of protected arguments and redacted output fields, never their values. Remote-lab runs apply that policy to the remote developer report, collected lab report, event stream, final receipt, and proof report. Credential Manager packs automatically use the existing interactive Windows session because the SSH transport has a different logon-session credential context.
 

@@ -10,7 +10,7 @@ bofbench arsenal acquire https://github.com/trustedsec/CS-Situational-Awareness-
 bofbench arsenal inventory arsenal/trustedsec-sa
 ```
 
-The inventory records capabilities, behavior chains, effects, arguments, architecture, loader support, source/version, target compatibility, and duplicate object groups. Analysis is cached outside the arsenal by object hash, source identity, architecture, and analyzer-signature-set hash. Repeating a search reuses unchanged objects and reports `cached` versus `refreshed` counts.
+The inventory records capabilities, behavior chains, effects, arguments, architecture, loader support, source/version, target compatibility, and duplicate object groups. Arsenal index version 2 stores a separate analysis for every object and architecture. Analysis is cached outside the arsenal by object hash, source identity, architecture, and analyzer-signature-set hash. Repeating a search reuses unchanged objects and reports `cached` versus `refreshed` counts. Old version-1 caches are ignored and rebuilt without touching the source arsenal.
 
 ## Search in operator language
 
@@ -21,9 +21,28 @@ bofbench arsenal search arsenal/trustedsec-sa \
 bofbench arsenal search arsenal/trustedsec-sa --requires admin
 bofbench arsenal search arsenal/trustedsec-sa --arch x64 \
   --confidence 'strong chain' --has-args
+bofbench arsenal search arsenal/trustedsec-sa \
+  --api RpcBinding --chain remote_registry --loader compatible
 ```
 
-Search filters are ANDed. Results are grouped by operator capability and show confidence, arguments, effects, requirements, and runtimes before object structure. Paired x64/x86 objects are indexed together, and nearby `.cna` plus Sliver `extension.json` metadata is associated with the object.
+Search filters are ANDed. Results are grouped by operator capability and show confidence, arguments, effects, requirements, and runtimes before object structure. Nearby `.cna`, Sliver `extension.json`, source, and manifest metadata is associated with the correct object pair.
+
+## Architecture matrix
+
+```bash
+bofbench arsenal matrix arsenal/trustedsec-sa
+bofbench arsenal matrix arsenal/trustedsec-sa --format json
+```
+
+The matrix analyzes x64 and x86 independently, then reports:
+
+- capability and behavior-chain equivalence;
+- argument, loader-support, import, effect, and runtime differences;
+- x64-only or x86-only entries;
+- associated source, `.cna`, and Sliver extension files;
+- cache reuse and concrete loader blockers.
+
+A hash difference is expected between architectures and does not itself make behavior different. The equivalence decision compares normalized operator behavior and runtime contracts.
 
 ## Analyze and compare
 

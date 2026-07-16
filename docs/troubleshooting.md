@@ -105,4 +105,37 @@ The loader resolves Beacon shims and common WinAPI imports. Unsupported symbols 
 
 `bofbench test` marks a run as `output_contract_failed` when configured `expect` strings are missing or configured `forbid` strings appear in captured output.
 
+## DAG step is blocked
+
+Inspect the operation receipt's `dependencies`, `execution_waves`, and `blocked_steps`. A blocked step was not executed because an ancestor failed or remained incomplete. Refresh C2 work before resuming:
+
+```sh
+bofbench runtime task runs/<runtime-run>/result.json --refresh --wait --timeout 10m
+bofbench operation resume runs/<operation-run>/operation.json --parallelism 4
+```
+
+BOFBench does not schedule a fallback after a runtime crash or partial output because the remote effect is unknown.
+
+## C2 receipt remains partial
+
+Confirm the recorded runtime, session, and task ID still exist:
+
+```sh
+bofbench runtime tasks --via sliver --lab devbox
+bofbench runtime task <TASK_ID> --refresh
+bofbench runtime watch --via sliver --lab devbox --refresh --timeout 10m
+```
+
+`output_classification=partial` or `final_chunk=false` cannot satisfy an operation result contract. Sliver refresh uses retained task output. Cobalt Strike completion requires the licensed callback path and a terminal callback; package verification is not live completion.
+
+## Arsenal matrix shows an architecture difference
+
+Use JSON output to see the exact category:
+
+```sh
+bofbench arsenal matrix arsenal/trustedsec-sa --format json
+```
+
+Loader support, imports, arguments, effects, capabilities, and behavior chains are compared independently. A different object hash is normal and is not itself a behavioral difference. Reacquire or relock the corpus only when the recorded source revision or object hash is unexpected.
+
 For the full command sequence, return to the [Quickstart](quickstart.md). Loader-specific failures are detailed in [Native Loader](native-loader.md).

@@ -1,6 +1,6 @@
 # Composable, Provable Multi-Step Operations
 
-Operations connect capability packs into result-aware workflows. A step can capture a structured output field—such as a PID, address, hash, path, object name, pipe name, or retained handle—and pass it to later work. Version 3 can route a completed, understood result to a later step. Version 4 can invoke another catalog operation as an atomic child step. Version 5 can run independent pack or child-operation branches concurrently and join them deterministically. Work advances only when both conditions are true:
+Operations connect capability packs into result-aware workflows. A step can capture a structured output field—such as a PID, address, hash, path, object name, pipe name, window handle, or retained handle—and pass it to later work. Version 3 can route a completed, understood result to a later step. Version 4 can invoke another catalog operation as an atomic child step. Version 5 can run explicit parallel groups. Version 6 adds dependency-aware DAG execution, ready waves, blocked descendants, and reverse-topological cleanup. Work advances only when both conditions are true:
 
 1. the runtime task completed with complete output; and
 2. the step's declared structured-result contract matched.
@@ -52,7 +52,7 @@ bofbench operation run internal/virtual-memory-execute \
 
 Normal operation accepts operator-selected targets and payloads. Proof fixtures and benign proof payloads are acceptance infrastructure, not runtime restrictions. `--cleanup` and `--cleanup-on-failure` remain optional.
 
-The run creates `runs/<run-id>/operation.json`. The version-5 receipt pins the complete transitive operation and pack set, action and cleanup pack hashes, child receipt paths, object hashes, runtime receipts, contract state, matched outcomes, parallel branch state, timestamps, observed concurrency, parent and expanded execution paths, skipped steps, non-sensitive captures, and nested cleanup results. Sensitive values are never stored.
+The run creates `runs/<run-id>/operation.json`. The version-6 receipt pins the complete transitive operation and pack set, action and cleanup pack hashes, child receipt paths, object hashes, runtime receipts, contract state, matched outcomes, dependencies, ready waves, blocked steps, timestamps, maximum concurrency, parent and expanded execution paths, skipped steps, non-sensitive captures, and nested cleanup results. Sensitive values are never stored.
 
 ```mermaid
 flowchart LR
@@ -71,6 +71,78 @@ flowchart LR
   I --> J["Pin route and mark bypassed steps skipped"]
   J --> K["Optional reverse cleanup"]
 ```
+
+## Dependency-aware DAG operations
+
+Schema version 6 lets steps declare dependencies instead of relying on declaration order:
+
+```json
+{
+  "schema": "bofbench.operation",
+  "schema_version": 6,
+  "execution": "dag",
+  "id": "window-message-matrix",
+  "steps": [
+    {
+      "id": "discover",
+      "pack": "window-inventory",
+      "depends_on": [],
+      "expect": {
+        "tag": "window-inventory",
+        "fields": {"status": "complete", "window_handle": "*"}
+      },
+      "captures": {
+        "window_handle": {"tag": "window-inventory", "field": "window_handle"}
+      }
+    },
+    {
+      "id": "send",
+      "pack": "window-message-send",
+      "depends_on": ["discover"],
+      "arguments": {"window_handle": "$capture.window_handle"},
+      "expect": {
+        "tag": "window-message-send",
+        "fields": {"status": "complete"}
+      }
+    }
+  ]
+}
+```
+
+BOFBench validates the graph before building anything:
+
+- cycles are rejected;
+- a capture may be consumed only by a transitive descendant;
+- every DAG step has one explicit result contract;
+- ordered outcomes and direct parallel groups stay in linear definitions rather than being mixed into a DAG;
+- child operations remain valid DAG nodes and retain their own nested receipts.
+
+Execution proceeds in ready waves. Every step in a wave is resolved, built, analyzed, argument-packed, and runtime-prepared before any member executes. Ready steps then run under the global `--parallelism 1–16` limit.
+
+```mermaid
+flowchart LR
+  A["Wave 1: discover window"] --> B["Capture HWND"]
+  B --> C["Wave 2: send"]
+  B --> D["Wave 2: post"]
+  B --> E["Wave 2: WM_COPYDATA"]
+  B --> F["Wave 2: set text"]
+  C --> G["Complete"]
+  D --> G
+  E --> G
+  F --> G
+```
+
+The first failed or incomplete step stops new scheduling. Independent work that already started is allowed to finish and is recorded. Descendants that cannot run become `blocked`; unrelated unscheduled roots remain pending for resume. Resume refreshes incomplete C2 receipts first, skips completed steps, and continues at the next ready wave. Cleanup walks completed stateful work in reverse topological order and uses reverse declaration order to break ties.
+
+Inspect a DAG before running it:
+
+```bash
+bofbench operation graph internal/ipc-dependency-matrix --expand
+bofbench operation run internal/ipc-dependency-matrix \
+  --via lab --lab devbox --parallelism 4
+```
+
+Proof definitions can assert both `expect_waves` and `expect_steps`, so scheduling shape is part of repeatable acceptance rather than an informal terminal observation.
 
 ## Parallel groups
 

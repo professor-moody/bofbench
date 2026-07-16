@@ -73,6 +73,24 @@ enumerate bounded certificate metadata from one explicit Windows certificate sto
 | `subject_filter` | `wstring` | no | no | `` | case-insensitive subject substring; empty matches all |
 | `result_limit` | `int` | no | no | `25` | maximum certificate rows (1-256) |
 
+## `builtin/com-class-detail-inventory`
+
+read exact COM class registration, server, AppID, TreatAs, and elevation metadata
+
+- Can do: exact COM class server, threading, AppID, TreatAs, and elevation registration inspection
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Stored-output redaction: `server`
+- Analyzer signatures: `com_class_detail_inventory`
+- Live proofs: scripting-dictionary (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `identifier_type` | `string` | no | no | `progid` | progid or clsid |
+| `identifier` | `wstring` | yes | no | `` | exact ProgID or CLSID |
+
 ## `builtin/com-registration-inventory`
 
 enumerate bounded COM CLSID registration metadata
@@ -92,6 +110,23 @@ enumerate bounded COM CLSID registration metadata
 | `registry_view` | `string` | no | no | `native` | native, 32, or 64 |
 | `clsid_filter` | `wstring` | no | no | `` | case-insensitive CLSID substring |
 | `result_limit` | `int` | no | no | `64` | maximum registrations (1-512) |
+
+## `builtin/com-running-object-inventory`
+
+enumerate bounded COM Running Object Table display names
+
+- Can do: bounded Running Object Table moniker and display-name discovery
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `com_running_object_inventory`
+- Live proofs: bounded-local (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `display_filter` | `string` | no | no | `` | case-insensitive display-name substring |
+| `result_limit` | `int` | no | no | `64` | maximum running objects (1-512) |
 
 ## `builtin/deep-discovery`
 
@@ -1010,6 +1045,9 @@ enumerate bounded local RPC endpoint-mapper registrations
 
 | Argument | Type | Required | Sensitive | Default | Description |
 | --- | --- | --- | --- | --- | --- |
+| `interface_filter` | `string` | no | no | `` | case-insensitive interface UUID substring |
+| `protocol_filter` | `string` | no | no | `` | case-insensitive protocol-sequence or binding substring |
+| `annotation_filter` | `string` | no | no | `` | case-insensitive annotation substring |
 | `result_limit` | `int` | no | no | `64` | maximum endpoint rows (1-512) |
 
 ## `builtin/security-package-inventory`
@@ -1180,3 +1218,23 @@ report token elevation and integrity context
 - Needs: privilege=user; network=none; platform=windows/x64,x86
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
+
+## `builtin/window-inventory`
+
+enumerate bounded top-level or message-only windows with owning process and thread metadata
+
+- Can do: bounded top-level and message-only window discovery with owning PID and TID
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Stored-output redaction: `title`
+- Analyzer signatures: `window_inventory`
+- Live proofs: fixture-window (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `scope` | `string` | no | no | `all` | all, top, or message |
+| `class_filter` | `wstring` | no | no | `` | case-insensitive class substring |
+| `title_filter` | `wstring` | no | no | `` | case-insensitive title substring |
+| `result_limit` | `int` | no | no | `64` | maximum windows (1-512) |

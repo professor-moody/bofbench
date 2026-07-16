@@ -12,10 +12,10 @@
 </div>
 
 <div class="bb-proof">
-  <div><strong>One pack model</strong><span>public + private catalogs</span></div>
+  <div><strong>218 packs</strong><span>84 public · 134 private</span></div>
   <div><strong>x64 + x86</strong><span>separate native loaders</span></div>
   <div><strong>4 runtimes</strong><span>native · lab · Sliver · CS</span></div>
-  <div><strong class="bb-impact">Named args</strong><span>source to C2 package</span></div>
+  <div><strong class="bb-impact">36 operations</strong><span>linear · routed · parallel · DAG</span></div>
 </div>
 
 # The operator loop
@@ -55,6 +55,22 @@ bofbench arsenal search arsenal/trustedsec-sa --can token
 ```
 
 Function-local API correlation distinguishes isolated primitives from stronger behavior chains. A token query is not reported as impersonation unless the object also contains the duplicate-and-apply sequence; process access is not called injection without allocation, write, and execution steps.
+
+Compare both architectures across an entire corpus:
+
+```bash
+bofbench arsenal matrix arsenal/trustedsec-sa
+bofbench arsenal search arsenal/trustedsec-sa \
+  --api RpcBinding --chain remote_registry --loader compatible
+```
+
+Dependency-aware operations prepare and execute independent ready steps concurrently while preserving exact contracts, captures, resume, and reverse-topological cleanup:
+
+```bash
+bofbench operation graph internal/ipc-dependency-matrix --expand
+bofbench operation run internal/ipc-dependency-matrix \
+  --via lab --lab devbox --parallelism 4
+```
 
 ## Use the same interface at different depths
 

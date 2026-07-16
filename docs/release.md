@@ -22,6 +22,8 @@ It performs:
 - packaging under `dist/release/`
 - `SHA256SUMS`
 
+Release acceptance also verifies the current catalog and operation totals—84 embedded public packs, 134 private packs when the private catalog is available, six public operations, and 30 private operations—plus operation schema v6, runtime receipt v5, and arsenal-index v2 documentation/reference drift.
+
 Set `VERSION` to label packages:
 
 ```sh
