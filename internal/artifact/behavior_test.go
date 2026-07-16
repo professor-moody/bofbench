@@ -394,6 +394,53 @@ func TestRemoteOperationRulesRequireCompleteFunctionLocalChains(t *testing.T) {
 	}
 }
 
+func TestIPCActivationRulesRequireFunctionLocalEvidence(t *testing.T) {
+	chains := []struct {
+		id   string
+		apis []string
+		tag  string
+	}{
+		{"com_running_object_inventory", []string{"OLE32$GetRunningObjectTable", "OLE32$CreateBindCtx"}, "[com-running-object-inventory]"},
+		{"named_pipe_client_open", []string{"KERNEL32$WaitNamedPipeW", "KERNEL32$CreateFileW", "KERNEL32$DuplicateHandle"}, "[named-pipe-client-open]"},
+		{"named_pipe_mode_set", []string{"KERNEL32$DuplicateHandle", "KERNEL32$SetNamedPipeHandleState"}, "[named-pipe-mode-set]"},
+		{"named_pipe_transact", []string{"KERNEL32$DuplicateHandle", "KERNEL32$TransactNamedPipe"}, "[named-pipe-transact]"},
+		{"alpc_client_open", []string{"NTDLL$NtAlpcConnectPort", "KERNEL32$DuplicateHandle"}, "[alpc-client-open]"},
+		{"alpc_client_exchange", []string{"KERNEL32$DuplicateHandle", "NTDLL$NtAlpcSendWaitReceivePort"}, "[alpc-client-exchange]"},
+		{"com_moniker_dispatch_invoke", []string{"OLE32$CreateBindCtx", "OLE32$MkParseDisplayName"}, "[com-moniker-dispatch-invoke]"},
+	}
+	for _, test := range chains {
+		t.Run(test.id, func(t *testing.T) {
+			relocations := make([]Relocation, 0, len(test.apis))
+			for _, api := range test.apis {
+				relocations = append(relocations, Relocation{Function: "go", Symbol: api})
+			}
+			requireBehavior(t, inferBehaviorChains(relocations, []String{{Value: test.tag}}), test.id)
+			split := append([]Relocation(nil), relocations...)
+			split[len(split)-1].Function = "helper"
+			for _, candidate := range inferBehaviorChains(split, []String{{Value: test.tag}}) {
+				if candidate.ID == test.id {
+					t.Fatalf("split evidence produced %s", test.id)
+				}
+			}
+		})
+	}
+	for _, primitive := range []struct {
+		id, api, tag string
+	}{
+		{"com_class_detail_inventory", "OLE32$CLSIDFromProgID", "[com-class-detail-inventory]"},
+		{"window_inventory", "USER32$EnumWindows", "[window-inventory]"},
+		{"window_message_send", "USER32$SendMessageTimeoutW", "[window-message-send]"},
+		{"window_message_post", "USER32$PostMessageW", "[window-message-post]"},
+		{"window_copydata_send", "USER32$SendMessageTimeoutW", "[window-copydata-send]"},
+		{"window_text_set", "USER32$SendMessageTimeoutW", "[window-text-set]"},
+	} {
+		chain := requireBehavior(t, inferBehaviorChains([]Relocation{{Function: "go", Symbol: primitive.api}}, []String{{Value: primitive.tag}}), primitive.id)
+		if chain.Confidence != "confirmed primitive" {
+			t.Fatalf("%s = %+v", primitive.id, chain)
+		}
+	}
+}
+
 func TestWMIClassificationDoesNotInventRemoteTarget(t *testing.T) {
 	relocations := []Relocation{{Function: "Wmi_Query", Symbol: "OLE32$CoCreateInstance"}, {Function: "Wmi_Query", Symbol: "OLE32$CoSetProxyBlanket"}, {Function: "Wmi_Query", Symbol: "OLEAUT32$SysAllocString"}}
 	chains := inferBehaviorChains(relocations, nil)

@@ -1998,10 +1998,11 @@ func RefreshRuntimeReceipt(current runtimeadapter.Receipt) (runtimeadapter.Recei
 	if err := json.Unmarshal(data, &updated); err != nil {
 		return current, err
 	}
-	if updated.Schema != runtimeadapter.ReceiptSchema || updated.SchemaVersion != runtimeadapter.ReceiptSchemaVersion {
-		return current, fmt.Errorf("unsupported runtime receipt at %s", current.ReceiptPath)
+	normalized, err := runtimeadapter.NormalizeReceipt(updated)
+	if err != nil {
+		return current, fmt.Errorf("%w at %s", err, current.ReceiptPath)
 	}
-	return updated, nil
+	return normalized, nil
 }
 
 func Fingerprint(document Document) string {
@@ -2068,7 +2069,39 @@ func builtins() []Resolved {
 			ExpectParallel: map[string]map[string]string{"surfaces": {"rpc": "completed", "com": "completed", "alpc": "completed"}},
 		}},
 	}
-	documents := []Document{triage, network, waitTriage, coordination, ipc}
+	ipcActivation := Document{
+		Schema: Schema, SchemaVersion: 6, Execution: "dag", ID: "ipc-activation-triage", Version: "1.0.0",
+		Title: "IPC and Activation Triage", Summary: "Inventory RPC, COM registration, active COM monikers, ALPC ports, and windows as one dependency-aware ready wave", Tier: "public",
+		Inputs: []Input{
+			{Name: "result_limit", Type: "int", Default: "32"},
+			{Name: "rpc_interface_filter", Type: "string", Default: ""},
+			{Name: "rpc_protocol_filter", Type: "string", Default: ""},
+			{Name: "rpc_annotation_filter", Type: "string", Default: ""},
+			{Name: "com_scope", Type: "string", Default: "all"},
+			{Name: "registry_view", Type: "string", Default: "native"},
+			{Name: "clsid_filter", Type: "wstring", Default: ""},
+			{Name: "rot_filter", Type: "string", Default: ""},
+			{Name: "alpc_directory", Type: "wstring", Default: `\RPC Control`},
+			{Name: "alpc_prefix", Type: "wstring", Default: ""},
+			{Name: "window_scope", Type: "string", Default: "all"},
+			{Name: "window_class_filter", Type: "wstring", Default: ""},
+			{Name: "window_title_filter", Type: "wstring", Default: ""},
+		},
+		Steps: []Step{
+			{ID: "rpc", Pack: "rpc-endpoint-inventory", Arguments: map[string]string{"interface_filter": "$input.rpc_interface_filter", "protocol_filter": "$input.rpc_protocol_filter", "annotation_filter": "$input.rpc_annotation_filter", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "rpc-endpoint-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+			{ID: "com-registration", Pack: "com-registration-inventory", Arguments: map[string]string{"scope": "$input.com_scope", "registry_view": "$input.registry_view", "clsid_filter": "$input.clsid_filter", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "com-registration-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+			{ID: "rot", Pack: "com-running-object-inventory", Arguments: map[string]string{"display_filter": "$input.rot_filter", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "com-running-object-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+			{ID: "alpc", Pack: "alpc-port-inventory", Arguments: map[string]string{"directory": "$input.alpc_directory", "prefix": "$input.alpc_prefix", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "alpc-port-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+			{ID: "windows", Pack: "window-inventory", Arguments: map[string]string{"scope": "$input.window_scope", "class_filter": "$input.window_class_filter", "title_filter": "$input.window_title_filter", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "window-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+		},
+		ProofCases: []ProofCase{{
+			ID: "target-ipc", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"},
+			Inputs:      map[string]string{"result_limit": "16", "rpc_interface_filter": "", "rpc_protocol_filter": "", "rpc_annotation_filter": "", "com_scope": "all", "registry_view": "native", "clsid_filter": "", "rot_filter": "", "alpc_directory": `\RPC Control`, "alpc_prefix": "BOFBench", "window_scope": "top", "window_class_filter": "$TARGET_WINDOW_CLASS", "window_title_filter": ""},
+			ExpectWaves: [][]string{{"rpc", "com-registration", "rot", "alpc", "windows"}},
+			ExpectSteps: map[string]string{"rpc": "completed", "com-registration": "completed", "rot": "completed", "alpc": "completed", "windows": "completed"},
+		}},
+	}
+	documents := []Document{triage, network, waitTriage, coordination, ipc, ipcActivation}
 	items := make([]Resolved, 0, len(documents))
 	for _, document := range documents {
 		item := Resolved{Document: document, Catalog: "builtin", Qualified: "builtin/" + document.ID}
@@ -2139,7 +2172,12 @@ func graphDocument(document Document, prefix string, registry *Registry, expand 
 						entry = id + "/$start"
 					}
 					graph.Edges = append(graph.Edges, GraphEdge{From: id, To: entry, Outcome: "contains"})
-					graph.Edges = append(graph.Edges, childGraph.Edges...)
+					for _, edge := range childGraph.Edges {
+						if edge.To == "$complete" || edge.To == "$fail" {
+							edge.To = id
+						}
+						graph.Edges = append(graph.Edges, edge)
+					}
 				}
 			}
 		}

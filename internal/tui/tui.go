@@ -90,6 +90,10 @@ type runEntry struct {
 	NestedCleanup  []string
 	ParallelLanes  []string
 	MaxConcurrency int
+	ExecutionMode  string
+	ExecutionWaves []string
+	BlockedSteps   []string
+	DependencyRows []string
 	ModTime        time.Time
 }
 
@@ -864,7 +868,7 @@ func (m model) viewOperations() string {
 		if len(m.labProfiles) > 0 {
 			labName = m.labProfiles[m.labProfile]
 		}
-		fmt.Fprintf(&b, "\nRuntime  %s  Lab %s  Parallelism %d (+/-)\nRun      bofbench operation run %s --via %s --parallelism %d\n", hotStyle.Render(runVias[m.viaCursor]), labName, max(1, m.operationParallel), item.Qualified, runVias[m.viaCursor], max(1, m.operationParallel))
+		fmt.Fprintf(&b, "\nExecution %s  Runtime %s  Lab %s  Parallelism %d (+/-)\nRun      bofbench operation run %s --via %s --parallelism %d\n", operationsvc.ExecutionMode(item.Document), hotStyle.Render(runVias[m.viaCursor]), labName, max(1, m.operationParallel), item.Qualified, runVias[m.viaCursor], max(1, m.operationParallel))
 		fmt.Fprintf(&b, "Test [x] bofbench operation test %s\nProve[p] bofbench operation prove %s --via %s\n", item.Qualified, item.Qualified, runVias[m.viaCursor])
 		fmt.Fprintf(&b, "Resume   bofbench operation resume runs/<id>/operation.json\nCleanup  bofbench operation cleanup runs/<id>/operation.json\n")
 		if m.operationRegistry != nil {
@@ -884,7 +888,13 @@ func (m model) viewOperations() string {
 		}
 		children := []string{}
 		lanes := []string{}
+		dependencies := []string{}
 		for _, step := range item.Document.Steps {
+			if len(step.DependsOn) == 0 && operationsvc.IsDAG(item.Document) {
+				dependencies = append(dependencies, step.ID+" ← ready root")
+			} else if len(step.DependsOn) > 0 {
+				dependencies = append(dependencies, step.ID+" ← "+strings.Join(step.DependsOn, ", "))
+			}
 			if step.Operation != "" {
 				children = append(children, step.ID+" → "+step.Operation)
 			}
@@ -897,6 +907,12 @@ func (m model) viewOperations() string {
 					}
 					lanes = append(lanes, step.ID+"/"+branch.ID+" → "+target)
 				}
+			}
+		}
+		if len(dependencies) > 0 {
+			b.WriteString("\nDependency readiness\n")
+			for _, dependency := range dependencies {
+				fmt.Fprintf(&b, "  %s\n", dependency)
 			}
 		}
 		if len(lanes) > 0 {
@@ -1109,6 +1125,19 @@ func renderRunDetail(run runEntry) string {
 		fmt.Fprintf(&b, "  parallel lanes: %s\n", strings.Join(run.ParallelLanes, ", "))
 		fmt.Fprintf(&b, "  max concurrency: %d\n", run.MaxConcurrency)
 	}
+	if run.ExecutionMode != "" {
+		fmt.Fprintf(&b, "  execution: %s\n", run.ExecutionMode)
+	}
+	if len(run.ExecutionWaves) > 0 {
+		fmt.Fprintf(&b, "  waves: %s\n", strings.Join(run.ExecutionWaves, " | "))
+		fmt.Fprintf(&b, "  max concurrency: %d\n", run.MaxConcurrency)
+	}
+	if len(run.DependencyRows) > 0 {
+		fmt.Fprintf(&b, "  dependency state: %s\n", strings.Join(run.DependencyRows, ", "))
+	}
+	if len(run.BlockedSteps) > 0 {
+		fmt.Fprintf(&b, "  blocked: %s\n", strings.Join(run.BlockedSteps, ", "))
+	}
 	if run.Summary != "" {
 		fmt.Fprintf(&b, "  summary: %s\n", run.Summary)
 	}
@@ -1296,6 +1325,18 @@ func readRunEntry(path string, modTime time.Time) runEntry {
 			run.ExpandedPath = stringSliceField(v, "expanded_path")
 			run.SkippedSteps = stringSliceField(v, "skipped_steps")
 			run.MaxConcurrency = int(intField(v, "max_observed_concurrency"))
+			run.ExecutionMode = stringField(v, "execution")
+			run.BlockedSteps = stringSliceField(v, "blocked_steps")
+			if waves, ok := v["execution_waves"].([]any); ok {
+				for _, rawWave := range waves {
+					wave, ok := rawWave.(map[string]any)
+					if !ok {
+						continue
+					}
+					steps := stringSliceField(wave, "steps")
+					run.ExecutionWaves = append(run.ExecutionWaves, fmt.Sprintf("%d:%s=%s", intField(wave, "index"), strings.Join(steps, "+"), emptyDash(stringField(wave, "state"))))
+				}
+			}
 			if steps, ok := v["steps"].([]any); ok {
 				for _, raw := range steps {
 					step, ok := raw.(map[string]any)
@@ -1304,6 +1345,14 @@ func readRunEntry(path string, modTime time.Time) runEntry {
 					}
 					if outcome := stringField(step, "matched_outcome"); outcome != "" {
 						run.MatchedRoutes = append(run.MatchedRoutes, stringField(step, "id")+"="+outcome)
+					}
+					dependencies := stringSliceField(step, "depends_on")
+					if len(dependencies) > 0 || stringField(step, "state") == "blocked" {
+						label := stringField(step, "id") + "←" + strings.Join(dependencies, "+") + "=" + emptyDash(stringField(step, "state"))
+						if blocked := stringSliceField(step, "blocked_by"); len(blocked) > 0 {
+							label += "(blocked-by:" + strings.Join(blocked, "+") + ")"
+						}
+						run.DependencyRows = append(run.DependencyRows, label)
 					}
 					if child := stringField(step, "child_receipt"); child != "" {
 						run.ChildReceipts = append(run.ChildReceipts, stringField(step, "id")+"="+child)

@@ -20,11 +20,16 @@ func TestTargetStateVersionOneRemainsReadable(t *testing.T) {
 func TestTargetReportTextIncludesCapabilityFixtures(t *testing.T) {
 	report := TargetReport{
 		Operation: "status", Status: "pass", Profile: "devbox", Host: "DEVBOX", Service: TargetServiceName,
-		State:    TargetState{PID: 42, AlertableTID: 7, NamedPipe: `\\.\pipe\BOFBenchTarget-42`, CanaryFile: `C:\bofbench\target\canary.txt`, MemoryCanaryAddress: "0x12340000", MemoryCanarySize: 64, MemoryCanarySHA256: "abc"},
+		State: TargetState{
+			PID: 42, AlertableTID: 7, NamedPipe: `\\.\pipe\BOFBenchTarget-42`, NamedPipeClientHandle: "0x22",
+			ALPCPort: `\RPC Control\BOFBenchTargetALPC-42`, ALPCHandle: "0x33",
+			WindowHandle: "0x44", WindowTextHandle: "0x45", WindowClass: "BOFBenchTargetWindow-42", WindowMessage: 32834, WindowPostMessage: 32835,
+			CanaryFile: `C:\bofbench\target\canary.txt`, MemoryCanaryAddress: "0x12340000", MemoryCanarySize: 64, MemoryCanarySHA256: "abc",
+		},
 		Fixtures: TargetFixtureState{User: `LAB\operator`, CredentialTarget: "BOFBench-LiveProof", CredentialSize: 48, DPAPIUserPath: `C:\bofbench\target\fixtures\dpapi-user.bin`, DPAPIMachinePath: `C:\bofbench\target\fixtures\dpapi-machine.bin`, WMIMarkerPath: `C:\bofbench\target\fixtures\wmi-marker.txt`, RemoteComputerName: "DEVBOX", RemoteRegistryHive: "HKLM", RemoteRegistryPath: `Software\BOFBench`, RemoteRegistryName: "RemoteCanary", RemoteRegistrySHA256: "def", RemoteRegistrySize: 48, RemoteRegistryStatus: "Stopped", RemoteRegistryStart: "Disabled", RemoteStageShare: "C$", RemoteStageRelative: `bofbench\proof`, RemoteStageLocal: `C:\bofbench\proof`},
 	}
 	text := TargetReportText(report)
-	for _, want := range []string{"computer    DEVBOX", `\\.\pipe\BOFBenchTarget-42`, "0x12340000", "BOFBench-LiveProof", "dpapi-user.bin", "wmi-marker.txt", `HKLM\Software\BOFBench\RemoteCanary`, `share=C$`, `previous=Stopped/Disabled`} {
+	for _, want := range []string{"computer    DEVBOX", `\\.\pipe\BOFBenchTarget-42`, `\RPC Control\BOFBenchTargetALPC-42`, "BOFBenchTargetWindow-42", "0x12340000", "BOFBench-LiveProof", "dpapi-user.bin", "wmi-marker.txt", `HKLM\Software\BOFBench\RemoteCanary`, `share=C$`, `previous=Stopped/Disabled`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in %s", want, text)
 		}

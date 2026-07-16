@@ -950,11 +950,11 @@ func builtins() []Resolved {
 	rpcEndpoints.Title = "RPC Endpoint Inventory"
 	rpcEndpoints.Capabilities = []string{"bounded local RPC endpoint-mapper inventory"}
 	rpcEndpoints.Network = "local"
-	rpcEndpoints.Arguments = []Argument{{Name: "result_limit", Type: "int", Default: "64", Description: "maximum endpoint rows (1-512)"}}
+	rpcEndpoints.Arguments = []Argument{{Name: "interface_filter", Type: "string", Default: "", Description: "case-insensitive interface UUID substring"}, {Name: "protocol_filter", Type: "string", Default: "", Description: "case-insensitive protocol-sequence or binding substring"}, {Name: "annotation_filter", Type: "string", Default: "", Description: "case-insensitive annotation substring"}, {Name: "result_limit", Type: "int", Default: "64", Description: "maximum endpoint rows (1-512)"}}
 	rpcEndpoints.ExpectedAnalysis = []string{"rpc_endpoint_inventory"}
 	rpcEndpoints.OutputFields = []string{"interface", "version", "binding", "annotation", "status", "shown", "limit", "error"}
 	rpcEndpoints.AnalysisSignatures = []AnalysisSignature{{ID: "rpc_endpoint_inventory", Name: "RPC endpoint inventory", Summary: "Enumerate bounded endpoint-mapper interface, binding, and annotation metadata.", Steps: []AnalysisStep{{Action: "begin endpoint mapper enumeration", APIs: []string{"RpcMgmtEpEltInqBegin"}}, {Action: "read endpoint registrations", APIs: []string{"RpcMgmtEpEltInqNextA", "RpcMgmtEpEltInqNextW"}}, {Action: "render RPC binding strings", APIs: []string{"RpcBindingToStringBindingA", "RpcBindingToStringBindingW"}}}, RequiredStrings: []string{"[rpc-endpoint-inventory]"}, Effects: []string{"reads local RPC endpoint metadata"}, Requirements: []string{"local RPC endpoint mapper access"}}}
-	rpcEndpoints.ProofCases = []ProofCase{{ID: "bounded-local", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"result_limit": "16"}, Expect: ProofExpectation{Tag: "rpc-endpoint-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	rpcEndpoints.ProofCases = []ProofCase{{ID: "bounded-local", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"interface_filter": "", "protocol_filter": "", "annotation_filter": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "rpc-endpoint-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
 	byID["rpc-endpoint-inventory"] = rpcEndpoints
 	comRegistrations := byID["com-registration-inventory"]
 	comRegistrations.Title = "COM Registration Inventory"
@@ -975,6 +975,35 @@ func builtins() []Resolved {
 	alpcPorts.AnalysisSignatures = []AnalysisSignature{{ID: "alpc_port_inventory", Name: "ALPC port inventory", Summary: "Open an Object Manager directory and enumerate bounded ALPC/LPC port names.", Steps: []AnalysisStep{{Action: "open Object Manager directory", APIs: []string{"NtOpenDirectoryObject"}}, {Action: "enumerate directory objects", APIs: []string{"NtQueryDirectoryObject"}}}, RequiredStrings: []string{"[alpc-port-inventory]", `\RPC Control`}, Effects: []string{"reads ALPC namespace metadata"}, Requirements: []string{"Object Manager directory query access"}}}
 	alpcPorts.ProofCases = []ProofCase{{ID: "rpc-control", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"directory": `\RPC Control`, "prefix": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "alpc-port-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
 	byID["alpc-port-inventory"] = alpcPorts
+	rot := byID["com-running-object-inventory"]
+	rot.Title = "COM Running Object Inventory"
+	rot.Capabilities = []string{"bounded Running Object Table moniker and display-name discovery"}
+	rot.Arguments = []Argument{{Name: "display_filter", Type: "string", Default: "", Description: "case-insensitive display-name substring"}, {Name: "result_limit", Type: "int", Default: "64", Description: "maximum running objects (1-512)"}}
+	rot.ExpectedAnalysis = []string{"com_running_object_inventory"}
+	rot.OutputFields = []string{"index", "display_name", "status", "shown", "limit", "hresult"}
+	rot.AnalysisSignatures = []AnalysisSignature{{ID: "com_running_object_inventory", Name: "COM Running Object Table inventory", Summary: "Enumerate active COM monikers and render their display names.", Steps: []AnalysisStep{{Action: "open the Running Object Table", APIs: []string{"GetRunningObjectTable"}}, {Action: "enumerate active monikers", APIs: []string{"CreateBindCtx"}}}, RequiredStrings: []string{"[com-running-object-inventory]"}, Effects: []string{"reads COM activation metadata"}, Requirements: []string{"COM initialization"}}}
+	rot.ProofCases = []ProofCase{{ID: "bounded-local", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"display_filter": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "com-running-object-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["com-running-object-inventory"] = rot
+	comDetail := byID["com-class-detail-inventory"]
+	comDetail.Title = "COM Class Detail Inventory"
+	comDetail.Capabilities = []string{"exact COM class server, threading, AppID, TreatAs, and elevation registration inspection"}
+	comDetail.Arguments = []Argument{{Name: "identifier_type", Type: "string", Default: "progid", Description: "progid or clsid"}, {Name: "identifier", Type: "wstring", Required: true, Description: "exact ProgID or CLSID"}}
+	comDetail.ExpectedAnalysis = []string{"com_class_detail_inventory"}
+	comDetail.OutputFields = []string{"status", "clsid", "progid", "server", "threading", "appid", "treat_as", "elevation", "hresult"}
+	comDetail.SensitiveOutputFields = []string{"server"}
+	comDetail.AnalysisSignatures = []AnalysisSignature{{ID: "com_class_detail_inventory", Name: "COM class detail inventory", Summary: "Resolve an exact COM identifier and read its detailed registration.", Steps: []AnalysisStep{{Action: "resolve selected COM class", APIs: []string{"CLSIDFromProgID", "CLSIDFromString"}}}, RequiredStrings: []string{"[com-class-detail-inventory]"}, Effects: []string{"reads COM registration metadata"}, Requirements: []string{"registry read access"}}}
+	comDetail.ProofCases = []ProofCase{{ID: "scripting-dictionary", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"identifier_type": "progid", "identifier": "Scripting.Dictionary"}, Expect: ProofExpectation{Tag: "com-class-detail-inventory", Fields: map[string]string{"status": "complete", "clsid": "*"}}}}
+	byID["com-class-detail-inventory"] = comDetail
+	windows := byID["window-inventory"]
+	windows.Title = "Window Inventory"
+	windows.Capabilities = []string{"bounded top-level and message-only window discovery with owning PID and TID"}
+	windows.Arguments = []Argument{{Name: "scope", Type: "string", Default: "all", Description: "all, top, or message"}, {Name: "class_filter", Type: "wstring", Default: "", Description: "case-insensitive class substring"}, {Name: "title_filter", Type: "wstring", Default: "", Description: "case-insensitive title substring"}, {Name: "result_limit", Type: "int", Default: "64", Description: "maximum windows (1-512)"}}
+	windows.ExpectedAnalysis = []string{"window_inventory"}
+	windows.OutputFields = []string{"hwnd", "pid", "tid", "class", "title", "visible", "enabled", "message_only", "status", "shown", "limit"}
+	windows.SensitiveOutputFields = []string{"title"}
+	windows.AnalysisSignatures = []AnalysisSignature{{ID: "window_inventory", Name: "Window inventory", Summary: "Enumerate bounded top-level or message-only windows and their owning process/thread.", Steps: []AnalysisStep{{Action: "enumerate top-level or message-only windows", APIs: []string{"EnumWindows", "FindWindowExW"}}}, RequiredStrings: []string{"[window-inventory]"}, Effects: []string{"reads desktop window metadata"}, Requirements: []string{"interactive or service window-station visibility"}}}
+	windows.ProofCases = []ProofCase{{ID: "fixture-window", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"scope": "top", "class_filter": "$TARGET_WINDOW_CLASS", "title_filter": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "window-inventory", Fields: map[string]string{"status": "complete", "shown": "1"}}}}
+	byID["window-inventory"] = windows
 	pipeInventory := byID["named-pipe-inventory"]
 	pipeInventory.Title = "Named Pipe Inventory"
 	pipeInventory.Capabilities = []string{"bounded named-pipe discovery"}
@@ -1297,6 +1326,8 @@ func validate(document Document, root string) error {
 		"$TARGET_HOLDER_PID": true, "$TARGET_JOB_MEMBER_PID": true, "$TARGET_EVENT_NAME": true, "$TARGET_SECTION_NAME": true, "$TARGET_JOB_NAME": true,
 		"$TARGET_MUTEX_NAME": true, "$TARGET_SEMAPHORE_NAME": true, "$TARGET_TIMER_NAME": true, "$TARGET_MAILSLOT_NAME": true,
 		"$TARGET_MAILSLOT_HANDLE": true, "$TARGET_MAILSLOT_SHA256": true,
+		"$TARGET_ALPC_PORT": true, "$TARGET_ALPC_HANDLE": true,
+		"$TARGET_WINDOW_HANDLE": true, "$TARGET_WINDOW_TEXT_HANDLE": true, "$TARGET_WINDOW_CLASS": true, "$TARGET_WINDOW_MESSAGE": true, "$TARGET_WINDOW_POST_MESSAGE": true,
 		"$TARGET_ARCH": true, "$TARGET_MODULE_BASE": true, "$TARGET_MODULE_PATH": true, "$EXECUTION_ADDRESS": true,
 		"$X86_TARGET_PID": true, "$X86_TARGET_TID": true, "$X86_TARGET_MODULE_BASE": true, "$X86_TARGET_MODULE_PATH": true,
 		"$MEMORY_ADDRESS": true, "$MEMORY_SIZE": true, "$MEMORY_SHA256": true, "$CANARY_PATH": true, "$CANARY_SHA256": true,
@@ -1393,7 +1424,9 @@ func validate(document Document, root string) error {
 			"kernel_object": {"object_type", "name"}, "event_state": {"name", "state"}, "mutex_state": {"name", "state"},
 			"semaphore_state": {"name", "count"}, "timer_state": {"name", "state"}, "section_payload": {"name", "offset", "size", "sha256"}, "job_membership": {"name", "pid"},
 			"mailslot_state": {"name"}, "mailslot_queue": {"holder_pid", "handle", "minimum_count"}, "inherited_handle": {"pid", "handle"},
-			"named_pipe": {"name"}, "named_pipe_queue": {"holder_pid", "handle", "sha256"},
+			"named_pipe": {"name"}, "named_pipe_queue": {"holder_pid", "handle", "sha256"}, "named_pipe_mode": {"holder_pid", "handle", "mode"},
+			"alpc_exchange": {"sha256"}, "window_message": {"message_id", "wparam", "lparam"},
+			"window_copydata": {"sha256", "data_id"}, "window_text": {"window_handle", "text"},
 			"process":              {"pid", "image", "marker"},
 			"process_command_line": {"pid", "value"},
 			"service_config":       {"name", "field", "value"},

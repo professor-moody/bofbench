@@ -86,6 +86,15 @@ type targetState struct {
 	MailslotHandle        string `json:"mailslot_handle,omitempty"`
 	MailslotSHA256        string `json:"mailslot_sha256,omitempty"`
 	MailslotAccess        uint32 `json:"mailslot_access,omitempty"`
+	ALPCPort              string `json:"alpc_port,omitempty"`
+	ALPCHandle            string `json:"alpc_handle,omitempty"`
+	WindowHandle          string `json:"window_handle,omitempty"`
+	WindowTextHandle      string `json:"window_text_handle,omitempty"`
+	WindowHelperPID       int    `json:"window_helper_pid,omitempty"`
+	WindowStation         string `json:"window_station,omitempty"`
+	WindowClass           string `json:"window_class,omitempty"`
+	WindowMessage         uint32 `json:"window_message,omitempty"`
+	WindowPostMessage     uint32 `json:"window_post_message,omitempty"`
 	User                  string `json:"user"`
 	CanaryFile            string `json:"canary_file"`
 	CanaryFileSHA256      string `json:"canary_file_sha256"`
@@ -164,7 +173,7 @@ func (service helperHandler) Execute(_ []string, requests <-chan svc.ChangeReque
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
-	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 7, Service: service.name, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 8, Service: service.name, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if module, _, _ := procModuleHandle.Call(0); module != 0 {
 		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
 	}
@@ -227,6 +236,11 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	defer knownFile.Close()
 	objectSD, err := windows.SecurityDescriptorFromString("D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;AU)S:(ML;;NW;;;LW)")
 	if err != nil {
+		return true, 2
+	}
+	currentProcess, currentProcessErr := windows.GetCurrentProcess()
+	currentProcessDACL, _, currentProcessDACLErr := objectSD.DACL()
+	if currentProcessErr != nil || currentProcessDACLErr != nil || windows.SetSecurityInfo(currentProcess, windows.SE_KERNEL_OBJECT, windows.DACL_SECURITY_INFORMATION, nil, nil, currentProcessDACL, nil) != nil {
 		return true, 2
 	}
 	objectSA := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: objectSD}
@@ -346,6 +360,28 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	defer windows.CloseHandle(heldPipe.Server)
 	defer windows.CloseHandle(heldPipe.Client)
 	go maintainHeldPipe(stop, heldPipe.Client, heldPipe.Server, heldPipe.Response)
+	alpc, err := createALPCFixture(service.root)
+	if err != nil {
+		writeTargetStartupError(service.root, "alpc", err)
+		close(stop)
+		return true, 20
+	}
+	defer alpc.stop()
+	var windowState targetState
+	windowData, err := os.ReadFile(filepath.Join(service.root, "window-helper.json"))
+	if err != nil {
+		writeTargetStartupError(service.root, "window-helper-read", err)
+		close(stop)
+		return true, 21
+	}
+	if err := json.Unmarshal(windowData, &windowState); err != nil || windowState.PID <= 0 || windowState.WindowHandle == "" || windowState.WindowTextHandle == "" {
+		if err == nil {
+			err = fmt.Errorf("window helper state is incomplete")
+		}
+		writeTargetStartupError(service.root, "window-helper-state", err)
+		close(stop)
+		return true, 21
+	}
 	pipeChild := exec.Command(executable, "--pipe-child")
 	pipeStdin, err := pipeChild.StdinPipe()
 	if err != nil {
@@ -380,7 +416,7 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	}
 	fixtureErr := launchFixtureInConsoleSession(service.root, "deploy")
 	state := targetState{
-		Schema: "bofbench.target", SchemaVersion: 7, Service: service.name,
+		Schema: "bofbench.target", SchemaVersion: 8, Service: service.name,
 		PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, NamedPipe: pipe.Name, User: `NT AUTHORITY\SYSTEM`,
 		NamedPipeHandle: fmt.Sprintf("0x%X", uintptr(heldPipe.Server)), NamedPipeClientHandle: fmt.Sprintf("0x%X", uintptr(heldPipe.Client)), NamedPipeSHA256: hashBytes(heldPipe.Response),
 		ProcessPipePID: pipeChild.Process.Pid, ProcessStdinHandle: fmt.Sprintf("0x%X", pipeStdin.(*os.File).Fd()), ProcessStdoutHandle: fmt.Sprintf("0x%X", pipeStdout.(*os.File).Fd()), ProcessPipeSHA256: hashBytes(pipeMessage),
@@ -388,6 +424,8 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		HolderPID:   os.Getpid(), JobMemberPID: jobChild.Process.Pid, EventName: eventName, SectionName: sectionName, JobName: jobName,
 		MutexName: mutexName, SemaphoreName: semaphoreName, TimerName: timerName, MailslotName: mailslotName,
 		MailslotHandle: fmt.Sprintf("0x%X", uintptr(mailslotHandle)), MailslotSHA256: hashBytes(mailslotMessage), MailslotAccess: systemHandleGrantedAccess(mailslotHandle),
+		ALPCPort: alpc.Name, ALPCHandle: fmt.Sprintf("0x%X", uintptr(alpc.Client)),
+		WindowHandle: windowState.WindowHandle, WindowTextHandle: windowState.WindowTextHandle, WindowHelperPID: windowState.PID, WindowStation: windowState.WindowStation, WindowClass: windowState.WindowClass, WindowMessage: windowState.WindowMessage, WindowPostMessage: windowState.WindowPostMessage,
 		CanaryFile: canaryPath, CanaryFileSHA256: hashBytes(fileCanary),
 		MemoryCanaryAddress: fmt.Sprintf("0x%X", uintptr(unsafe.Pointer(&memoryCanary[0]))),
 		MemoryCanarySize:    len(canary), MemoryCanarySHA256: hashBytes(canary),
@@ -429,6 +467,17 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	close(stop)
 	runtime.KeepAlive(memoryCanary)
 	return false, 0
+}
+
+func writeTargetStartupError(root, stage string, err error) {
+	record := map[string]any{
+		"schema":         "bofbench.target-startup-error",
+		"schema_version": 1,
+		"stage":          stage,
+		"error":          err.Error(),
+		"recorded_at":    time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	_ = writeJSON(filepath.Join(root, "startup-error.json"), record)
 }
 
 func launchFixtureInConsoleSession(root, operation string) error {
@@ -539,7 +588,7 @@ func createHeldPipeFixture() (heldPipeResult, error) {
 	if err != nil {
 		return result, err
 	}
-	result.Server, err = windows.CreateNamedPipe(name, windows.PIPE_ACCESS_DUPLEX, windows.PIPE_TYPE_BYTE|windows.PIPE_READMODE_BYTE|windows.PIPE_WAIT, 1, 65536, 65536, 5000, nil)
+	result.Server, err = windows.CreateNamedPipe(name, windows.PIPE_ACCESS_DUPLEX, windows.PIPE_TYPE_MESSAGE|windows.PIPE_READMODE_MESSAGE|windows.PIPE_WAIT, 1, 65536, 65536, 5000, nil)
 	if err != nil {
 		return result, err
 	}
@@ -642,7 +691,7 @@ func namedPipeFixture(stop <-chan struct{}, ready chan<- namedPipeResult) {
 		ready <- namedPipeResult{Err: fmt.Errorf("prepare named-pipe fixture: %w", err)}
 		return
 	}
-	handle, err := windows.CreateNamedPipe(namePtr, windows.PIPE_ACCESS_DUPLEX, windows.PIPE_TYPE_BYTE|windows.PIPE_READMODE_BYTE|windows.PIPE_WAIT, 1, 4096, 4096, 0, nil)
+	handle, err := windows.CreateNamedPipe(namePtr, windows.PIPE_ACCESS_DUPLEX, windows.PIPE_TYPE_MESSAGE|windows.PIPE_READMODE_MESSAGE|windows.PIPE_WAIT, 1, 4096, 4096, 0, nil)
 	if err != nil {
 		ready <- namedPipeResult{Err: fmt.Errorf("create named-pipe fixture: %w", err)}
 		return
@@ -957,6 +1006,7 @@ func main() {
 	fixture := flag.String("fixture", "", "fixture operation: deploy, status, or remove")
 	helper := flag.Bool("helper", false, "run a persistent architecture-specific proof helper")
 	helperService := flag.Bool("helper-service", false, "run the architecture-specific proof helper as a Windows service")
+	windowHelper := flag.Bool("window-helper", false, "run the operator-context window proof helper")
 	jobChild := flag.Bool("job-child", false, "run a disposable job-member child")
 	pipeChild := flag.Bool("pipe-child", false, "run a disposable standard-pipe echo child")
 	jobState := flag.String("job-state", "", "optional PID file written by a disposable job-member child")
@@ -996,6 +1046,13 @@ func main() {
 	}
 	if *helper {
 		if err := runArchitectureHelper(*root); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if *windowHelper {
+		if err := runWindowHelper(*root); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -1047,13 +1104,35 @@ func runArchitectureHelper(root string) error {
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
-	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 7, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 8, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if module, _, _ := procModuleHandle.Call(0); module != 0 {
 		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
 	}
 	state.KnownModulePath, _ = os.Executable()
 	if err := writeJSON(filepath.Join(root, "x86-helper.json"), state); err != nil {
 		close(stop)
+		return err
+	}
+	select {}
+}
+
+func runWindowHelper(root string) error {
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	window, err := createWindowFixture(root)
+	if err != nil {
+		return err
+	}
+	state := targetState{
+		Schema: "bofbench.target-window-helper", SchemaVersion: 8, PID: os.Getpid(), Architecture: runtime.GOARCH,
+		WindowHandle: fmt.Sprintf("0x%X", uintptr(window.Handle)), WindowTextHandle: fmt.Sprintf("0x%X", uintptr(window.TextHandle)),
+		WindowStation: `BOFBenchTargetStation\BOFBenchTargetDesktop`, WindowClass: window.Class,
+		WindowMessage: window.MessageID, WindowPostMessage: window.PostMessage,
+		StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if err := writeJSON(filepath.Join(root, "window-helper.json"), state); err != nil {
+		window.stop()
 		return err
 	}
 	select {}
