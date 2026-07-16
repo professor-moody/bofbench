@@ -196,7 +196,7 @@ func DeployTarget(ctx context.Context, name string, profile Profile, repository 
 		return report, fmt.Errorf("prepare remote-operation fixtures: %w: %s", remoteFixtureErr, boundedText(string(remoteFixtureStderr), 2048))
 	}
 	var remoteFixtures TargetFixtureState
-	if err := json.Unmarshal(remoteFixtureOutput, &remoteFixtures); err != nil {
+	if err := decodeTargetJSON(remoteFixtureOutput, &remoteFixtures); err != nil {
 		_, _, _ = remoteExecute(ctx, opts, targetCleanupScript(targetDirectory))
 		return report, fmt.Errorf("decode remote-operation fixtures: %w", err)
 	}
@@ -215,7 +215,7 @@ func DeployTarget(ctx context.Context, name string, profile Profile, repository 
 		_, _, _ = remoteExecute(ctx, opts, targetCleanupScript(targetDirectory))
 		return report, fmt.Errorf("start disposable target: %w: %s", err, report.Error)
 	}
-	if err := json.Unmarshal(stdout, &report.State); err != nil {
+	if err := decodeTargetJSON(stdout, &report.State); err != nil {
 		return report, fmt.Errorf("decode disposable target state: %w", err)
 	}
 	jobStatePath := windowsJoin(profile.RemoteRoot, "target", "job-member.pid")
@@ -234,7 +234,7 @@ func DeployTarget(ctx context.Context, name string, profile Profile, repository 
 	report.State.JobMemberPID = jobMemberPID
 	if helperOutput, helperStderr, helperErr := remoteExecute(ctx, opts, fmt.Sprintf(`$ErrorActionPreference='Stop'; $service=Get-Service -Name %s -ErrorAction Stop; if($service.Status -ne 'Running'){throw 'x86 target service is not running'}; Get-Content -LiteralPath %s -Raw`, powerShellQuote(TargetX86ServiceName), powerShellQuote(x86StatePath))); helperErr == nil {
 		var helper TargetState
-		if err := json.Unmarshal(helperOutput, &helper); err != nil {
+		if err := decodeTargetJSON(helperOutput, &helper); err != nil {
 			return report, err
 		}
 		report.State.X86PID, report.State.X86AlertableTID, report.State.X86KnownModuleBase, report.State.X86KnownModulePath = helper.PID, helper.AlertableTID, helper.KnownModuleBase, helper.KnownModulePath
@@ -244,7 +244,7 @@ func DeployTarget(ctx context.Context, name string, profile Profile, repository 
 	fixturePath := windowsJoin(profile.RemoteRoot, "target", "fixtures", "fixture.json")
 	fixtureOutput, fixtureStderr, fixtureErr := remoteExecute(ctx, opts, fmt.Sprintf(`$ErrorActionPreference='Stop'; Get-Content -LiteralPath %s -Raw`, powerShellQuote(fixturePath)))
 	if fixtureErr == nil {
-		if err := json.Unmarshal(fixtureOutput, &report.Fixtures); err != nil {
+		if err := decodeTargetJSON(fixtureOutput, &report.Fixtures); err != nil {
 			return report, fmt.Errorf("decode disposable target fixtures: %w", err)
 		}
 	} else if report.State.FixtureError == "" {
@@ -270,13 +270,13 @@ func TargetStatus(ctx context.Context, name string, profile Profile) (TargetRepo
 		report.Error = boundedText(string(stderr), 4096)
 		return report, err
 	}
-	if err := json.Unmarshal(stdout, &report.State); err != nil {
+	if err := decodeTargetJSON(stdout, &report.State); err != nil {
 		return report, err
 	}
 	x86StatePath := windowsJoin(profile.RemoteRoot, "target", "x86", "x86-helper.json")
 	if helperOutput, helperStderr, helperErr := remoteExecute(ctx, opts, fmt.Sprintf(`$ErrorActionPreference='Stop'; $service=Get-Service -Name %s -ErrorAction Stop; if($service.Status -ne 'Running'){throw 'x86 target service is not running'}; Get-Content -LiteralPath %s -Raw`, powerShellQuote(TargetX86ServiceName), powerShellQuote(x86StatePath))); helperErr == nil {
 		var helper TargetState
-		if err := json.Unmarshal(helperOutput, &helper); err != nil {
+		if err := decodeTargetJSON(helperOutput, &helper); err != nil {
 			return report, err
 		}
 		report.State.X86PID, report.State.X86AlertableTID, report.State.X86KnownModuleBase, report.State.X86KnownModulePath = helper.PID, helper.AlertableTID, helper.KnownModuleBase, helper.KnownModulePath
@@ -286,7 +286,7 @@ func TargetStatus(ctx context.Context, name string, profile Profile) (TargetRepo
 	fixturePath := windowsJoin(profile.RemoteRoot, "target", "fixtures", "fixture.json")
 	fixtureOutput, fixtureStderr, fixtureErr := remoteExecute(ctx, opts, fmt.Sprintf(`$ErrorActionPreference='Stop'; Get-Content -LiteralPath %s -Raw`, powerShellQuote(fixturePath)))
 	if fixtureErr == nil {
-		if err := json.Unmarshal(fixtureOutput, &report.Fixtures); err != nil {
+		if err := decodeTargetJSON(fixtureOutput, &report.Fixtures); err != nil {
 			return report, fmt.Errorf("decode disposable target fixtures: %w", err)
 		}
 	} else if report.State.FixtureError == "" {
@@ -299,7 +299,7 @@ func TargetStatus(ctx context.Context, name string, profile Profile) (TargetRepo
 		return report, fmt.Errorf("read remote-operation fixtures: %w: %s", remoteFixtureErr, boundedText(string(remoteFixtureStderr), 2048))
 	}
 	var remoteFixtures TargetFixtureState
-	if err := json.Unmarshal(remoteFixtureOutput, &remoteFixtures); err != nil {
+	if err := decodeTargetJSON(remoteFixtureOutput, &remoteFixtures); err != nil {
 		return report, fmt.Errorf("decode remote-operation fixtures: %w", err)
 	}
 	mergeRemoteFixtures(&report.Fixtures, remoteFixtures)
@@ -334,6 +334,21 @@ func targetCleanupScript(targetDirectory string) string {
 	fixturePath := windowsJoin(targetDirectory, "remote-fixture.json")
 	statePath := windowsJoin(targetDirectory, "target.json")
 	return fmt.Sprintf(`$ErrorActionPreference='Continue'; $fixture=$null; $targetState=$null; if(Test-Path -LiteralPath %s){try{$fixture=Get-Content -LiteralPath %s -Raw|ConvertFrom-Json}catch{}}; if(Test-Path -LiteralPath %s){try{$targetState=Get-Content -LiteralPath %s -Raw|ConvertFrom-Json}catch{}}; Stop-ScheduledTask -TaskName %s -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName %s -Confirm:$false -ErrorAction SilentlyContinue; Stop-ScheduledTask -TaskName 'BOFBenchWindowTarget' -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName 'BOFBenchWindowTarget' -Confirm:$false -ErrorAction SilentlyContinue; if($targetState -and [int]$targetState.job_member_pid -gt 0){Stop-Process -Id ([int]$targetState.job_member_pid) -Force -ErrorAction SilentlyContinue}; if($targetState -and [int]$targetState.window_helper_pid -gt 0){Stop-Process -Id ([int]$targetState.window_helper_pid) -Force -ErrorAction SilentlyContinue}; foreach($name in @(%s,%s)){$service=Get-Service -Name $name -ErrorAction SilentlyContinue; if($service -and $service.Status -ne 'Stopped'){Stop-Service -Name $name -Force -ErrorAction SilentlyContinue}; if($service){sc.exe delete $name|Out-Null}}; Start-Sleep -Milliseconds 500; if($fixture){$key='HKLM:\'+[string]$fixture.remote_registry_path; $keyItem=Get-Item -LiteralPath $key -ErrorAction SilentlyContinue; if($keyItem){foreach($valueName in @($keyItem.GetValueNames()|Where-Object{$_ -like 'BOFBench-Remote-*'})){Remove-ItemProperty -LiteralPath $key -Name $valueName -Force -ErrorAction SilentlyContinue}}; Remove-ItemProperty -LiteralPath $key -Name ([string]$fixture.remote_registry_name) -Force -ErrorAction SilentlyContinue; if([bool]$fixture.remote_registry_key_created){Remove-Item -LiteralPath $key -Force -ErrorAction SilentlyContinue}; Remove-Item -LiteralPath ([string]$fixture.remote_stage_local_root) -Recurse -Force -ErrorAction SilentlyContinue; $remote=Get-Service -Name 'RemoteRegistry' -ErrorAction SilentlyContinue; if($remote){if($remote.Status -ne 'Stopped'){Stop-Service -Name 'RemoteRegistry' -Force -ErrorAction SilentlyContinue}; switch([string]$fixture.remote_registry_previous_start_type){'Automatic'{Set-Service -Name 'RemoteRegistry' -StartupType Automatic};'Manual'{Set-Service -Name 'RemoteRegistry' -StartupType Manual};'Disabled'{Set-Service -Name 'RemoteRegistry' -StartupType Disabled}}; if([string]$fixture.remote_registry_previous_status -eq 'Running'){Start-Service -Name 'RemoteRegistry'}else{Stop-Service -Name 'RemoteRegistry' -Force -ErrorAction SilentlyContinue}; $after=Get-Service -Name 'RemoteRegistry'; if([string]$after.Status -ne [string]$fixture.remote_registry_previous_status){throw 'RemoteRegistry status was not restored'}; if([string]$after.StartType -ne [string]$fixture.remote_registry_previous_start_type){throw 'RemoteRegistry start type was not restored'}}}; Remove-Item -LiteralPath %s -Recurse -Force -ErrorAction SilentlyContinue; if(Get-Service -Name %s -ErrorAction SilentlyContinue){throw 'target service still exists'}; if(Get-Service -Name %s -ErrorAction SilentlyContinue){throw 'x86 target service still exists'}; if(Get-ScheduledTask -TaskName %s -ErrorAction SilentlyContinue){throw 'job-member task still exists'}; if(Get-ScheduledTask -TaskName 'BOFBenchWindowTarget' -ErrorAction SilentlyContinue){throw 'window-helper task still exists'}; if(Test-Path -LiteralPath %s){throw 'target directory still exists'}; Write-Output 'removed'`, powerShellQuote(fixturePath), powerShellQuote(fixturePath), powerShellQuote(statePath), powerShellQuote(statePath), powerShellQuote(TargetJobMemberTask), powerShellQuote(TargetJobMemberTask), powerShellQuote(TargetServiceName), powerShellQuote(TargetX86ServiceName), powerShellQuote(targetDirectory), powerShellQuote(TargetServiceName), powerShellQuote(TargetX86ServiceName), powerShellQuote(TargetJobMemberTask), powerShellQuote(targetDirectory))
+}
+
+func decodeTargetJSON(data []byte, target any) error {
+	if err := json.Unmarshal(data, target); err == nil {
+		return nil
+	}
+	text := strings.TrimSpace(string(data))
+	start, end := strings.IndexByte(text, '{'), strings.LastIndexByte(text, '}')
+	if start < 0 || end < start {
+		return fmt.Errorf("target output did not contain a JSON object")
+	}
+	if err := json.Unmarshal([]byte(text[start:end+1]), target); err != nil {
+		return fmt.Errorf("decode target JSON: %w", err)
+	}
+	return nil
 }
 
 func mergeRemoteFixtures(target *TargetFixtureState, remote TargetFixtureState) {

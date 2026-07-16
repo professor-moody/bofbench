@@ -35,3 +35,14 @@ func TestTargetReportTextIncludesCapabilityFixtures(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeTargetJSONIgnoresTransportDecoration(t *testing.T) {
+	var state TargetState
+	data := []byte("\x1b[?25ltransport banner\r\n{\"schema\":\"bofbench.target\",\"schema_version\":9,\"pid\":4242}\r\n\x1b[?25h")
+	if err := decodeTargetJSON(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.SchemaVersion != 9 || state.PID != 4242 {
+		t.Fatalf("state = %+v", state)
+	}
+}

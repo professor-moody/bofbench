@@ -284,7 +284,7 @@ func TestRuntimeAccessRulesRequireCompleteSameFunctionEvidence(t *testing.T) {
 		{"process_handle_close", "[process-handle-close]", []string{"KERNEL32$OpenProcess", "KERNEL32$DuplicateHandle"}},
 		{"process_command_line_set", "[process-command-line-set]", []string{"NTDLL$NtQueryInformationProcess", "KERNEL32$ReadProcessMemory", "KERNEL32$WriteProcessMemory"}},
 		{"process_command_line_restore", "[process-command-line-restore]", []string{"NTDLL$NtQueryInformationProcess", "KERNEL32$ReadProcessMemory", "KERNEL32$WriteProcessMemory"}},
-		{"threadpool_wait_execute", "[threadpool-wait-execute]", []string{"KERNEL32$VirtualAlloc", "KERNEL32$VirtualProtect", "KERNEL32$CreateThreadpoolWait", "KERNEL32$SetThreadpoolWait", "KERNEL32$SetEvent"}},
+		{"threadpool_wait_execute", "[threadpool-wait-execute]", []string{"KERNEL32$VirtualAlloc", "KERNEL32$VirtualProtect", "KERNEL32$CreateThreadpoolWait", "KERNEL32$SetThreadpoolWait", "KERNEL32$WaitForThreadpoolWaitCallbacks"}},
 		{"service_config_set", "[service-config-set]", []string{"ADVAPI32$OpenServiceW", "ADVAPI32$QueryServiceConfigW", "ADVAPI32$ChangeServiceConfigW"}},
 		{"service_config_restore", "[service-config-restore]", []string{"ADVAPI32$OpenServiceW", "ADVAPI32$ChangeServiceConfigW"}},
 	}

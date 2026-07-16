@@ -26,6 +26,7 @@ import (
 const (
 	serviceName     = "BOFBenchTarget"
 	targetRoot      = `C:\bofbench\target`
+	etwProviderGUID = "{E62DA5C7-2D12-4F34-A73C-832889B50F3B}"
 	credentialName  = "BOFBench-LiveProof"
 	credentialType  = 1
 	credentialLocal = 2
@@ -33,23 +34,26 @@ const (
 )
 
 var (
-	memoryCanary        = make([]byte, 64*1024)
-	advapi32            = windows.NewLazySystemDLL("advapi32.dll")
-	crypt32             = windows.NewLazySystemDLL("crypt32.dll")
-	kernel32            = windows.NewLazySystemDLL("kernel32.dll")
-	ntdll               = windows.NewLazySystemDLL("ntdll.dll")
-	procCredWriteW      = advapi32.NewProc("CredWriteW")
-	procCredDeleteW     = advapi32.NewProc("CredDeleteW")
-	procCryptProtect    = crypt32.NewProc("CryptProtectData")
-	procLocalFree       = kernel32.NewProc("LocalFree")
-	procModuleHandle    = kernel32.NewProc("GetModuleHandleW")
-	procCreateMutex     = kernel32.NewProc("CreateMutexW")
-	procCreateSemaphore = kernel32.NewProc("CreateSemaphoreW")
-	procCreateTimer     = kernel32.NewProc("CreateWaitableTimerW")
-	procCreateMailslot  = kernel32.NewProc("CreateMailslotW")
-	procGetMailslotInfo = kernel32.NewProc("GetMailslotInfo")
-	procPeekNamedPipe   = kernel32.NewProc("PeekNamedPipe")
-	procNtQuerySystem   = ntdll.NewProc("NtQuerySystemInformation")
+	memoryCanary         = make([]byte, 64*1024)
+	advapi32             = windows.NewLazySystemDLL("advapi32.dll")
+	crypt32              = windows.NewLazySystemDLL("crypt32.dll")
+	kernel32             = windows.NewLazySystemDLL("kernel32.dll")
+	ntdll                = windows.NewLazySystemDLL("ntdll.dll")
+	procCredWriteW       = advapi32.NewProc("CredWriteW")
+	procCredDeleteW      = advapi32.NewProc("CredDeleteW")
+	procEventRegister    = advapi32.NewProc("EventRegister")
+	procEventWriteString = advapi32.NewProc("EventWriteString")
+	procEventUnregister  = advapi32.NewProc("EventUnregister")
+	procCryptProtect     = crypt32.NewProc("CryptProtectData")
+	procLocalFree        = kernel32.NewProc("LocalFree")
+	procModuleHandle     = kernel32.NewProc("GetModuleHandleW")
+	procCreateMutex      = kernel32.NewProc("CreateMutexW")
+	procCreateSemaphore  = kernel32.NewProc("CreateSemaphoreW")
+	procCreateTimer      = kernel32.NewProc("CreateWaitableTimerW")
+	procCreateMailslot   = kernel32.NewProc("CreateMailslotW")
+	procGetMailslotInfo  = kernel32.NewProc("GetMailslotInfo")
+	procPeekNamedPipe    = kernel32.NewProc("PeekNamedPipe")
+	procNtQuerySystem    = ntdll.NewProc("NtQuerySystemInformation")
 )
 
 type targetState struct {
@@ -425,6 +429,15 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		}
 	}
 	fixtureErr := launchFixtureInConsoleSession(service.root, "deploy")
+	if runtime.GOARCH == "amd64" {
+		if etwErr := startETWFixture(stop); etwErr != nil {
+			if fixtureErr == nil {
+				fixtureErr = etwErr
+			} else {
+				fixtureErr = fmt.Errorf("%v; %w", fixtureErr, etwErr)
+			}
+		}
+	}
 	state := targetState{
 		Schema: "bofbench.target", SchemaVersion: 9, Service: service.name,
 		PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, NamedPipe: pipe.Name, User: `NT AUTHORITY\SYSTEM`,
@@ -439,7 +452,7 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		WatchRegistryHive: "HKLM", WatchRegistryPath: `Software\BOFBench`, WatchRegistryValue: "RemoteCanary",
 		WatchDirectory: `C:\bofbench\proof`, WatchService: service.name, ExitPID: pipeChild.Process.Pid,
 		EventLogChannel: "Application", EventLogProvider: "BOFBenchTarget",
-		ETWProviderGUID: "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", ETWSessionName: "BOFBench-ETW",
+		ETWProviderGUID: etwProviderGUID, ETWSessionName: "BOFBench-ETW",
 		CanaryFile: canaryPath, CanaryFileSHA256: hashBytes(fileCanary),
 		MemoryCanaryAddress: fmt.Sprintf("0x%X", uintptr(unsafe.Pointer(&memoryCanary[0]))),
 		MemoryCanarySize:    len(canary), MemoryCanarySHA256: hashBytes(canary),
@@ -568,6 +581,39 @@ func interactiveUserToken() (uint32, windows.Token, error) {
 		}
 	}
 	return 0, 0, fmt.Errorf("no active, connected, or disconnected user token is available")
+}
+
+func startETWFixture(stop <-chan struct{}) error {
+	provider, err := windows.GUIDFromString(etwProviderGUID)
+	if err != nil {
+		return fmt.Errorf("parse fixture ETW provider: %w", err)
+	}
+	var handle uint64
+	status, _, _ := procEventRegister.Call(uintptr(unsafe.Pointer(&provider)), 0, 0, uintptr(unsafe.Pointer(&handle)))
+	if status != 0 {
+		return fmt.Errorf("EventRegister fixture provider failed: %d", status)
+	}
+	go func() {
+		defer procEventUnregister.Call(uintptr(handle))
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		emit := func() {
+			message, pointerErr := windows.UTF16PtrFromString(fmt.Sprintf("BOFBenchTarget pid=%d tick=%d", os.Getpid(), time.Now().UTC().UnixNano()))
+			if pointerErr == nil {
+				procEventWriteString.Call(uintptr(handle), 4, 0, uintptr(unsafe.Pointer(message)))
+			}
+		}
+		emit()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				emit()
+			}
+		}
+	}()
+	return nil
 }
 
 func alertableThread(stop <-chan struct{}, ready chan<- uint32) {
