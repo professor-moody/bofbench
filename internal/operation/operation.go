@@ -20,10 +20,10 @@ import (
 
 const (
 	Schema                = "bofbench.operation"
-	SchemaVersion         = 4
+	SchemaVersion         = 5
 	MinimumSchemaVersion  = 1
 	ReceiptSchema         = "bofbench.operation-receipt"
-	ReceiptSchemaVersion  = 4
+	ReceiptSchemaVersion  = 5
 	MinimumReceiptVersion = 1
 )
 
@@ -59,6 +59,22 @@ type Outcome struct {
 	Next   string                   `json:"next"`
 }
 
+type ParallelBranch struct {
+	ID        string                    `json:"id"`
+	Pack      string                    `json:"pack,omitempty"`
+	Operation string                    `json:"operation,omitempty"`
+	Arguments map[string]string         `json:"arguments,omitempty"`
+	Captures  map[string]Capture        `json:"captures,omitempty"`
+	Cleanup   *Cleanup                  `json:"cleanup,omitempty"`
+	Expect    *packsvc.ProofExpectation `json:"expect,omitempty"`
+}
+
+type Parallel struct {
+	Join     string            `json:"join"`
+	Branches []ParallelBranch  `json:"branches"`
+	Exports  map[string]string `json:"exports,omitempty"`
+}
+
 type Step struct {
 	ID        string                    `json:"id"`
 	Pack      string                    `json:"pack,omitempty"`
@@ -68,19 +84,21 @@ type Step struct {
 	Cleanup   *Cleanup                  `json:"cleanup,omitempty"`
 	Expect    *packsvc.ProofExpectation `json:"expect,omitempty"`
 	Outcomes  []Outcome                 `json:"outcomes,omitempty"`
+	Parallel  *Parallel                 `json:"parallel,omitempty"`
 }
 
 type ProofCase struct {
-	ID                 string                    `json:"id"`
-	Via                []string                  `json:"via"`
-	Architectures      []string                  `json:"architectures,omitempty"`
-	Roles              []string                  `json:"roles,omitempty"`
-	Inputs             map[string]string         `json:"inputs,omitempty"`
-	ExpectCaptures     map[string]string         `json:"expect_captures,omitempty"`
-	Cleanup            bool                      `json:"cleanup,omitempty"`
-	StateChecks        []packsvc.ProofStateCheck `json:"state_checks,omitempty"`
-	ExpectPath         []string                  `json:"expect_path,omitempty"`
-	ExpectExpandedPath []string                  `json:"expect_expanded_path,omitempty"`
+	ID                 string                       `json:"id"`
+	Via                []string                     `json:"via"`
+	Architectures      []string                     `json:"architectures,omitempty"`
+	Roles              []string                     `json:"roles,omitempty"`
+	Inputs             map[string]string            `json:"inputs,omitempty"`
+	ExpectCaptures     map[string]string            `json:"expect_captures,omitempty"`
+	Cleanup            bool                         `json:"cleanup,omitempty"`
+	StateChecks        []packsvc.ProofStateCheck    `json:"state_checks,omitempty"`
+	ExpectPath         []string                     `json:"expect_path,omitempty"`
+	ExpectExpandedPath []string                     `json:"expect_expanded_path,omitempty"`
+	ExpectParallel     map[string]map[string]string `json:"expect_parallel,omitempty"`
 }
 
 type Document struct {
@@ -142,6 +160,19 @@ type StepReceipt struct {
 	OperationSHA256   string                  `json:"operation_sha256,omitempty"`
 	ChildReceipt      string                  `json:"child_receipt,omitempty"`
 	ChildCleanupState string                  `json:"child_cleanup_state,omitempty"`
+	StartedAt         string                  `json:"started_at,omitempty"`
+	CompletedAt       string                  `json:"completed_at,omitempty"`
+	Parallel          *ParallelReceipt        `json:"parallel,omitempty"`
+}
+
+type ParallelReceipt struct {
+	Join                string            `json:"join"`
+	State               string            `json:"state"`
+	Branches            []StepReceipt     `json:"branches"`
+	Exports             map[string]string `json:"exports,omitempty"`
+	ObservedConcurrency int               `json:"observed_concurrency,omitempty"`
+	StartedAt           string            `json:"started_at,omitempty"`
+	CompletedAt         string            `json:"completed_at,omitempty"`
 }
 
 type Receipt struct {
@@ -169,6 +200,8 @@ type Receipt struct {
 	CompletedAt      string            `json:"completed_at,omitempty"`
 	Path             string            `json:"path"`
 	Error            string            `json:"error,omitempty"`
+	Parallelism      int               `json:"parallelism,omitempty"`
+	MaxConcurrency   int               `json:"max_observed_concurrency,omitempty"`
 }
 
 func Load(opts LoadOptions) (*Registry, error) {
@@ -379,21 +412,39 @@ func (r *Registry) ValidateDocumentReferences(document Document) error {
 		return err
 	}
 	for _, step := range document.Steps {
+		if step.Parallel != nil {
+			for _, branch := range step.Parallel.Branches {
+				if branch.Operation == "" {
+					continue
+				}
+				if err := r.validateChildInvocation(step.ID+" branch "+branch.ID, branch.Operation, branch.Arguments, branch.Captures); err != nil {
+					return err
+				}
+			}
+			continue
+		}
 		if step.Operation == "" {
 			continue
 		}
-		child, err := r.Resolve(step.Operation)
-		if err != nil {
-			return fmt.Errorf("step %s: %w", step.ID, err)
+		if err := r.validateChildInvocation("step "+step.ID, step.Operation, step.Arguments, step.Captures); err != nil {
+			return err
 		}
-		if err := validateStepArguments(step.Arguments, operationArguments(child.Document.Inputs)); err != nil {
-			return fmt.Errorf("step %s: %w", step.ID, err)
-		}
-		available := operationCaptureNames(child.Document)
-		for name, capture := range step.Captures {
-			if capture.Capture == "" || !available[capture.Capture] {
-				return fmt.Errorf("step %s export %s selects unknown child capture %q", step.ID, name, capture.Capture)
-			}
+	}
+	return nil
+}
+
+func (r *Registry) validateChildInvocation(label, operationName string, arguments map[string]string, captures map[string]Capture) error {
+	child, err := r.Resolve(operationName)
+	if err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
+	if err := validateStepArguments(arguments, operationArguments(child.Document.Inputs)); err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
+	available := operationCaptureNames(child.Document)
+	for name, capture := range captures {
+		if capture.Capture == "" || !available[capture.Capture] {
+			return fmt.Errorf("%s export %s selects unknown child capture %q", label, name, capture.Capture)
 		}
 	}
 	return nil
@@ -416,6 +467,21 @@ func (r *Registry) validateOperationReferences() error {
 		}
 		visiting[item.Qualified] = true
 		for _, step := range item.Document.Steps {
+			if step.Parallel != nil {
+				for _, branch := range step.Parallel.Branches {
+					if branch.Operation == "" {
+						continue
+					}
+					child, err := r.Resolve(branch.Operation)
+					if err != nil {
+						return err
+					}
+					if err := walk(child, append(path, item.Qualified)); err != nil {
+						return err
+					}
+				}
+				continue
+			}
 			if step.Operation == "" {
 				continue
 			}
@@ -450,6 +516,12 @@ func operationArguments(inputs []Input) []packsvc.Argument {
 func operationCaptureNames(document Document) map[string]bool {
 	result := map[string]bool{}
 	for _, step := range document.Steps {
+		if step.Parallel != nil {
+			for name := range step.Parallel.Exports {
+				result[name] = true
+			}
+			continue
+		}
 		for name := range step.Captures {
 			result[name] = true
 		}
@@ -462,29 +534,47 @@ func operationCaptureNames(document Document) map[string]bool {
 // operation file before it is installed.
 func ValidatePackReferences(document Document, packs *packsvc.Registry) error {
 	for _, step := range document.Steps {
+		if step.Parallel != nil {
+			for _, branch := range step.Parallel.Branches {
+				if branch.Operation != "" {
+					continue
+				}
+				if err := validatePackInvocation(step.ID+" branch "+branch.ID, branch.Pack, branch.Arguments, branch.Captures, branch.Cleanup, packs); err != nil {
+					return err
+				}
+			}
+			continue
+		}
 		if step.Operation != "" {
 			continue
 		}
-		resolved, err := packs.Resolve(step.Pack)
+		if err := validatePackInvocation("step "+step.ID, step.Pack, step.Arguments, step.Captures, step.Cleanup, packs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validatePackInvocation(label, packName string, arguments map[string]string, captures map[string]Capture, cleanupSpec *Cleanup, packs *packsvc.Registry) error {
+	resolved, err := packs.Resolve(packName)
+	if err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
+	if err := validateStepArguments(arguments, resolved.Document.Arguments); err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
+	for name, capture := range captures {
+		if contains(resolved.Document.SensitiveOutputFields, capture.Field) {
+			return fmt.Errorf("%s capture %s selects sensitive output field %s; sensitive captures cannot be persisted", label, name, capture.Field)
+		}
+	}
+	if cleanupSpec != nil {
+		cleanup, err := packs.Resolve(cleanupSpec.Pack)
 		if err != nil {
-			return fmt.Errorf("step %s: %w", step.ID, err)
+			return fmt.Errorf("%s cleanup: %w", label, err)
 		}
-		if err := validateStepArguments(step.Arguments, resolved.Document.Arguments); err != nil {
-			return fmt.Errorf("step %s: %w", step.ID, err)
-		}
-		for name, capture := range step.Captures {
-			if contains(resolved.Document.SensitiveOutputFields, capture.Field) {
-				return fmt.Errorf("step %s capture %s selects sensitive output field %s; sensitive captures cannot be persisted", step.ID, name, capture.Field)
-			}
-		}
-		if step.Cleanup != nil {
-			cleanup, err := packs.Resolve(step.Cleanup.Pack)
-			if err != nil {
-				return fmt.Errorf("step %s cleanup: %w", step.ID, err)
-			}
-			if err := validateStepArguments(step.Cleanup.Arguments, cleanup.Document.Arguments); err != nil {
-				return fmt.Errorf("step %s cleanup: %w", step.ID, err)
-			}
+		if err := validateStepArguments(cleanupSpec.Arguments, cleanup.Document.Arguments); err != nil {
+			return fmt.Errorf("%s cleanup: %w", label, err)
 		}
 	}
 	return nil
@@ -557,11 +647,20 @@ func validate(document Document) error {
 		if document.SchemaVersion < 4 && step.Operation != "" {
 			return fmt.Errorf("step %s operation references require schema version 4", step.ID)
 		}
-		if document.SchemaVersion >= 4 && (step.Pack == "") == (step.Operation == "") {
+		if document.SchemaVersion == 4 && (step.Pack == "") == (step.Operation == "") {
 			return fmt.Errorf("step %s must declare exactly one of pack or operation", step.ID)
+		}
+		if document.SchemaVersion < 5 && step.Parallel != nil {
+			return fmt.Errorf("step %s parallel execution requires schema version 5", step.ID)
+		}
+		if document.SchemaVersion >= 5 && stepTargetCount(step) != 1 {
+			return fmt.Errorf("step %s must declare exactly one of pack, operation, or parallel", step.ID)
 		}
 		if step.Operation != "" && step.Cleanup != nil {
 			return fmt.Errorf("step %s child operation owns its cleanup; cleanup cannot be declared on the parent step", step.ID)
+		}
+		if step.Parallel != nil && (step.Cleanup != nil || len(step.Arguments) > 0 || len(step.Captures) > 0 || step.Expect != nil || len(step.Outcomes) > 0) {
+			return fmt.Errorf("step %s parallel groups own branch arguments, contracts, captures, and cleanup", step.ID)
 		}
 		if _, exists := stepIndexes[step.ID]; exists {
 			return fmt.Errorf("duplicate step %q", step.ID)
@@ -588,6 +687,18 @@ func validate(document Document) error {
 	}
 	for stepIndex, step := range document.Steps {
 		steps[step.ID] = true
+		if step.Parallel != nil {
+			if err := validateParallel(step.ID, *step.Parallel, inputs, captures, steps); err != nil {
+				return err
+			}
+			for name := range step.Parallel.Exports {
+				if captures[name] != "" {
+					return fmt.Errorf("capture %q is declared more than once", name)
+				}
+				captures[name] = step.ID
+			}
+			continue
+		}
 		if document.SchemaVersion == 2 && step.Expect == nil {
 			return fmt.Errorf("step %s requires expect in operation schema version 2", step.ID)
 		}
@@ -695,6 +806,120 @@ func validate(document Document) error {
 			if len(parts) == 0 || !known {
 				return fmt.Errorf("proof case %s expects unknown expanded path step %q", proof.ID, stepID)
 			}
+		}
+		for groupID, branches := range proof.ExpectParallel {
+			index, ok := stepIndexes[groupID]
+			if !ok || document.Steps[index].Parallel == nil {
+				return fmt.Errorf("proof case %s expects unknown parallel group %q", proof.ID, groupID)
+			}
+			known := map[string]bool{}
+			for _, branch := range document.Steps[index].Parallel.Branches {
+				known[branch.ID] = true
+			}
+			for branchID, state := range branches {
+				if !known[branchID] {
+					return fmt.Errorf("proof case %s expects unknown branch %s/%s", proof.ID, groupID, branchID)
+				}
+				if state != "completed" && state != "failed" && state != "incomplete" {
+					return fmt.Errorf("proof case %s branch %s/%s has unsupported state %q", proof.ID, groupID, branchID, state)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func stepTargetCount(step Step) int {
+	count := 0
+	if step.Pack != "" {
+		count++
+	}
+	if step.Operation != "" {
+		count++
+	}
+	if step.Parallel != nil {
+		count++
+	}
+	return count
+}
+
+func branchTargetCount(branch ParallelBranch) int {
+	count := 0
+	if branch.Pack != "" {
+		count++
+	}
+	if branch.Operation != "" {
+		count++
+	}
+	return count
+}
+
+func validateParallel(stepID string, parallel Parallel, inputs map[string]Input, captures map[string]string, steps map[string]bool) error {
+	if parallel.Join != "all" {
+		return fmt.Errorf("step %s parallel join must be all", stepID)
+	}
+	if len(parallel.Branches) < 2 {
+		return fmt.Errorf("step %s parallel group requires at least two branches", stepID)
+	}
+	branchCaptures := map[string]map[string]bool{}
+	seen := map[string]bool{}
+	for _, branch := range parallel.Branches {
+		if !idPattern.MatchString(branch.ID) || seen[branch.ID] {
+			return fmt.Errorf("step %s has invalid or duplicate parallel branch %q", stepID, branch.ID)
+		}
+		seen[branch.ID] = true
+		if branchTargetCount(branch) != 1 {
+			return fmt.Errorf("step %s branch %s must declare exactly one of pack or operation", stepID, branch.ID)
+		}
+		if branch.Operation != "" && branch.Cleanup != nil {
+			return fmt.Errorf("step %s branch %s child operation owns its cleanup", stepID, branch.ID)
+		}
+		if branch.Expect == nil {
+			return fmt.Errorf("step %s branch %s requires expect", stepID, branch.ID)
+		}
+		if err := validateExpectation(stepID+" branch "+branch.ID, *branch.Expect, inputs, captures, steps); err != nil {
+			return err
+		}
+		for _, value := range branch.Arguments {
+			if err := validateReference(value, inputs, captures, steps); err != nil {
+				return fmt.Errorf("step %s branch %s: %w", stepID, branch.ID, err)
+			}
+		}
+		branchCaptures[branch.ID] = map[string]bool{}
+		for name, capture := range branch.Captures {
+			if !idPattern.MatchString(name) {
+				return fmt.Errorf("step %s branch %s has invalid capture %q", stepID, branch.ID, name)
+			}
+			if branch.Pack != "" && (capture.Tag == "" || capture.Field == "" || capture.Capture != "") {
+				return fmt.Errorf("step %s branch %s pack capture %q requires tag and field", stepID, branch.ID, name)
+			}
+			if branch.Operation != "" && (capture.Capture == "" || capture.Tag != "" || capture.Field != "") {
+				return fmt.Errorf("step %s branch %s operation capture %q requires child capture", stepID, branch.ID, name)
+			}
+			branchCaptures[branch.ID][name] = true
+		}
+		if branch.Cleanup != nil {
+			cleanupCaptures := map[string]string{}
+			for name, owner := range captures {
+				cleanupCaptures[name] = owner
+			}
+			for name := range branchCaptures[branch.ID] {
+				cleanupCaptures[name] = stepID + "/" + branch.ID
+			}
+			for _, value := range branch.Cleanup.Arguments {
+				if err := validateReference(value, inputs, cleanupCaptures, steps); err != nil {
+					return fmt.Errorf("step %s branch %s cleanup: %w", stepID, branch.ID, err)
+				}
+			}
+		}
+	}
+	for name, reference := range parallel.Exports {
+		if !idPattern.MatchString(name) {
+			return fmt.Errorf("step %s has invalid parallel export %q", stepID, name)
+		}
+		parts := strings.Split(strings.TrimPrefix(reference, "$"), ".")
+		if len(parts) != 3 || parts[0] != "branch" || !branchCaptures[parts[1]][parts[2]] {
+			return fmt.Errorf("step %s export %s selects unknown branch capture %q", stepID, name, reference)
 		}
 	}
 	return nil
@@ -940,6 +1165,29 @@ func RecordChildPath(receipt *Receipt, stepID string, child Receipt) {
 	}
 }
 
+func RecordParallelPath(receipt *Receipt, stepID string, parallel ParallelReceipt) {
+	receipt.ExpandedPath = appendUnique(receipt.ExpandedPath, stepID)
+	for _, branch := range parallel.Branches {
+		branchID := stepID + "/" + branch.ID
+		receipt.ExpandedPath = appendUnique(receipt.ExpandedPath, branchID)
+		if branch.ChildReceipt == "" {
+			continue
+		}
+		child, err := LoadReceipt(branch.ChildReceipt)
+		if err != nil {
+			continue
+		}
+		path := child.ExpandedPath
+		if len(path) == 0 {
+			path = child.ActualPath
+		}
+		for _, childStep := range path {
+			receipt.ExpandedPath = appendUnique(receipt.ExpandedPath, branchID+"/"+childStep)
+		}
+	}
+	receipt.ExpandedPath = appendUnique(receipt.ExpandedPath, stepID+"/$join")
+}
+
 func appendUnique(values []string, value string) []string {
 	for _, candidate := range values {
 		if candidate == value {
@@ -973,13 +1221,39 @@ func CleanupStepIndexes(document Document, receipt Receipt) []int {
 			continue
 		}
 		step, state := document.Steps[index], receipt.Steps[index]
+		parallelCleanup := false
+		if step.Parallel != nil && state.Parallel != nil {
+			for branchIndex, branch := range step.Parallel.Branches {
+				if branchIndex >= len(state.Parallel.Branches) {
+					continue
+				}
+				branchState := state.Parallel.Branches[branchIndex]
+				childCleanup := branch.Operation != "" && branchState.ChildReceipt != "" && branchState.ChildCleanupState != "completed"
+				packCleanup := branch.Cleanup != nil && branchState.CleanupState != "completed" && cleanupReferencesAvailable(branch.Cleanup, mergeCaptures(receipt.Captures, branchState.Captures))
+				if branchState.State == "completed" && (childCleanup || packCleanup) {
+					parallelCleanup = true
+					break
+				}
+			}
+		}
 		childCleanup := step.Operation != "" && state.ChildReceipt != "" && state.ChildCleanupState != "completed"
 		packCleanup := step.Cleanup != nil && state.CleanupState != "completed" && cleanupReferencesAvailable(step.Cleanup, receipt.Captures)
-		if state.State == "completed" && (childCleanup || packCleanup) {
+		if (state.State == "completed" || state.State == "failed" || state.State == "incomplete") && (parallelCleanup || childCleanup || packCleanup) {
 			indexes = append(indexes, index)
 		}
 	}
 	return indexes
+}
+
+func mergeCaptures(parent, local map[string]string) map[string]string {
+	result := map[string]string{}
+	for name, value := range parent {
+		result[name] = value
+	}
+	for name, value := range local {
+		result[name] = value
+	}
+	return result
 }
 
 func cleanupReferencesAvailable(cleanup *Cleanup, captures map[string]string) bool {
@@ -1186,24 +1460,38 @@ func NewReceipt(item Resolved, registry *Registry, path, runtime, lab, topology,
 	}
 	sort.Strings(receipt.RedactedInputs)
 	for _, step := range item.Document.Steps {
-		hash, operationHash := "", ""
-		if step.Pack != "" {
-			if resolved, err := registry.packRegistry.Resolve(step.Pack); err == nil {
-				hash = resolved.SHA256
+		if step.Parallel != nil {
+			parallel := &ParallelReceipt{Join: step.Parallel.Join, State: "pending", Exports: map[string]string{}}
+			for _, branch := range step.Parallel.Branches {
+				parallel.Branches = append(parallel.Branches, newInvocationReceipt(branch.ID, branch.Pack, branch.Operation, branch.Cleanup, registry))
 			}
-		} else if resolved, err := registry.Resolve(step.Operation); err == nil {
-			operationHash = resolved.SHA256
+			receipt.Steps = append(receipt.Steps, StepReceipt{ID: step.ID, State: "pending", ContractState: "pending", Parallel: parallel})
+			continue
 		}
-		cleanupPack, cleanupHash := "", ""
-		if step.Cleanup != nil {
-			cleanupPack = step.Cleanup.Pack
-			if resolved, err := registry.packRegistry.Resolve(step.Cleanup.Pack); err == nil {
-				cleanupHash = resolved.SHA256
-			}
-		}
-		receipt.Steps = append(receipt.Steps, StepReceipt{ID: step.ID, Pack: step.Pack, PackSHA256: hash, Operation: step.Operation, OperationSHA256: operationHash, CleanupPack: cleanupPack, CleanupSHA256: cleanupHash, State: "pending", ContractState: "pending"})
+		receipt.Steps = append(receipt.Steps, newInvocationReceipt(step.ID, step.Pack, step.Operation, step.Cleanup, registry))
 	}
 	return receipt
+}
+
+func newInvocationReceipt(id, packName, operationName string, cleanup *Cleanup, registry *Registry) StepReceipt {
+	hash, operationHash := "", ""
+	if packName != "" {
+		if resolved, err := registry.packRegistry.Resolve(packName); err == nil {
+			hash = resolved.SHA256
+		}
+	} else if operationName != "" {
+		if resolved, err := registry.Resolve(operationName); err == nil {
+			operationHash = resolved.SHA256
+		}
+	}
+	cleanupPack, cleanupHash := "", ""
+	if cleanup != nil {
+		cleanupPack = cleanup.Pack
+		if resolved, err := registry.packRegistry.Resolve(cleanup.Pack); err == nil {
+			cleanupHash = resolved.SHA256
+		}
+	}
+	return StepReceipt{ID: id, Pack: packName, PackSHA256: hash, Operation: operationName, OperationSHA256: operationHash, CleanupPack: cleanupPack, CleanupSHA256: cleanupHash, State: "pending", ContractState: "pending"}
 }
 
 // DependencyHashes pins the complete operation/pack closure used by a run.
@@ -1217,6 +1505,26 @@ func (r *Registry) DependencyHashes(item Resolved) map[string]string {
 		seen[current.Qualified] = true
 		result["operation:"+current.Qualified] = current.SHA256
 		for _, step := range current.Document.Steps {
+			if step.Parallel != nil {
+				for _, branch := range step.Parallel.Branches {
+					if branch.Pack != "" {
+						if pack, err := r.packRegistry.Resolve(branch.Pack); err == nil {
+							result["pack:"+pack.Qualified] = pack.SHA256
+						}
+					}
+					if branch.Cleanup != nil {
+						if pack, err := r.packRegistry.Resolve(branch.Cleanup.Pack); err == nil {
+							result["pack:"+pack.Qualified] = pack.SHA256
+						}
+					}
+					if branch.Operation != "" {
+						if child, err := r.Resolve(branch.Operation); err == nil {
+							walk(child)
+						}
+					}
+				}
+				continue
+			}
 			if step.Pack != "" {
 				if pack, err := r.packRegistry.Resolve(step.Pack); err == nil {
 					result["pack:"+pack.Qualified] = pack.SHA256
@@ -1339,7 +1647,36 @@ func builtins() []Resolved {
 		{ID: "state", Pack: "synchronization-object-state", Arguments: map[string]string{"object_type": "$input.object_type", "object_name": "$input.object_name"}, Expect: &packsvc.ProofExpectation{Tag: "synchronization-object-state", Fields: map[string]string{"status": "complete", "object_type": "$input.object_type"}}},
 		{ID: "mailslots", Pack: "mailslot-inventory", Arguments: map[string]string{"prefix": "$input.mailslot_prefix", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "mailslot-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
 	}, ProofCases: []ProofCase{{ID: "target-coordination", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Inputs: map[string]string{"target_pid": "$TARGET_HOLDER_PID", "handle_type": "Mutant", "object_type": "mutex", "object_name": "$TARGET_MUTEX_NAME", "mailslot_prefix": "BOFBench", "result_limit": "16"}, ExpectPath: []string{"handles", "state", "mailslots"}, ExpectExpandedPath: []string{"handles", "state", "mailslots"}}}}
-	documents := []Document{triage, network, waitTriage, coordination}
+	ipc := Document{
+		Schema: Schema, SchemaVersion: 5, ID: "ipc-surface-triage", Version: "1.0.0",
+		Title: "IPC Surface Triage", Summary: "Inventory RPC endpoints, COM registrations, and ALPC ports concurrently", Tier: "public",
+		Inputs: []Input{
+			{Name: "result_limit", Type: "int", Default: "32"},
+			{Name: "com_scope", Type: "string", Default: "all"},
+			{Name: "registry_view", Type: "string", Default: "native"},
+			{Name: "clsid_filter", Type: "wstring", Default: ""},
+			{Name: "alpc_directory", Type: "wstring", Default: `\RPC Control`},
+			{Name: "alpc_prefix", Type: "wstring", Default: ""},
+		},
+		Steps: []Step{{
+			ID: "surfaces",
+			Parallel: &Parallel{
+				Join: "all",
+				Branches: []ParallelBranch{
+					{ID: "rpc", Pack: "rpc-endpoint-inventory", Arguments: map[string]string{"result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "rpc-endpoint-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+					{ID: "com", Pack: "com-registration-inventory", Arguments: map[string]string{"scope": "$input.com_scope", "registry_view": "$input.registry_view", "clsid_filter": "$input.clsid_filter", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "com-registration-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+					{ID: "alpc", Pack: "alpc-port-inventory", Arguments: map[string]string{"directory": "$input.alpc_directory", "prefix": "$input.alpc_prefix", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "alpc-port-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+				},
+			},
+		}},
+		ProofCases: []ProofCase{{
+			ID: "local-ipc", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"},
+			Inputs:     map[string]string{"result_limit": "16", "com_scope": "all", "registry_view": "native", "clsid_filter": "", "alpc_directory": `\RPC Control`, "alpc_prefix": ""},
+			ExpectPath: []string{"surfaces"}, ExpectExpandedPath: []string{"surfaces", "surfaces/rpc", "surfaces/com", "surfaces/alpc", "surfaces/$join"},
+			ExpectParallel: map[string]map[string]string{"surfaces": {"rpc": "completed", "com": "completed", "alpc": "completed"}},
+		}},
+	}
+	documents := []Document{triage, network, waitTriage, coordination, ipc}
 	items := make([]Resolved, 0, len(documents))
 	for _, document := range documents {
 		item := Resolved{Document: document, Catalog: "builtin", Qualified: "builtin/" + document.ID}
@@ -1383,14 +1720,45 @@ func (r *Registry) Graph(item Resolved, format string, expand bool) (string, err
 }
 
 func graphDocument(document Document, prefix string, registry *Registry, expand bool) GraphDocument {
-	graph := GraphDocument{Schema: "bofbench.operation-graph", SchemaVersion: 2, Operation: document.ID}
+	graph := GraphDocument{Schema: "bofbench.operation-graph", SchemaVersion: 3, Operation: document.ID}
 	for index, step := range document.Steps {
 		id := prefix + step.ID
 		kind := "pack"
 		if step.Operation != "" {
 			kind = "operation"
+		} else if step.Parallel != nil {
+			kind = "parallel"
 		}
 		graph.Nodes = append(graph.Nodes, GraphNode{ID: id, Pack: step.Pack, Operation: step.Operation, Kind: kind})
+		outgoing := id
+		if step.Parallel != nil {
+			joinID := id + "/$join"
+			graph.Nodes = append(graph.Nodes, GraphNode{ID: joinID, Kind: "join"})
+			outgoing = joinID
+			for _, branch := range step.Parallel.Branches {
+				branchID := id + "/" + branch.ID
+				branchKind := "pack"
+				if branch.Operation != "" {
+					branchKind = "operation"
+				}
+				graph.Nodes = append(graph.Nodes, GraphNode{ID: branchID, Pack: branch.Pack, Operation: branch.Operation, Kind: branchKind})
+				graph.Edges = append(graph.Edges, GraphEdge{From: id, To: branchID, Outcome: "fork"})
+				graph.Edges = append(graph.Edges, GraphEdge{From: branchID, To: joinID, Outcome: "join"})
+				if expand && registry != nil && branch.Operation != "" {
+					if child, err := registry.Resolve(branch.Operation); err == nil {
+						childGraph := graphDocument(child.Document, branchID+"/", registry, true)
+						graph.Nodes = append(graph.Nodes, childGraph.Nodes...)
+						graph.Edges = append(graph.Edges, GraphEdge{From: branchID, To: branchID + "/" + child.Document.Steps[0].ID, Outcome: "contains"})
+						for _, edge := range childGraph.Edges {
+							if edge.To == "$complete" || edge.To == "$fail" {
+								edge.To = branchID
+							}
+							graph.Edges = append(graph.Edges, edge)
+						}
+					}
+				}
+			}
+		}
 		if len(step.Outcomes) > 0 {
 			for _, outcome := range step.Outcomes {
 				to := outcome.Next
@@ -1400,9 +1768,9 @@ func graphDocument(document Document, prefix string, registry *Registry, expand 
 				graph.Edges = append(graph.Edges, GraphEdge{From: id, To: to, Outcome: outcome.ID})
 			}
 		} else if index+1 < len(document.Steps) {
-			graph.Edges = append(graph.Edges, GraphEdge{From: id, To: prefix + document.Steps[index+1].ID})
+			graph.Edges = append(graph.Edges, GraphEdge{From: outgoing, To: prefix + document.Steps[index+1].ID})
 		} else {
-			graph.Edges = append(graph.Edges, GraphEdge{From: id, To: "$complete"})
+			graph.Edges = append(graph.Edges, GraphEdge{From: outgoing, To: "$complete"})
 		}
 		if expand && registry != nil && step.Operation != "" {
 			if child, err := registry.Resolve(step.Operation); err == nil {
@@ -1441,6 +1809,9 @@ func renderGraph(graph GraphDocument, format string) (string, error) {
 			target := node.Pack
 			if node.Operation != "" {
 				target = node.Operation
+			}
+			if target == "" {
+				target = node.Kind
 			}
 			fmt.Fprintf(&body, "  %s[\"%s · %s\"]\n", mermaidID(node.ID), node.ID, strings.ReplaceAll(target, "\"", "'"))
 		}
@@ -1494,12 +1865,26 @@ func ReferenceMarkdown(items []Resolved) string {
 			target := step.Pack
 			if step.Operation != "" {
 				target = "operation:" + step.Operation
+			} else if step.Parallel != nil {
+				target = fmt.Sprintf("parallel:%s (%d branches)", step.Parallel.Join, len(step.Parallel.Branches))
 			}
 			fmt.Fprintf(&body, "%d. `%s` → `%s`", i+1, step.ID, target)
 			if step.Cleanup != nil {
 				fmt.Fprintf(&body, "; cleanup `%s`", step.Cleanup.Pack)
 			}
 			body.WriteString("\n")
+			if step.Parallel != nil {
+				for _, branch := range step.Parallel.Branches {
+					branchTarget := branch.Pack
+					if branch.Operation != "" {
+						branchTarget = "operation:" + branch.Operation
+					}
+					fmt.Fprintf(&body, "    - branch `%s` → `%s`\n", branch.ID, branchTarget)
+				}
+				for name, reference := range step.Parallel.Exports {
+					fmt.Fprintf(&body, "    - export `%s` ← `%s`\n", name, reference)
+				}
+			}
 			for _, outcome := range step.Outcomes {
 				fmt.Fprintf(&body, "    - outcome `%s` → `%s` when `[%s]` matches\n", outcome.ID, outcome.Next, outcome.Expect.Tag)
 			}

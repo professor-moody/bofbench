@@ -75,6 +75,7 @@ type devLoopOptions struct {
 	ArgumentTokens     []string
 	SensitiveArgIndex  []int
 	SensitiveFields    []string
+	TimeoutMS          int
 }
 
 func devCommand(stdout io.Writer) *cobra.Command {
@@ -110,6 +111,7 @@ func devCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&opts.Compiler, "compiler", "auto", "compiler profile: auto, mingw, or msvc")
 	cmd.Flags().StringVar(&opts.Runtime, "runtime", "auto", "runtime: auto, windows-coff, linux-elf, or darwin-macho")
 	cmd.Flags().StringVar(&opts.Profile, "profile", "", "bofbench.toml test profile")
+	cmd.Flags().IntVar(&opts.TimeoutMS, "timeout", 0, "runtime timeout in milliseconds (overrides the project profile)")
 	cmd.Flags().BoolVar(&opts.SkipRun, "skip-run", false, "stop after build, analysis, and loader preflight")
 	cmd.Flags().BoolVar(&opts.VerifyReproducible, "verify-reproducible", false, "build twice and require identical object bytes")
 	cmd.Flags().StringSliceVar(&opts.Suppressions, "suppress", nil, "analysis finding suppression; repeatable")
@@ -260,12 +262,16 @@ func executeDevLoop(opts devLoopOptions) (devLoopReport, error) {
 		return finish(err)
 	}
 	report.Args = items
+	timeoutMS := cfg.TimeoutMS
+	if opts.TimeoutMS > 0 {
+		timeoutMS = opts.TimeoutMS
+	}
 	runResult, runErr := runtimesvc.Run(runtimesvc.Request{
 		Path:      build.Object,
 		Entry:     entry,
 		ArgHex:    argpack.Hex(packed),
 		Tokens:    argumentTokens,
-		TimeoutMS: cfg.TimeoutMS,
+		TimeoutMS: timeoutMS,
 		Runtime:   opts.Runtime,
 	})
 	if cfgPath != "" {

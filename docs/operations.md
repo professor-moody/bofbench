@@ -1,11 +1,11 @@
 # Composable, Provable Multi-Step Operations
 
-Operations connect capability packs into a result-aware, forward-only workflow. A step can capture a structured output field—such as a PID, address, hash, path, object name, or pipe name—and pass it to a later step. Version 3 can route a completed, understood result to a later step. Version 4 can invoke another catalog operation as an atomic child step. The operation advances only when both conditions are true:
+Operations connect capability packs into result-aware workflows. A step can capture a structured output field—such as a PID, address, hash, path, object name, pipe name, or retained handle—and pass it to later work. Version 3 can route a completed, understood result to a later step. Version 4 can invoke another catalog operation as an atomic child step. Version 5 can run independent pack or child-operation branches concurrently and join them deterministically. Work advances only when both conditions are true:
 
 1. the runtime task completed with complete output; and
 2. the step's declared structured-result contract matched.
 
-A loader invocation that exits normally but emits a declared clean-failure result can select an explicit fallback. A runtime crash, timeout, or incomplete result cannot select a fallback because its effects are unknown. Packs remain independently buildable and runnable; operations add sequencing, result contracts, ordered outcomes, captures, checkpointing, static testing, live proof, resume, and reverse cleanup.
+A loader invocation that exits normally but emits a declared clean-failure result can select an explicit fallback. A runtime crash, timeout, or incomplete result cannot select a fallback because its effects are unknown. Packs remain independently buildable and runnable; operations add sequencing, result contracts, ordered outcomes, parallel groups, captures, checkpointing, static testing, live proof, resume, and reverse cleanup.
 
 <video controls preload="metadata" poster="assets/images/operation-lifecycle.png" width="100%">
   <source src="assets/media/operation-lifecycle.webm" type="video/webm">
@@ -31,7 +31,7 @@ bofbench operation test --all --catalog ~/bofbench-packs-internal \
 # Declared fixtures, contracts, state checks, and reverse cleanup
 bofbench operation prove internal/virtual-memory-execute \
   --catalog ~/bofbench-packs-internal \
-  --via lab --lab devbox --arch x64
+  --via lab --lab devbox --arch x64 --parallelism 4
 ```
 
 `operation test` validates the definition, builds every unique action and cleanup pack for every declared architecture, checks analyzer expectations, and verifies raw, Sliver, and Cobalt Strike exports. An unavailable compiler is recorded as unavailable coverage.
@@ -42,7 +42,7 @@ bofbench operation prove internal/virtual-memory-execute \
 
 ```bash
 bofbench operation run internal/virtual-memory-execute \
-  --via lab --lab devbox --arch x64 \
+  --via lab --lab devbox --arch x64 --parallelism 4 \
   --arg target_pid=1234 \
   --arg payload=@file:/absolute/path/payload.bin \
   --arg payload_size=256 \
@@ -52,7 +52,7 @@ bofbench operation run internal/virtual-memory-execute \
 
 Normal operation accepts operator-selected targets and payloads. Proof fixtures and benign proof payloads are acceptance infrastructure, not runtime restrictions. `--cleanup` and `--cleanup-on-failure` remain optional.
 
-The run creates `runs/<run-id>/operation.json`. The version-4 receipt pins the complete transitive operation and pack set, action and cleanup pack hashes, child receipt paths, object hashes, runtime receipts, contract state, matched outcomes, parent and expanded execution paths, skipped steps, non-sensitive captures, and nested cleanup results. Sensitive values are never stored.
+The run creates `runs/<run-id>/operation.json`. The version-5 receipt pins the complete transitive operation and pack set, action and cleanup pack hashes, child receipt paths, object hashes, runtime receipts, contract state, matched outcomes, parallel branch state, timestamps, observed concurrency, parent and expanded execution paths, skipped steps, non-sensitive captures, and nested cleanup results. Sensitive values are never stored.
 
 ```mermaid
 flowchart LR
@@ -71,6 +71,84 @@ flowchart LR
   I --> J["Pin route and mark bypassed steps skipped"]
   J --> K["Optional reverse cleanup"]
 ```
+
+## Parallel groups
+
+Schema version 5 lets one step contain a `parallel` group instead of a `pack` or child `operation`. Each branch selects exactly one pack or operation. The current join policy is `all`: every branch must reach a complete, contract-matched result before the parent advances.
+
+```json
+{
+  "id": "probe",
+  "parallel": {
+    "join": "all",
+    "branches": [
+      {
+        "id": "rpc",
+        "pack": "rpc-binding-probe",
+        "arguments": {
+          "string_binding": "$input.string_binding",
+          "timeout_ms": "$input.timeout_ms"
+        },
+        "expect": {
+          "tag": "rpc-binding-probe",
+          "fields": {"status": "complete", "rpc_status": "*"}
+        }
+      },
+      {
+        "id": "com",
+        "pack": "com-dispatch-invoke",
+        "arguments": {
+          "class_kind": "progid",
+          "class_name": "Scripting.Dictionary",
+          "member": "Count",
+          "invoke_kind": "get"
+        },
+        "expect": {
+          "tag": "com-dispatch-invoke",
+          "fields": {"status": "complete", "result_type": "*"}
+        }
+      }
+    ]
+  }
+}
+```
+
+Before the first branch is launched, BOFBench resolves every branch definition, builds and analyzes every direct pack, packs typed arguments, detects the runtime, and prepares the runtime adapter. A preparation failure therefore stops the group before any branch effect occurs.
+
+At execution time:
+
+- `--parallelism <1-16>` bounds concurrent pack work across the full nested operation; the default is `4`;
+- declaration order controls terminal rendering, receipt order, exported captures, and reverse cleanup order even when completion order differs;
+- a runtime failure fails the group; an incomplete branch makes the group resumable; incomplete wins over failure until every branch is terminal;
+- submitted or running C2 work cannot satisfy the join;
+- resume enters incomplete child receipts and branches without rerunning completed work;
+- cleanup visits completed branches in reverse declaration order and recursively cleans child operations;
+- exports must explicitly name a non-sensitive branch capture, for example `$branch.named_pipe.server_handle`.
+
+```mermaid
+flowchart LR
+  P["Preflight every branch"] --> F{"Fork"}
+  F --> A["RPC branch"]
+  F --> B["COM branch"]
+  F --> C["Named-pipe child operation"]
+  A --> J{"Join all"}
+  B --> J
+  C --> J
+  J --> X["Export declared captures"]
+  X --> N["Advance to next step"]
+```
+
+Inspect the selected limit and actual concurrency in the receipt:
+
+```text
+parallelism: 4
+max_concurrency: 3
+steps[].parallel.state: completed
+steps[].parallel.observed_concurrency: 3
+steps[].parallel.branches[].state: completed
+```
+
+Use `--parallelism 1` to serialize branches while preserving the same contracts, graph, receipt shape, and cleanup behavior.
 
 ## Result contracts
 
@@ -116,7 +194,7 @@ Schema-version-1 operations remain readable and executable. Their steps are labe
 
 ## Nested operations
 
-Schema version 4 lets a step select exactly one `pack` or `operation`. A child receives explicitly mapped inputs and inherits the parent's runtime, architecture, compiler, lab, and topology. Only declared non-sensitive captures can be exported back to the parent.
+Schema version 4 lets a non-parallel step select exactly one `pack` or `operation`. A child receives explicitly mapped inputs and inherits the parent's runtime, architecture, compiler, lab, and topology. Version 5 retains that behavior inside parallel branches. Only declared non-sensitive captures can be exported back to the parent.
 
 ```json
 {
@@ -218,7 +296,7 @@ Forward references are rejected. Captures are extracted only after the step cont
 
 ## Proof cases and independent state
 
-Version 4 proof cases retain architectures, runtimes, topology roles, typed proof inputs, expected captures, independent state checks, and cleanup selection. `expect_path` proves the parent route and `expect_expanded_path` proves child breadcrumbs. Pack proof placeholders include `$TARGET_PID`, `$TARGET_TID`, `$TARGET_HOLDER_PID`, `$TARGET_JOB_MEMBER_PID`, `$TARGET_EVENT_NAME`, `$TARGET_SECTION_NAME`, `$TARGET_MUTEX_NAME`, `$TARGET_SEMAPHORE_NAME`, `$TARGET_TIMER_NAME`, `$TARGET_MAILSLOT_NAME`, `$TARGET_NAMED_PIPE`, `$PAYLOAD_RET_PATH`, `$PROOF_SECRET_PATH`, and `$RUN_ID`. State checks may consume dynamic values such as `$capture.remote_base` or `$capture.retained_handle`.
+Proof cases retain architectures, runtimes, topology roles, typed proof inputs, expected captures, independent state checks, and cleanup selection. `expect_path` proves the parent route, `expect_expanded_path` proves child and branch breadcrumbs, and schema-v5 `expect_parallel` proves terminal branch state. Pack proof placeholders include `$TARGET_PID`, `$TARGET_TID`, `$TARGET_HOLDER_PID`, `$TARGET_JOB_MEMBER_PID`, `$TARGET_EVENT_NAME`, `$TARGET_SECTION_NAME`, `$TARGET_MUTEX_NAME`, `$TARGET_SEMAPHORE_NAME`, `$TARGET_TIMER_NAME`, `$TARGET_MAILSLOT_NAME`, `$TARGET_NAMED_PIPE`, `$TARGET_NAMED_PIPE_HANDLE`, `$TARGET_NAMED_PIPE_CLIENT_HANDLE`, `$TARGET_PROCESS_PIPE_PID`, `$TARGET_PROCESS_STDIN_HANDLE`, `$TARGET_PROCESS_STDOUT_HANDLE`, `$PAYLOAD_RET_PATH`, `$PROOF_SECRET_PATH`, and `$RUN_ID`. State checks may consume dynamic values such as `$capture.remote_base` or `$capture.retained_handle`.
 
 ```json
 {
@@ -262,7 +340,7 @@ Resume refreshes the embedded runtime receipt—or recursively resumes an incomp
 
 ```bash
 bofbench operation resume runs/<run-id>/operation.json \
-  --arg password=@prompt
+  --parallelism 4 --arg password=@prompt
 ```
 
 Resume refuses changed operation or pack definitions because persisted captures belong to the pinned code.
@@ -272,7 +350,7 @@ Resume refuses changed operation or pack definitions because persisted captures 
 Cleanup executes completed stateful steps in reverse order:
 
 ```bash
-bofbench operation cleanup runs/<run-id>/operation.json
+bofbench operation cleanup runs/<run-id>/operation.json --parallelism 4
 ```
 
 Repeated cleanup skips completed cleanup work. A failed step still prints and stores its receipt path, so the operator can inspect contract and runtime state before deciding whether to retry or clean completed work.
@@ -305,5 +383,8 @@ Open `bofbench tui` and select **Operations**. Choose a definition, runtime, lab
 - **Changed definition:** start a new operation so code and captures remain correlated.
 - **Unavailable runtime:** use `bofbench runtime status --lab <name>` and select an available adapter.
 - **Cleanup input was sensitive:** resupply it with `operation cleanup --arg name=@prompt`.
+- **Parallel preparation failed:** no branch was launched. Fix the named build, analysis, argument, or runtime preparation error and start or resume again.
+- **Parallel group incomplete:** inspect `steps[].parallel.branches`, finish the named runtime task, then resume the parent receipt.
+- **Parallel group failed:** inspect every terminal branch; output remains declaration-ordered even though branches ran concurrently.
 
 See the [generated operation reference](operation-reference.md), [testing and proof guidance](pack-testing.md), and [operation lifecycle scenario](scenarios/operation-lifecycle.md).

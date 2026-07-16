@@ -946,6 +946,35 @@ func builtins() []Resolved {
 	mailslots.AnalysisSignatures = []AnalysisSignature{{ID: "mailslot_inventory", Name: "Mailslot inventory", Summary: "Enumerate bounded named mailslot handles, verify their handle type, and resolve their object names.", Steps: []AnalysisStep{{Action: "enumerate system handles", APIs: []string{"NtQuerySystemInformation"}}, {Action: "identify mailslot server handles", APIs: []string{"DuplicateHandle", "GetMailslotInfo"}}, {Action: "resolve mailslot object names", APIs: []string{"NtQueryObject"}}}, RequiredStrings: []string{`\Device\Mailslot\`}, Effects: []string{"reads mailslot metadata"}, Requirements: []string{"PROCESS_DUP_HANDLE access to each handle owner"}}}
 	mailslots.ProofCases = []ProofCase{{ID: "target-mailslot", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"prefix": "BOFBench", "result_limit": "16"}, Expect: ProofExpectation{Tag: "mailslot-inventory", Fields: map[string]string{"status": "complete", "shown": "1"}}}}
 	byID["mailslot-inventory"] = mailslots
+	rpcEndpoints := byID["rpc-endpoint-inventory"]
+	rpcEndpoints.Title = "RPC Endpoint Inventory"
+	rpcEndpoints.Capabilities = []string{"bounded local RPC endpoint-mapper inventory"}
+	rpcEndpoints.Network = "local"
+	rpcEndpoints.Arguments = []Argument{{Name: "result_limit", Type: "int", Default: "64", Description: "maximum endpoint rows (1-512)"}}
+	rpcEndpoints.ExpectedAnalysis = []string{"rpc_endpoint_inventory"}
+	rpcEndpoints.OutputFields = []string{"interface", "version", "binding", "annotation", "status", "shown", "limit", "error"}
+	rpcEndpoints.AnalysisSignatures = []AnalysisSignature{{ID: "rpc_endpoint_inventory", Name: "RPC endpoint inventory", Summary: "Enumerate bounded endpoint-mapper interface, binding, and annotation metadata.", Steps: []AnalysisStep{{Action: "begin endpoint mapper enumeration", APIs: []string{"RpcMgmtEpEltInqBegin"}}, {Action: "read endpoint registrations", APIs: []string{"RpcMgmtEpEltInqNextA", "RpcMgmtEpEltInqNextW"}}, {Action: "render RPC binding strings", APIs: []string{"RpcBindingToStringBindingA", "RpcBindingToStringBindingW"}}}, RequiredStrings: []string{"[rpc-endpoint-inventory]"}, Effects: []string{"reads local RPC endpoint metadata"}, Requirements: []string{"local RPC endpoint mapper access"}}}
+	rpcEndpoints.ProofCases = []ProofCase{{ID: "bounded-local", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"result_limit": "16"}, Expect: ProofExpectation{Tag: "rpc-endpoint-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["rpc-endpoint-inventory"] = rpcEndpoints
+	comRegistrations := byID["com-registration-inventory"]
+	comRegistrations.Title = "COM Registration Inventory"
+	comRegistrations.Capabilities = []string{"bounded COM CLSID, ProgID, server, and threading-model inventory"}
+	comRegistrations.Arguments = []Argument{{Name: "scope", Type: "string", Default: "all", Description: "all, user, or machine"}, {Name: "registry_view", Type: "string", Default: "native", Description: "native, 32, or 64"}, {Name: "clsid_filter", Type: "wstring", Default: "", Description: "case-insensitive CLSID substring"}, {Name: "result_limit", Type: "int", Default: "64", Description: "maximum registrations (1-512)"}}
+	comRegistrations.ExpectedAnalysis = []string{"com_registration_inventory"}
+	comRegistrations.OutputFields = []string{"scope", "clsid", "progid", "server_kind", "server", "threading", "status", "shown", "limit", "error"}
+	comRegistrations.SensitiveOutputFields = []string{"server"}
+	comRegistrations.AnalysisSignatures = []AnalysisSignature{{ID: "com_registration_inventory", Name: "COM registration inventory", Summary: "Enumerate bounded COM class registration, server, and threading metadata from selected registry scopes.", Steps: []AnalysisStep{{Action: "open COM class registry", APIs: []string{"RegOpenKeyExW"}}, {Action: "enumerate CLSID registrations", APIs: []string{"RegEnumKeyExW"}}}, RequiredStrings: []string{"[com-registration-inventory]"}, Effects: []string{"reads COM registration metadata"}, Requirements: []string{"registry read access"}}}
+	comRegistrations.ProofCases = []ProofCase{{ID: "bounded-machine", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"scope": "machine", "registry_view": "native", "clsid_filter": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "com-registration-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["com-registration-inventory"] = comRegistrations
+	alpcPorts := byID["alpc-port-inventory"]
+	alpcPorts.Title = "ALPC Port Inventory"
+	alpcPorts.Capabilities = []string{"bounded ALPC and LPC port-name discovery in an exact Object Manager directory"}
+	alpcPorts.Arguments = []Argument{{Name: "directory", Type: "wstring", Default: `\RPC Control`, Description: "exact Object Manager directory"}, {Name: "prefix", Type: "wstring", Default: "", Description: "case-insensitive port-name prefix"}, {Name: "result_limit", Type: "int", Default: "64", Description: "maximum ports (1-512)"}}
+	alpcPorts.ExpectedAnalysis = []string{"alpc_port_inventory"}
+	alpcPorts.OutputFields = []string{"directory", "name", "type", "status", "shown", "limit", "error"}
+	alpcPorts.AnalysisSignatures = []AnalysisSignature{{ID: "alpc_port_inventory", Name: "ALPC port inventory", Summary: "Open an Object Manager directory and enumerate bounded ALPC/LPC port names.", Steps: []AnalysisStep{{Action: "open Object Manager directory", APIs: []string{"NtOpenDirectoryObject"}}, {Action: "enumerate directory objects", APIs: []string{"NtQueryDirectoryObject"}}}, RequiredStrings: []string{"[alpc-port-inventory]", `\RPC Control`}, Effects: []string{"reads ALPC namespace metadata"}, Requirements: []string{"Object Manager directory query access"}}}
+	alpcPorts.ProofCases = []ProofCase{{ID: "rpc-control", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"directory": `\RPC Control`, "prefix": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "alpc-port-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["alpc-port-inventory"] = alpcPorts
 	pipeInventory := byID["named-pipe-inventory"]
 	pipeInventory.Title = "Named Pipe Inventory"
 	pipeInventory.Capabilities = []string{"bounded named-pipe discovery"}
@@ -1263,7 +1292,8 @@ func validate(document Document, root string) error {
 	}
 	allowedPlaceholders := map[string]bool{
 		"$TARGET_PID": true, "$TARGET_TID": true, "$TARGET_HANDLE": true,
-		"$TARGET_NAMED_PIPE": true,
+		"$TARGET_NAMED_PIPE": true, "$TARGET_NAMED_PIPE_HANDLE": true, "$TARGET_NAMED_PIPE_CLIENT_HANDLE": true, "$TARGET_NAMED_PIPE_SHA256": true,
+		"$TARGET_PROCESS_PIPE_PID": true, "$TARGET_PROCESS_STDIN_HANDLE": true, "$TARGET_PROCESS_STDOUT_HANDLE": true, "$TARGET_PROCESS_PIPE_SHA256": true,
 		"$TARGET_HOLDER_PID": true, "$TARGET_JOB_MEMBER_PID": true, "$TARGET_EVENT_NAME": true, "$TARGET_SECTION_NAME": true, "$TARGET_JOB_NAME": true,
 		"$TARGET_MUTEX_NAME": true, "$TARGET_SEMAPHORE_NAME": true, "$TARGET_TIMER_NAME": true, "$TARGET_MAILSLOT_NAME": true,
 		"$TARGET_MAILSLOT_HANDLE": true, "$TARGET_MAILSLOT_SHA256": true,
@@ -1363,6 +1393,7 @@ func validate(document Document, root string) error {
 			"kernel_object": {"object_type", "name"}, "event_state": {"name", "state"}, "mutex_state": {"name", "state"},
 			"semaphore_state": {"name", "count"}, "timer_state": {"name", "state"}, "section_payload": {"name", "offset", "size", "sha256"}, "job_membership": {"name", "pid"},
 			"mailslot_state": {"name"}, "mailslot_queue": {"holder_pid", "handle", "minimum_count"}, "inherited_handle": {"pid", "handle"},
+			"named_pipe": {"name"}, "named_pipe_queue": {"holder_pid", "handle", "sha256"},
 			"process":              {"pid", "image", "marker"},
 			"process_command_line": {"pid", "value"},
 			"service_config":       {"name", "field", "value"},

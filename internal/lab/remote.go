@@ -452,7 +452,7 @@ func RemoteRun(ctx context.Context, project string, opts RemoteRunOptions) (Remo
 		}
 	}
 	if runErr == nil {
-		args := []string{"dev", report.RemoteProject, "--compiler", opts.Compiler, "--arch", opts.Arch, "--runtime", opts.Runtime, "--format", "json"}
+		args := []string{"dev", report.RemoteProject, "--compiler", opts.Compiler, "--arch", opts.Arch, "--runtime", opts.Runtime, "--timeout", strconv.Itoa(opts.TimeoutMS), "--format", "json"}
 		if opts.Profile != "" {
 			args = append(args, "--profile", opts.Profile)
 		}

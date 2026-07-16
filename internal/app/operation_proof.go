@@ -39,19 +39,21 @@ type operationTestReport struct {
 }
 
 type operationProofResult struct {
-	Operation    string            `json:"operation"`
-	Case         string            `json:"case"`
-	Runtime      string            `json:"runtime"`
-	Architecture string            `json:"architecture"`
-	Status       string            `json:"status"`
-	Receipt      string            `json:"receipt,omitempty"`
-	Captures     map[string]string `json:"captures,omitempty"`
-	ActualPath   []string          `json:"actual_path,omitempty"`
-	ExpandedPath []string          `json:"expanded_path,omitempty"`
-	StateChecks  int               `json:"state_checks,omitempty"`
-	CleanupState string            `json:"cleanup_state,omitempty"`
-	Output       []string          `json:"output,omitempty"`
-	Error        string            `json:"error,omitempty"`
+	Operation      string                       `json:"operation"`
+	Case           string                       `json:"case"`
+	Runtime        string                       `json:"runtime"`
+	Architecture   string                       `json:"architecture"`
+	Status         string                       `json:"status"`
+	Receipt        string                       `json:"receipt,omitempty"`
+	Captures       map[string]string            `json:"captures,omitempty"`
+	ActualPath     []string                     `json:"actual_path,omitempty"`
+	ExpandedPath   []string                     `json:"expanded_path,omitempty"`
+	StateChecks    int                          `json:"state_checks,omitempty"`
+	CleanupState   string                       `json:"cleanup_state,omitempty"`
+	Parallel       map[string]map[string]string `json:"parallel,omitempty"`
+	MaxConcurrency int                          `json:"max_observed_concurrency,omitempty"`
+	Output         []string                     `json:"output,omitempty"`
+	Error          string                       `json:"error,omitempty"`
 }
 
 type operationProofReport struct {
@@ -96,6 +98,39 @@ func operationTestCommand(stdout io.Writer, load func() (*operationsvc.Registry,
 			var collect func(operationsvc.Resolved) error
 			collect = func(current operationsvc.Resolved) error {
 				for _, step := range current.Document.Steps {
+					if step.Parallel != nil {
+						for _, branch := range step.Parallel.Branches {
+							if branch.Operation != "" {
+								child, resolveErr := registry.Resolve(branch.Operation)
+								if resolveErr != nil {
+									return resolveErr
+								}
+								if err := collect(child); err != nil {
+									return err
+								}
+								continue
+							}
+							for _, name := range []string{branch.Pack, cleanupParallelBranchPackName(branch)} {
+								if name == "" || seen[name] {
+									continue
+								}
+								seen[name] = true
+								packItem, resolveErr := registry.PackRegistry().Resolve(name)
+								if resolveErr != nil {
+									result.Status, result.Error = "fail", resolveErr.Error()
+									continue
+								}
+								packResult := testOnePack(packItem, registry.PackRegistry(), compilers)
+								result.Packs = append(result.Packs, packResult)
+								if packResult.Status == "fail" {
+									result.Status = "fail"
+								} else if packResult.Status == "pass_with_unavailable" && result.Status == "pass" {
+									result.Status = "pass_with_unavailable"
+								}
+							}
+						}
+						continue
+					}
 					if step.Operation != "" {
 						child, resolveErr := registry.Resolve(step.Operation)
 						if resolveErr != nil {
@@ -164,6 +199,7 @@ func operationTestCommand(stdout io.Writer, load func() (*operationsvc.Registry,
 func operationProveCommand(stdout io.Writer, load func() (*operationsvc.Registry, error), catalogSelectors func() []string) *cobra.Command {
 	var all bool
 	var via, labName, topologyName, arch, compiler, format string
+	var parallelism int
 	cmd := &cobra.Command{Use: "prove [operation]", Short: "Run declared operation proofs and independent cleanup checks", Args: cobra.MaximumNArgs(1)}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if (len(args) == 0) == !all {
@@ -189,7 +225,7 @@ func operationProveCommand(stdout io.Writer, load func() (*operationsvc.Registry
 			topology = &resolved
 			labName = resolved.Topology.Execution.Name
 		}
-		report, proofErr := proveOperations(cmd.Context(), stdout, registry, items, via, labName, topologyName, topology, arch, compiler)
+		report, proofErr := proveOperations(cmd.Context(), stdout, registry, items, via, labName, topologyName, topology, arch, compiler, parallelism)
 		if format == "json" {
 			if err := printJSON(stdout, report); err != nil {
 				return err
@@ -206,11 +242,15 @@ func operationProveCommand(stdout io.Writer, load func() (*operationsvc.Registry
 	cmd.Flags().StringVar(&arch, "arch", "x64", "proof architecture: x64 or x86")
 	cmd.Flags().StringVar(&compiler, "compiler", "auto", "compiler: auto, mingw, or msvc")
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	cmd.Flags().IntVar(&parallelism, "parallelism", 4, "maximum concurrent operation branches (1-16)")
 	cmd.MarkFlagsMutuallyExclusive("lab", "topology")
 	return cmd
 }
 
-func proveOperations(ctx context.Context, stdout io.Writer, registry *operationsvc.Registry, items []operationsvc.Resolved, via, labName, topologyName string, topology *resolvedTopologyValues, arch, compiler string) (operationProofReport, error) {
+func proveOperations(ctx context.Context, stdout io.Writer, registry *operationsvc.Registry, items []operationsvc.Resolved, via, labName, topologyName string, topology *resolvedTopologyValues, arch, compiler string, parallelism int) (operationProofReport, error) {
+	if parallelism < 1 || parallelism > 16 {
+		return operationProofReport{}, fmt.Errorf("operation parallelism must be between 1 and 16")
+	}
 	report := operationProofReport{Header: evidence.New("bofbench.operation-proof", "", ""), Status: "pass", Runtime: via, Lab: labName, Topology: topologyName, Architecture: arch, GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
 	runDir, err := runlog.NewDir("operation-proof")
 	if err != nil {
@@ -338,7 +378,7 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 				report.Results = append(report.Results, result)
 				continue
 			}
-			args := operationProofRunArgs(item, via, labName, topologyName, arch, compiler, inputs, proof.Cleanup)
+			args := operationProofRunArgs(item, via, labName, topologyName, arch, compiler, inputs, proof.Cleanup, parallelism)
 			var output bytes.Buffer
 			runErr := Run(args, &output, &output)
 			result.Output = nonemptyLines(output.String())
@@ -367,6 +407,8 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 			result.Captures = receipt.Captures
 			result.ActualPath = append([]string(nil), receipt.ActualPath...)
 			result.ExpandedPath = append([]string(nil), receipt.ExpandedPath...)
+			result.MaxConcurrency = receipt.MaxConcurrency
+			result.Parallel = operationParallelStates(receipt)
 			if err := matchOperationProofCaptures(proof.ExpectCaptures, receipt.Captures, placeholders); err != nil {
 				result.Status, result.Error = "fail", err.Error()
 				report.Failed++
@@ -380,6 +422,12 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 				continue
 			}
 			if err := matchOperationProofPath(proof.ExpectExpandedPath, receipt.ExpandedPath); err != nil {
+				result.Status, result.Error = "fail", err.Error()
+				report.Failed++
+				report.Results = append(report.Results, result)
+				continue
+			}
+			if err := matchOperationProofParallel(proof.ExpectParallel, result.Parallel); err != nil {
 				result.Status, result.Error = "fail", err.Error()
 				report.Failed++
 				report.Results = append(report.Results, result)
@@ -472,12 +520,19 @@ func cleanupPackName(step operationsvc.Step) string {
 	return step.Cleanup.Pack
 }
 
-func operationProofRunArgs(item operationsvc.Resolved, via, labName, topologyName, arch, compiler string, inputs map[string]string, cleanupOnFailure bool) []string {
+func cleanupParallelBranchPackName(branch operationsvc.ParallelBranch) string {
+	if branch.Cleanup == nil {
+		return ""
+	}
+	return branch.Cleanup.Pack
+}
+
+func operationProofRunArgs(item operationsvc.Resolved, via, labName, topologyName, arch, compiler string, inputs map[string]string, cleanupOnFailure bool, parallelism int) []string {
 	args := []string{"operation"}
 	if item.CatalogRoot != "" {
 		args = append(args, "--catalog", item.CatalogRoot)
 	}
-	args = append(args, "run", item.Qualified, "--via", via, "--arch", arch, "--compiler", compiler)
+	args = append(args, "run", item.Qualified, "--via", via, "--arch", arch, "--compiler", compiler, "--parallelism", fmt.Sprintf("%d", parallelism))
 	if cleanupOnFailure {
 		args = append(args, "--cleanup-on-failure")
 	}
@@ -531,6 +586,32 @@ func matchOperationProofPath(expected, actual []string) error {
 	for index := range expected {
 		if expected[index] != actual[index] {
 			return fmt.Errorf("operation path %v did not match %v", actual, expected)
+		}
+	}
+	return nil
+}
+
+func operationParallelStates(receipt operationsvc.Receipt) map[string]map[string]string {
+	result := map[string]map[string]string{}
+	for _, step := range receipt.Steps {
+		if step.Parallel == nil {
+			continue
+		}
+		result[step.ID] = map[string]string{}
+		for _, branch := range step.Parallel.Branches {
+			result[step.ID][branch.ID] = branch.State
+		}
+	}
+	return result
+}
+
+func matchOperationProofParallel(expected, actual map[string]map[string]string) error {
+	for groupID, branches := range expected {
+		for branchID, want := range branches {
+			got := actual[groupID][branchID]
+			if got != want {
+				return fmt.Errorf("parallel branch %s/%s=%q did not match %q", groupID, branchID, got, want)
+			}
 		}
 	}
 	return nil

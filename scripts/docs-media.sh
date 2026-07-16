@@ -33,7 +33,7 @@ cleanup() {
     export/docs-capture-* export/docs-lab-* export/docs-export-* \
     dist/docs-capture.* dist/docs-lab.* dist/docs-export.* || true
 	if [[ "$MEDIA_RUNS_STASHED" == "1" ]]; then
-		rm -rf runs/*operation-coordination-matrix* || true
+		rm -rf runs/*operation-named-pipe-duplex-roundtrip* || true
 		for saved in "$MEDIA_RUN_STASH"/*; do
 			[[ -e "$saved" ]] || continue
 			mv "$saved" runs/
@@ -47,13 +47,13 @@ rm -rf \
   bofs/docs-capture bofs/docs-lab bofs/docs-export \
   export/docs-capture-* export/docs-lab-* export/docs-export-* \
   dist/docs-capture.* dist/docs-lab.* dist/docs-export.* || true
-for existing in runs/*operation-coordination-matrix*; do
+for existing in runs/*operation-named-pipe-duplex-roundtrip*; do
 	[[ -e "$existing" ]] || continue
 	mv "$existing" "$MEDIA_RUN_STASH"/
 done
 MEDIA_RUNS_STASHED=1
 printf '\303' > /tmp/bofbench-ret.bin
-printf 'BOFBenchDocsRequest' > /tmp/bofbench-docs-request.bin
+printf 'BOFBenchDocsRequest\r\n' > /tmp/bofbench-docs-request.bin
 
 if [[ -f docs/media-src/operation-lifecycle.tape && ( -z "$MEDIA_ONLY" || "$MEDIA_ONLY" == "operation-lifecycle" ) ]]; then
 	if ! target_json="$("$BIN" lab target status --lab "$LAB" --format json 2>/dev/null)"; then
@@ -88,7 +88,7 @@ for video in docs/assets/media/*.webm; do
     build-analyze) poster_second=10 ;;
     export-verify) poster_second=12 ;;
     lab-run) poster_second=12 ;;
-    operation-lifecycle) poster_second=32 ;;
+    operation-lifecycle) poster_second=39 ;;
     runtime-tasks) poster_second=27 ;;
     third-party-analysis) poster_second=6 ;;
     *) poster_second=6 ;;

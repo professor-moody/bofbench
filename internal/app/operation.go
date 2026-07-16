@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -28,6 +30,8 @@ type operationOptions struct {
 	catalogs, arguments                         []string
 	cleanup, cleanupOnFailure                   bool
 	profiles                                    string
+	parallelism                                 int
+	parallelSem                                 chan struct{}
 }
 
 func operationCommand(stdout io.Writer) *cobra.Command {
@@ -180,7 +184,7 @@ func operationDocsCommand(stdout io.Writer, load func() (*operationsvc.Registry,
 }
 
 func operationRunCommand(stdout io.Writer, load func() (*operationsvc.Registry, error)) *cobra.Command {
-	opts := operationOptions{via: "native", arch: "x64", compiler: "auto", profiles: lab.ProfilesPath()}
+	opts := operationOptions{via: "native", arch: "x64", compiler: "auto", profiles: lab.ProfilesPath(), parallelism: 4}
 	cmd := &cobra.Command{Use: "run <operation>", Short: "Build, analyze, and execute a result-aware operation", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		registry, err := load()
 		if err != nil {
@@ -201,7 +205,7 @@ func operationRunCommand(stdout io.Writer, load func() (*operationsvc.Registry, 
 }
 
 func operationResumeCommand(stdout io.Writer, load func() (*operationsvc.Registry, error)) *cobra.Command {
-	opts := operationOptions{profiles: lab.ProfilesPath()}
+	opts := operationOptions{profiles: lab.ProfilesPath(), parallelism: 4}
 	cmd := &cobra.Command{Use: "resume <operation.json>", Short: "Continue an incomplete operation from its persisted captures", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		path := operationReceiptPath(args[0])
 		receipt, err := operationsvc.LoadReceipt(path)
@@ -238,11 +242,12 @@ func operationResumeCommand(stdout io.Writer, load func() (*operationsvc.Registr
 	cmd.Flags().StringVar(&opts.profiles, "profiles", lab.ProfilesPath(), "global lab profiles file")
 	cmd.Flags().BoolVar(&opts.cleanup, "cleanup", false, "clean completed stateful steps after completion")
 	cmd.Flags().BoolVar(&opts.cleanupOnFailure, "cleanup-on-failure", false, "clean completed stateful steps after a failure")
+	cmd.Flags().IntVar(&opts.parallelism, "parallelism", 4, "maximum concurrent operation branches (1-16)")
 	return cmd
 }
 
 func operationCleanupCommand(stdout io.Writer, load func() (*operationsvc.Registry, error)) *cobra.Command {
-	opts := operationOptions{profiles: lab.ProfilesPath()}
+	opts := operationOptions{profiles: lab.ProfilesPath(), parallelism: 4}
 	cmd := &cobra.Command{Use: "cleanup <operation.json>", Short: "Run completed step cleanup in reverse order", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		path := operationReceiptPath(args[0])
 		receipt, err := operationsvc.LoadReceipt(path)
@@ -269,6 +274,7 @@ func operationCleanupCommand(stdout io.Writer, load func() (*operationsvc.Regist
 	}}
 	cmd.Flags().StringArrayVar(&opts.arguments, "arg", nil, "resupply sensitive operation inputs needed by cleanup")
 	cmd.Flags().StringVar(&opts.profiles, "profiles", lab.ProfilesPath(), "global lab profiles file")
+	cmd.Flags().IntVar(&opts.parallelism, "parallelism", 4, "maximum concurrent cleanup branches (1-16)")
 	return cmd
 }
 
@@ -282,6 +288,7 @@ func bindOperationRunFlags(cmd *cobra.Command, opts *operationOptions, includeRu
 	cmd.Flags().StringVar(&opts.profiles, "profiles", lab.ProfilesPath(), "global lab profiles file")
 	cmd.Flags().BoolVar(&opts.cleanup, "cleanup", false, "clean completed stateful steps after completion")
 	cmd.Flags().BoolVar(&opts.cleanupOnFailure, "cleanup-on-failure", false, "clean completed stateful steps after a failure")
+	cmd.Flags().IntVar(&opts.parallelism, "parallelism", 4, "maximum concurrent operation branches (1-16)")
 	cmd.MarkFlagsMutuallyExclusive("lab", "topology")
 }
 
@@ -351,6 +358,15 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 	if opts.via != "native" && opts.via != "lab" && opts.via != "sliver" && opts.via != "cobaltstrike" {
 		return fmt.Errorf("unsupported operation runtime %q", opts.via)
 	}
+	if opts.parallelism == 0 {
+		opts.parallelism = 4
+	}
+	if opts.parallelism < 1 || opts.parallelism > 16 {
+		return fmt.Errorf("operation parallelism must be between 1 and 16")
+	}
+	if opts.parallelSem == nil {
+		opts.parallelSem = make(chan struct{}, opts.parallelism)
+	}
 	var topologyValues map[string]string
 	if len(item.Document.Roles) > 0 && opts.topology == "" {
 		return fmt.Errorf("operation %s requires topology roles %s; select one with --topology", item.Document.ID, strings.Join(item.Document.Roles, ", "))
@@ -386,13 +402,21 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 		}
 		path = filepath.Join(runDir, "operation.json")
 		receipt = operationsvc.NewReceipt(item, registry, path, opts.via, opts.lab, opts.topology, opts.arch, opts.compiler, inputs)
+		receipt.Parallelism = opts.parallelism
 	} else if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
 		receipt = operationsvc.NewReceipt(item, registry, path, opts.via, opts.lab, opts.topology, opts.arch, opts.compiler, inputs)
+		receipt.Parallelism = opts.parallelism
 	} else {
 		var err error
 		receipt, err = operationsvc.LoadReceipt(path)
 		if err != nil {
 			return err
+		}
+		if receipt.Parallelism != 0 {
+			opts.parallelism = receipt.Parallelism
+			if cap(opts.parallelSem) != opts.parallelism {
+				opts.parallelSem = make(chan struct{}, opts.parallelism)
+			}
 		}
 	}
 	if err := validatePinnedOperation(item, &receipt, registry); err != nil {
@@ -430,6 +454,22 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 		}
 		step := item.Document.Steps[index]
 		stepReceipt := &receipt.Steps[index]
+		if step.Parallel != nil {
+			completed, parallelErr := executeOperationParallelStep(ctx, stdout, registry, item, step, stepReceipt, index, inputs, topologyValues, &receipt, path, opts)
+			if parallelErr != nil {
+				if stepReceipt.State == "incomplete" {
+					if err := operationsvc.SaveReceipt(path, &receipt); err != nil {
+						return err
+					}
+					fmt.Fprintf(stdout, "operation  incomplete\nreceipt    %s\n", path)
+					return parallelErr
+				}
+				return failOperation(stdout, path, &receipt, stepReceipt, parallelErr)
+			}
+			if completed {
+				continue
+			}
+		}
 		if step.Operation != "" {
 			completed, childErr := executeOperationChildStep(ctx, stdout, registry, item, step, stepReceipt, index, inputs, topologyValues, &receipt, path, opts)
 			if childErr != nil {
@@ -598,6 +638,303 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 	return nil
 }
 
+type parallelBranchResult struct {
+	index   int
+	receipt operationsvc.StepReceipt
+	output  []string
+	err     error
+}
+
+func executeOperationParallelStep(ctx context.Context, stdout io.Writer, registry *operationsvc.Registry, parent operationsvc.Resolved, step operationsvc.Step, stepReceipt *operationsvc.StepReceipt, index int, inputs, topology map[string]string, receipt *operationsvc.Receipt, path string, opts operationOptions) (bool, error) {
+	if step.Parallel == nil || stepReceipt.Parallel == nil {
+		return false, fmt.Errorf("parallel step %s has no pinned parallel receipt", step.ID)
+	}
+	if stepReceipt.State == "completed" {
+		return true, nil
+	}
+	resolvedArguments := make(map[int]map[string]string, len(step.Parallel.Branches))
+	for branchIndex, branch := range step.Parallel.Branches {
+		if branchIndex >= len(stepReceipt.Parallel.Branches) {
+			return false, fmt.Errorf("parallel step %s branch receipt count changed", step.ID)
+		}
+		branchReceipt := stepReceipt.Parallel.Branches[branchIndex]
+		if branchReceipt.ID != branch.ID {
+			return false, fmt.Errorf("parallel step %s branch definition changed", step.ID)
+		}
+		if branch.Pack != "" {
+			item, err := registry.PackRegistry().Resolve(branch.Pack)
+			if err != nil {
+				return false, err
+			}
+			if branchReceipt.PackSHA256 == "" || branchReceipt.PackSHA256 != item.SHA256 {
+				return false, fmt.Errorf("parallel branch %s/%s pack changed since operation start", step.ID, branch.ID)
+			}
+		} else {
+			item, err := registry.Resolve(branch.Operation)
+			if err != nil {
+				return false, err
+			}
+			if branchReceipt.OperationSHA256 == "" || branchReceipt.OperationSHA256 != item.SHA256 {
+				return false, fmt.Errorf("parallel branch %s/%s operation changed since operation start", step.ID, branch.ID)
+			}
+		}
+		if err := requireReferencedSensitiveInputs(parent.Document, *receipt, inputs, branch.Arguments); err != nil {
+			return false, err
+		}
+		arguments, err := resolveOperationArguments(branch.Arguments, inputs, receipt.Captures, topology)
+		if err != nil {
+			return false, fmt.Errorf("parallel branch %s/%s: %w", step.ID, branch.ID, err)
+		}
+		resolvedArguments[branchIndex] = arguments
+	}
+
+	// A parallel group is atomic at launch: every direct pack branch is built,
+	// analyzed, argument-packed, runtime-checked, and adapter-prepared before
+	// any branch is allowed to execute. Child operations are definition-pinned
+	// here and perform the same preparation inside their own execution scope.
+	preparedBranches := make(map[int]*preparedOperationPack)
+	for branchIndex, branch := range step.Parallel.Branches {
+		current := stepReceipt.Parallel.Branches[branchIndex]
+		if branch.Pack == "" || current.State == "completed" || current.State == "failed" || (current.Runtime.ExecutionState != "" && !current.OutputComplete) {
+			continue
+		}
+		packItem, err := registry.PackRegistry().Resolve(branch.Pack)
+		if err != nil {
+			return false, err
+		}
+		work := filepath.Join("work", "operations", filepath.Base(filepath.Dir(path)), "parallel", step.ID, branch.ID)
+		prepared, err := prepareOperationPack(ctx, registry.PackRegistry(), packItem, resolvedArguments[branchIndex], operationArgumentSensitivity(parent.Document, branch.Arguments), opts, work)
+		if err != nil {
+			return false, fmt.Errorf("prepare parallel branch %s/%s: %w", step.ID, branch.ID, err)
+		}
+		preparedBranches[branchIndex] = &prepared
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	stepReceipt.State, stepReceipt.ContractState, stepReceipt.StartedAt = "running", "pending", now
+	stepReceipt.Parallel.State, stepReceipt.Parallel.StartedAt = "running", now
+	receipt.Status = "running"
+	for branchIndex := range stepReceipt.Parallel.Branches {
+		branchReceipt := &stepReceipt.Parallel.Branches[branchIndex]
+		if branchReceipt.State == "pending" || branchReceipt.State == "incomplete" {
+			branchReceipt.State = "running"
+			if branchReceipt.StartedAt == "" {
+				branchReceipt.StartedAt = now
+			}
+		}
+	}
+	if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+		return false, err
+	}
+
+	results := make(chan parallelBranchResult, len(step.Parallel.Branches))
+	var active, observed int
+	var concurrencyMu sync.Mutex
+	launchSem := make(chan struct{}, opts.parallelism)
+	launched := 0
+	for branchIndex, branch := range step.Parallel.Branches {
+		current := stepReceipt.Parallel.Branches[branchIndex]
+		if current.State == "completed" || current.State == "failed" {
+			continue
+		}
+		launched++
+		launchSem <- struct{}{}
+		go func(branchIndex int, branch operationsvc.ParallelBranch, current operationsvc.StepReceipt) {
+			defer func() { <-launchSem }()
+			concurrencyMu.Lock()
+			active++
+			if active > observed {
+				observed = active
+			}
+			concurrencyMu.Unlock()
+			var output bytes.Buffer
+			updated, err := executeOperationParallelBranch(ctx, &output, registry, parent, step.ID, branch, current, inputs, receipt.Captures, topology, path, opts, preparedBranches[branchIndex])
+			concurrencyMu.Lock()
+			active--
+			concurrencyMu.Unlock()
+			results <- parallelBranchResult{index: branchIndex, receipt: updated, output: nonemptyLines(output.String()), err: err}
+		}(branchIndex, branch, current)
+	}
+	collected := make([]parallelBranchResult, 0, launched)
+	for count := 0; count < launched; count++ {
+		result := <-results
+		stepReceipt.Parallel.Branches[result.index] = result.receipt
+		collected = append(collected, result)
+	}
+	close(results)
+	sort.Slice(collected, func(i, j int) bool { return collected[i].index < collected[j].index })
+	for _, result := range collected {
+		for _, line := range result.output {
+			fmt.Fprintf(stdout, "  branch %-12s %s\n", step.Parallel.Branches[result.index].ID, line)
+		}
+	}
+	stepReceipt.Parallel.ObservedConcurrency = observed
+	if observed > receipt.MaxConcurrency {
+		receipt.MaxConcurrency = observed
+	}
+
+	hasIncomplete, hasFailed := false, false
+	var failures []string
+	for branchIndex, branchReceipt := range stepReceipt.Parallel.Branches {
+		switch branchReceipt.State {
+		case "incomplete", "running", "pending":
+			hasIncomplete = true
+		case "failed":
+			hasFailed = true
+			failures = append(failures, step.Parallel.Branches[branchIndex].ID+": "+branchReceipt.Error)
+		}
+	}
+	if hasIncomplete {
+		stepReceipt.State, stepReceipt.Parallel.State, receipt.Status = "incomplete", "incomplete", "incomplete"
+		stepReceipt.Error = strings.Join(failures, "; ")
+		_ = operationsvc.SaveReceipt(path, receipt)
+		return false, fmt.Errorf("parallel step %s has incomplete branches; resume %s", step.ID, path)
+	}
+	if hasFailed {
+		stepReceipt.State, stepReceipt.Parallel.State, stepReceipt.ContractState = "failed", "failed", "failed"
+		stepReceipt.Error = strings.Join(failures, "; ")
+		_ = operationsvc.SaveReceipt(path, receipt)
+		return false, fmt.Errorf("parallel step %s failed: %s", step.ID, stepReceipt.Error)
+	}
+
+	exports := map[string]string{}
+	for name, reference := range step.Parallel.Exports {
+		parts := strings.Split(strings.TrimPrefix(reference, "$branch."), ".")
+		if len(parts) != 2 {
+			return false, fmt.Errorf("parallel step %s has invalid export %s=%s", step.ID, name, reference)
+		}
+		found := false
+		for branchIndex, branch := range step.Parallel.Branches {
+			if branch.ID != parts[0] {
+				continue
+			}
+			value := stepReceipt.Parallel.Branches[branchIndex].Captures[parts[1]]
+			if value == "" {
+				return false, fmt.Errorf("parallel step %s export %s did not find %s", step.ID, name, reference)
+			}
+			exports[name], receipt.Captures[name], found = value, value, true
+			break
+		}
+		if !found {
+			return false, fmt.Errorf("parallel step %s export %s did not find %s", step.ID, name, reference)
+		}
+	}
+	completedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	stepReceipt.State, stepReceipt.ContractState, stepReceipt.CompletedAt = "completed", "matched", completedAt
+	stepReceipt.Parallel.State, stepReceipt.Parallel.Exports, stepReceipt.Parallel.CompletedAt = "completed", exports, completedAt
+	operationsvc.RecordParallelPath(receipt, step.ID, *stepReceipt.Parallel)
+	if err := operationsvc.ApplyRoute(parent.Document, receipt, index); err != nil {
+		return false, err
+	}
+	if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func executeOperationParallelBranch(ctx context.Context, stdout io.Writer, registry *operationsvc.Registry, parent operationsvc.Resolved, stepID string, branch operationsvc.ParallelBranch, current operationsvc.StepReceipt, inputs, captures, topology map[string]string, parentPath string, opts operationOptions, prepared *preparedOperationPack) (operationsvc.StepReceipt, error) {
+	current.State, current.Error = "running", ""
+	arguments, err := resolveOperationArguments(branch.Arguments, inputs, captures, topology)
+	if err != nil {
+		current.State, current.Error = "failed", err.Error()
+		return current, err
+	}
+	if branch.Operation != "" {
+		child, err := registry.Resolve(branch.Operation)
+		if err != nil {
+			current.State, current.Error = "failed", err.Error()
+			return current, err
+		}
+		childPath := current.ChildReceipt
+		if childPath == "" {
+			childPath = filepath.Join(filepath.Dir(parentPath), "children", stepID, branch.ID, "operation.json")
+			current.ChildReceipt = childPath
+		}
+		childOpts := opts
+		childOpts.cleanup, childOpts.cleanupOnFailure = false, false
+		runErr := runOperation(ctx, stdout, registry, child, arguments, childOpts, childPath)
+		childReceipt, loadErr := operationsvc.LoadReceipt(childPath)
+		if loadErr != nil {
+			if runErr != nil {
+				current.State, current.Error = "failed", runErr.Error()
+				return current, runErr
+			}
+			current.State, current.Error = "failed", loadErr.Error()
+			return current, loadErr
+		}
+		current.ChildCleanupState = childReceipt.CleanupState
+		switch childReceipt.Status {
+		case "completed", "cleaned":
+		case "running", "incomplete", "pending":
+			current.State, current.Error = "incomplete", childReceipt.Error
+			return current, fmt.Errorf("child operation %s is incomplete", child.Qualified)
+		default:
+			err := runErr
+			if err == nil {
+				err = fmt.Errorf("child operation %s ended in %s: %s", child.Qualified, childReceipt.Status, childReceipt.Error)
+			}
+			current.State, current.Error = "failed", err.Error()
+			return current, err
+		}
+		output := []string{fmt.Sprintf("[operation] status=complete operation=%s receipt=%s cleanup=%s", child.Qualified, childPath, childReceipt.CleanupState)}
+		fields, payload, err := operationsvc.EvaluateExpectation(output, branch.Expect, inputs, captures, topology)
+		if err != nil {
+			current.State, current.ContractState, current.Error = "failed", "failed", err.Error()
+			return current, err
+		}
+		exported, err := operationsvc.CaptureChildOutput(childReceipt, branch.Captures)
+		if err != nil {
+			current.State, current.ContractState, current.Error = "failed", "failed", err.Error()
+			return current, err
+		}
+		current.State, current.ContractState, current.MatchedTag, current.MatchedFields, current.PayloadVerified = "completed", "matched", branch.Expect.Tag, fields, payload
+		current.Captures, current.CompletedAt = exported, time.Now().UTC().Format(time.RFC3339Nano)
+		printOperationResult(stdout, output, exported)
+		return current, nil
+	}
+
+	packItem, err := registry.PackRegistry().Resolve(branch.Pack)
+	if err != nil {
+		current.State, current.Error = "failed", err.Error()
+		return current, err
+	}
+	var runtimeReceipt runtimeadapter.Receipt
+	if current.Runtime.ExecutionState != "" && !current.OutputComplete {
+		runtimeReceipt, err = operationsvc.RefreshRuntimeReceipt(current.Runtime)
+	} else if prepared != nil {
+		runtimeReceipt, err = executePreparedOperationPack(ctx, *prepared, opts)
+	} else {
+		work := filepath.Join("work", "operations", filepath.Base(filepath.Dir(parentPath)), "parallel", stepID, branch.ID)
+		runtimeReceipt, err = executeOperationPack(ctx, stdout, registry.PackRegistry(), packItem, arguments, operationArgumentSensitivity(parent.Document, branch.Arguments), opts, work)
+	}
+	current.Runtime, current.ObjectSHA256, current.OutputComplete = runtimeReceipt, runtimeReceipt.ObjectSHA256, runtimeReceipt.OutputComplete
+	current.State, _ = operationsvc.ClassifyExecution(runtimeReceipt.ExecutionState, runtimeReceipt.OutputComplete, err != nil)
+	if current.State != "completed" {
+		if err != nil {
+			current.Error = err.Error()
+		}
+		return current, err
+	}
+	output := runtimeReceipt.TransientOutput
+	if len(output) == 0 {
+		output = runtimeReceipt.Output
+	}
+	fields, payload, err := operationsvc.EvaluateExpectation(output, branch.Expect, inputs, captures, topology)
+	if err != nil {
+		current.State, current.ContractState, current.Error = "failed", "failed", err.Error()
+		return current, err
+	}
+	exported, err := operationsvc.CaptureOutput(output, branch.Captures)
+	if err != nil {
+		current.State, current.ContractState, current.Error = "failed", "failed", err.Error()
+		return current, err
+	}
+	current.State, current.ContractState, current.MatchedTag, current.MatchedFields, current.PayloadVerified = "completed", "matched", branch.Expect.Tag, fields, payload
+	current.Captures, current.CompletedAt = exported, time.Now().UTC().Format(time.RFC3339Nano)
+	printOperationResult(stdout, runtimeReceipt.Output, exported)
+	return current, nil
+}
+
 func captureOperationOutput(step operationsvc.Step, output []string) (map[string]string, error) {
 	if len(step.Outcomes) > 0 {
 		return operationsvc.CaptureAvailableOutput(output, step.Captures), nil
@@ -725,6 +1062,41 @@ func validatePinnedOperation(item operationsvc.Resolved, receipt *operationsvc.R
 		}
 	}
 	for index, step := range document.Steps {
+		if step.Parallel != nil {
+			if receipt.Steps[index].Parallel == nil || len(receipt.Steps[index].Parallel.Branches) != len(step.Parallel.Branches) {
+				return fmt.Errorf("parallel step %s branch count does not match the pinned definition", step.ID)
+			}
+			for branchIndex, branch := range step.Parallel.Branches {
+				pinned := receipt.Steps[index].Parallel.Branches[branchIndex]
+				if branch.Pack != "" {
+					resolved, err := registry.PackRegistry().Resolve(branch.Pack)
+					if err != nil {
+						return err
+					}
+					if pinned.PackSHA256 == "" || pinned.PackSHA256 != resolved.SHA256 {
+						return fmt.Errorf("parallel branch %s/%s pack changed since operation start", step.ID, branch.ID)
+					}
+				} else {
+					resolved, err := registry.Resolve(branch.Operation)
+					if err != nil {
+						return err
+					}
+					if pinned.OperationSHA256 == "" || pinned.OperationSHA256 != resolved.SHA256 {
+						return fmt.Errorf("parallel branch %s/%s operation changed since operation start", step.ID, branch.ID)
+					}
+				}
+				if branch.Cleanup != nil {
+					cleanup, err := registry.PackRegistry().Resolve(branch.Cleanup.Pack)
+					if err != nil {
+						return err
+					}
+					if pinned.CleanupSHA256 == "" || pinned.CleanupSHA256 != cleanup.SHA256 {
+						return fmt.Errorf("parallel branch %s/%s cleanup pack changed since operation start", step.ID, branch.ID)
+					}
+				}
+			}
+			continue
+		}
 		if step.Pack != "" {
 			resolved, err := registry.PackRegistry().Resolve(step.Pack)
 			if err != nil {
@@ -756,18 +1128,23 @@ func validatePinnedOperation(item operationsvc.Resolved, receipt *operationsvc.R
 	return nil
 }
 
-func executeOperationPack(ctx context.Context, stdout io.Writer, packs *packsvc.Registry, item packsvc.Resolved, arguments map[string]string, sensitiveArguments map[string]bool, opts operationOptions, work string) (runtimeadapter.Receipt, error) {
+type preparedOperationPack struct {
+	adapter  runtimeadapter.Adapter
+	prepared runtimeadapter.Prepared
+}
+
+func prepareOperationPack(ctx context.Context, packs *packsvc.Registry, item packsvc.Resolved, arguments map[string]string, sensitiveArguments map[string]bool, opts operationOptions, work string) (preparedOperationPack, error) {
 	project, err := materializePackProject(work, item, packs)
 	if err != nil {
-		return runtimeadapter.Receipt{}, err
+		return preparedOperationPack{}, err
 	}
 	build, err := buildsys.BuildWithOptions(project, buildsys.Options{Arch: opts.arch, Compiler: opts.compiler})
 	if err != nil {
-		return runtimeadapter.Receipt{}, err
+		return preparedOperationPack{}, err
 	}
 	analysis, err := artifact.Analyze(build.Object, "go")
 	if err != nil {
-		return runtimeadapter.Receipt{}, err
+		return preparedOperationPack{}, err
 	}
 	artifact.ApplyDeclarativeSignatures(&analysis, declarativeSignatures([]packsvc.Resolved{item}))
 	names := make([]string, 0, len(arguments))
@@ -781,7 +1158,7 @@ func executeOperationPack(ctx context.Context, stdout io.Writer, packs *packsvc.
 	}
 	resolved, err := resolveRunArguments(project, named, nil)
 	if err != nil {
-		return runtimeadapter.Receipt{}, err
+		return preparedOperationPack{}, err
 	}
 	for index, name := range resolved.Names {
 		if sensitiveArguments[name] && index < len(resolved.Sensitive) {
@@ -790,26 +1167,26 @@ func executeOperationPack(ctx context.Context, stdout io.Writer, packs *packsvc.
 	}
 	packed, items, err := argpack.PackTokens(resolved.Tokens)
 	if err != nil {
-		return runtimeadapter.Receipt{}, err
+		return preparedOperationPack{}, err
 	}
 	// Operation output is intentionally compact. The adapter's full diagnostics
 	// and evidence remain available in its runtime receipt.
-	run := &runtimeRunContext{stdout: io.Discard, input: project, projectInput: true, entry: "go", timeout: 5000, runtimeName: "auto", compiler: opts.compiler, arch: opts.arch, resolved: resolved, packed: packed, items: items, labName: opts.lab, labProfiles: opts.profiles, transportTimeout: 3 * time.Minute, bootstrapMode: "auto", interactiveLab: requiresInteractiveLabSession(project)}
+	run := &runtimeRunContext{stdout: io.Discard, input: project, projectInput: true, entry: "go", timeout: operationPackTimeout(arguments), runtimeName: "auto", compiler: opts.compiler, arch: opts.arch, resolved: resolved, packed: packed, items: items, labName: opts.lab, labProfiles: opts.profiles, transportTimeout: 3 * time.Minute, bootstrapMode: "auto", interactiveLab: requiresInteractiveLabSession(project)}
 	run.sensitiveOutputFields, run.sensitiveArgumentNames, run.sensitiveValues = runtimeSensitivity(project, resolved)
 	adapters, err := runtimeAdapterRegistry(run)
 	if err != nil {
-		return runtimeadapter.Receipt{}, err
+		return preparedOperationPack{}, err
 	}
 	adapter, err := adapters.Resolve(opts.via)
 	if err != nil {
-		return runtimeadapter.Receipt{}, err
+		return preparedOperationPack{}, err
 	}
 	availability, err := adapter.Detect(ctx)
 	if err != nil {
-		return runtimeadapter.Receipt{}, err
+		return preparedOperationPack{}, err
 	}
 	if !availability.Available {
-		return runtimeadapter.Receipt{}, fmt.Errorf("%s runtime is unavailable: %s", adapter.Name(), availability.Detail)
+		return preparedOperationPack{}, fmt.Errorf("%s runtime is unavailable: %s", adapter.Name(), availability.Detail)
 	}
 	request := runtimeadapter.Request{Input: project, Entrypoint: "go"}
 	for index, arg := range items {
@@ -821,9 +1198,43 @@ func executeOperationPack(ctx context.Context, stdout io.Writer, packs *packsvc.
 	}
 	prepared, err := adapter.Prepare(ctx, request)
 	if err != nil {
+		return preparedOperationPack{}, err
+	}
+	return preparedOperationPack{adapter: adapter, prepared: prepared}, nil
+}
+
+func operationPackTimeout(arguments map[string]string) int {
+	timeout := 5000
+	for _, name := range []string{"timeout_ms", "wait_ms", "read_timeout_ms"} {
+		value, err := strconv.Atoi(strings.TrimSpace(arguments[name]))
+		if err == nil && value > timeout {
+			timeout = value
+		}
+	}
+	if timeout > 600000 {
+		return 600000
+	}
+	return timeout
+}
+
+func executePreparedOperationPack(ctx context.Context, prepared preparedOperationPack, opts operationOptions) (runtimeadapter.Receipt, error) {
+	if opts.parallelSem != nil {
+		select {
+		case opts.parallelSem <- struct{}{}:
+			defer func() { <-opts.parallelSem }()
+		case <-ctx.Done():
+			return runtimeadapter.Receipt{}, ctx.Err()
+		}
+	}
+	return prepared.adapter.Execute(ctx, prepared.prepared)
+}
+
+func executeOperationPack(ctx context.Context, stdout io.Writer, packs *packsvc.Registry, item packsvc.Resolved, arguments map[string]string, sensitiveArguments map[string]bool, opts operationOptions, work string) (runtimeadapter.Receipt, error) {
+	prepared, err := prepareOperationPack(ctx, packs, item, arguments, sensitiveArguments, opts, work)
+	if err != nil {
 		return runtimeadapter.Receipt{}, err
 	}
-	return adapter.Execute(ctx, prepared)
+	return executePreparedOperationPack(ctx, prepared, opts)
 }
 
 func cleanupOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.Registry, item operationsvc.Resolved, inputs map[string]string, receipt *operationsvc.Receipt, path string, opts operationOptions) error {
@@ -848,6 +1259,74 @@ func cleanupOperation(ctx context.Context, stdout io.Writer, registry *operation
 	work := filepath.Join("work", "operations", filepath.Base(filepath.Dir(path)), "cleanup")
 	for _, index := range operationsvc.CleanupStepIndexes(item.Document, *receipt) {
 		step, stepReceipt := item.Document.Steps[index], &receipt.Steps[index]
+		if step.Parallel != nil && stepReceipt.Parallel != nil {
+			for branchIndex := len(step.Parallel.Branches) - 1; branchIndex >= 0; branchIndex-- {
+				branch, branchReceipt := step.Parallel.Branches[branchIndex], &stepReceipt.Parallel.Branches[branchIndex]
+				if branchReceipt.State != "completed" {
+					continue
+				}
+				if branch.Operation != "" {
+					if branchReceipt.ChildReceipt == "" || branchReceipt.ChildCleanupState == "completed" {
+						continue
+					}
+					child, err := registry.Resolve(branch.Operation)
+					if err != nil {
+						return cleanupFailure(path, receipt, branchReceipt, err)
+					}
+					childInputs, err := resolveOperationArguments(branch.Arguments, inputs, receipt.Captures, topologyValues)
+					if err != nil {
+						return cleanupFailure(path, receipt, branchReceipt, err)
+					}
+					childReceipt, err := operationsvc.LoadReceipt(branchReceipt.ChildReceipt)
+					if err != nil {
+						return cleanupFailure(path, receipt, branchReceipt, err)
+					}
+					fmt.Fprintf(stdout, "cleanup     %s/%s → operation:%s\n", step.ID, branch.ID, child.Qualified)
+					if err := cleanupOperation(ctx, stdout, registry, child, childInputs, &childReceipt, branchReceipt.ChildReceipt, opts); err != nil {
+						return cleanupFailure(path, receipt, branchReceipt, err)
+					}
+					branchReceipt.ChildCleanupState, branchReceipt.CleanupState = "completed", "completed"
+					if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+						return err
+					}
+					continue
+				}
+				if branch.Cleanup == nil || branchReceipt.CleanupState == "completed" {
+					continue
+				}
+				cleanupPack, err := registry.PackRegistry().Resolve(branch.Cleanup.Pack)
+				if err != nil {
+					return cleanupFailure(path, receipt, branchReceipt, err)
+				}
+				if err := requireReferencedSensitiveInputs(item.Document, *receipt, inputs, branch.Cleanup.Arguments); err != nil {
+					return cleanupFailure(path, receipt, branchReceipt, err)
+				}
+				captures := mergeOperationCaptures(receipt.Captures, branchReceipt.Captures)
+				arguments, err := resolveOperationArguments(branch.Cleanup.Arguments, inputs, captures, topologyValues)
+				if err != nil {
+					return cleanupFailure(path, receipt, branchReceipt, err)
+				}
+				fmt.Fprintf(stdout, "cleanup     %s/%s → %s\n", step.ID, branch.ID, cleanupPack.Qualified)
+				result, err := executeOperationPack(ctx, stdout, registry.PackRegistry(), cleanupPack, arguments, operationArgumentSensitivity(item.Document, branch.Cleanup.Arguments), opts, filepath.Join(work, step.ID, branch.ID))
+				branchReceipt.CleanupRuntime = &result
+				if err != nil || !result.OutputComplete {
+					if err == nil {
+						err = fmt.Errorf("cleanup output was incomplete")
+					}
+					return cleanupFailure(path, receipt, branchReceipt, err)
+				}
+				printOperationResult(stdout, result.Output, nil)
+				branchReceipt.CleanupState = "completed"
+				if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+					return err
+				}
+			}
+			stepReceipt.CleanupState = "completed"
+			if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+				return err
+			}
+			continue
+		}
 		if step.Operation != "" {
 			child, err := registry.Resolve(step.Operation)
 			if err != nil {
@@ -906,6 +1385,17 @@ func cleanupOperation(ctx context.Context, stdout io.Writer, registry *operation
 	}
 	fmt.Fprintf(stdout, "cleanup     completed\nreceipt     %s\n", path)
 	return nil
+}
+
+func mergeOperationCaptures(parent, local map[string]string) map[string]string {
+	result := map[string]string{}
+	for name, value := range parent {
+		result[name] = value
+	}
+	for name, value := range local {
+		result[name] = value
+	}
+	return result
 }
 
 func requireReferencedSensitiveInputs(document operationsvc.Document, receipt operationsvc.Receipt, inputs map[string]string, arguments map[string]string) error {
@@ -1028,8 +1518,28 @@ func printOperation(stdout io.Writer, item operationsvc.Resolved) {
 		target := step.Pack
 		if step.Operation != "" {
 			target = "operation:" + step.Operation
+		} else if step.Parallel != nil {
+			target = fmt.Sprintf("parallel:%s branches=%d", step.Parallel.Join, len(step.Parallel.Branches))
 		}
 		fmt.Fprintf(stdout, "  %d. %-20s %s\n", index+1, step.ID, target)
+		if step.Parallel != nil {
+			for _, branch := range step.Parallel.Branches {
+				branchTarget := branch.Pack
+				if branch.Operation != "" {
+					branchTarget = "operation:" + branch.Operation
+				}
+				fmt.Fprintf(stdout, "     branch %-14s %s\n", branch.ID, branchTarget)
+			}
+			exportNames := make([]string, 0, len(step.Parallel.Exports))
+			for name := range step.Parallel.Exports {
+				exportNames = append(exportNames, name)
+			}
+			sort.Strings(exportNames)
+			for _, name := range exportNames {
+				fmt.Fprintf(stdout, "     export %-14s %s\n", name, step.Parallel.Exports[name])
+			}
+			continue
+		}
 		argumentNames := make([]string, 0, len(step.Arguments))
 		for name := range step.Arguments {
 			argumentNames = append(argumentNames, name)
@@ -1071,6 +1581,20 @@ func printChildOperations(stdout io.Writer, registry *operationsvc.Registry, ite
 	}
 	seen[item.Qualified] = true
 	for _, step := range item.Document.Steps {
+		if step.Parallel != nil {
+			for _, branch := range step.Parallel.Branches {
+				if branch.Operation == "" {
+					continue
+				}
+				child, err := registry.Resolve(branch.Operation)
+				if err != nil {
+					continue
+				}
+				fmt.Fprintf(stdout, "\n%s%s/%s/%s → %s\n", indent, item.Document.ID, step.ID, branch.ID, child.Qualified)
+				printChildOperations(stdout, registry, child, indent+"  ", seen)
+			}
+			continue
+		}
 		if step.Operation == "" {
 			continue
 		}

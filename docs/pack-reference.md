@@ -36,6 +36,24 @@ observable file, registry, inert Run-key persistence, and child-process state ch
 - Cleanup: `active-cleanup`
 - Analyzer signatures: `run_key_persistence`
 
+## `builtin/alpc-port-inventory`
+
+enumerate bounded ALPC and LPC port names from an Object Manager directory
+
+- Can do: bounded ALPC and LPC port-name discovery in an exact Object Manager directory
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `alpc_port_inventory`
+- Live proofs: rpc-control (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `directory` | `wstring` | no | no | `\RPC Control` | exact Object Manager directory |
+| `prefix` | `wstring` | no | no | `` | case-insensitive port-name prefix |
+| `result_limit` | `int` | no | no | `64` | maximum ports (1-512) |
+
 ## `builtin/certificate-store-inventory`
 
 enumerate bounded certificate metadata from one explicit Windows certificate store
@@ -54,6 +72,26 @@ enumerate bounded certificate metadata from one explicit Windows certificate sto
 | `store` | `wstring` | no | no | `MY` | certificate store name |
 | `subject_filter` | `wstring` | no | no | `` | case-insensitive subject substring; empty matches all |
 | `result_limit` | `int` | no | no | `25` | maximum certificate rows (1-256) |
+
+## `builtin/com-registration-inventory`
+
+enumerate bounded COM CLSID registration metadata
+
+- Can do: bounded COM CLSID, ProgID, server, and threading-model inventory
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Stored-output redaction: `server`
+- Analyzer signatures: `com_registration_inventory`
+- Live proofs: bounded-machine (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `scope` | `string` | no | no | `all` | all, user, or machine |
+| `registry_view` | `string` | no | no | `native` | native, 32, or 64 |
+| `clsid_filter` | `wstring` | no | no | `` | case-insensitive CLSID substring |
+| `result_limit` | `int` | no | no | `64` | maximum registrations (1-512) |
 
 ## `builtin/deep-discovery`
 
@@ -957,6 +995,22 @@ enumerate bounded Task Scheduler metadata from one explicitly supplied Windows h
 | `target_host` | `wstring` | yes | no | `` | exact Windows host name |
 | `name_filter` | `wstring` | no | no | `` | case-insensitive task-name substring |
 | `result_limit` | `int` | no | no | `32` | maximum task rows (1-256) |
+
+## `builtin/rpc-endpoint-inventory`
+
+enumerate bounded local RPC endpoint-mapper registrations
+
+- Can do: bounded local RPC endpoint-mapper inventory
+- Effects: reads data
+- Needs: privilege=user; network=local; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `rpc_endpoint_inventory`
+- Live proofs: bounded-local (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `result_limit` | `int` | no | no | `64` | maximum endpoint rows (1-512) |
 
 ## `builtin/security-package-inventory`
 

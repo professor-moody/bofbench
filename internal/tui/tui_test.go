@@ -111,6 +111,43 @@ func TestReadRunEntryParsesEventsAndFindings(t *testing.T) {
 	}
 }
 
+func TestReadOperationReceiptParsesParallelLanes(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "runs", "parallel")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{
+  "schema": "bofbench.operation-receipt",
+  "schema_version": 5,
+  "status": "completed",
+  "actual_path": ["matrix"],
+  "expanded_path": ["matrix", "matrix/rpc", "matrix/com", "matrix/$join"],
+  "max_observed_concurrency": 2,
+  "steps": [{
+    "id": "matrix",
+    "state": "completed",
+    "parallel": {
+      "state": "completed",
+      "branches": [
+        {"id": "rpc", "state": "completed", "started_at": "2026-07-16T14:00:00Z"},
+        {"id": "com", "state": "completed", "child_receipt": "runs/child/operation.json", "child_cleanup_state": "completed"}
+      ]
+    }
+  }]
+}`
+	if err := os.WriteFile(filepath.Join(dir, "operation.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := readRunEntry(dir, time.Now())
+	if run.MaxConcurrency != 2 || len(run.ParallelLanes) != 2 || !strings.Contains(run.ParallelLanes[0], "matrix/rpc=completed") {
+		t.Fatalf("parallel lanes were not parsed: %#v", run)
+	}
+	view := renderRunDetail(run)
+	if !strings.Contains(view, "max concurrency: 2") || !strings.Contains(view, "matrix/com=completed") {
+		t.Fatalf("parallel detail was not rendered:\n%s", view)
+	}
+}
+
 func TestRunDetailRendersEventsAndFollowup(t *testing.T) {
 	run := runEntry{
 		Path:      "runs/demo",

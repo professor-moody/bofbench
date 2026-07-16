@@ -32,6 +32,37 @@ Correlate detailed process handles, exact synchronization state, and the local m
 
 - `target-coordination`: via `lab,sliver`, architectures `x64,x86`, expected path `handles → state → mailslots`, expanded path `handles → state → mailslots`
 
+## `builtin/ipc-surface-triage`
+
+Inventory RPC endpoints, COM registrations, and ALPC ports concurrently
+
+- Schema version: `5`
+- Tier: `public`
+- Steps: `1`
+- Proof cases: `1`
+
+### Inputs
+
+| Name | Type | Required | Sensitive | Topology value |
+|---|---|---:|---:|---|
+| `result_limit` | `int` | false | false | `` |
+| `com_scope` | `string` | false | false | `` |
+| `registry_view` | `string` | false | false | `` |
+| `clsid_filter` | `wstring` | false | false | `` |
+| `alpc_directory` | `wstring` | false | false | `` |
+| `alpc_prefix` | `wstring` | false | false | `` |
+
+### Steps
+
+1. `surfaces` → `parallel:all (3 branches)`
+    - branch `rpc` → `rpc-endpoint-inventory`
+    - branch `com` → `com-registration-inventory`
+    - branch `alpc` → `alpc-port-inventory`
+
+### Proof cases
+
+- `local-ipc`: via `lab,sliver`, architectures `x64,x86`, expected path `surfaces`, expanded path `surfaces → surfaces/rpc → surfaces/com → surfaces/alpc → surfaces/$join`
+
 ## `builtin/network-posture`
 
 Inventory local adapters, forwarding routes, and proxy configuration

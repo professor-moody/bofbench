@@ -61,15 +61,19 @@ bofbench operation test internal/virtual-memory-execute
 bofbench operation test --all --catalog ~/bofbench-packs-internal \
   --compiler mingw --compiler msvc
 bofbench operation prove internal/virtual-memory-execute \
-  --catalog ~/bofbench-packs-internal --via lab --lab devbox --arch x64
+  --catalog ~/bofbench-packs-internal --via lab --lab devbox --arch x64 \
+  --parallelism 4
 bofbench operation run internal/section-map-start-unmap \
-  --via lab --lab devbox --arg target_pid=1234 --arg payload=@file:/tmp/payload.bin
-bofbench operation resume runs/<run-id>/operation.json
-bofbench operation cleanup runs/<run-id>/operation.json
+  --via lab --lab devbox --parallelism 4 \
+  --arg target_pid=1234 --arg payload=@file:/tmp/payload.bin
+bofbench operation run internal/ipc-coordination-matrix \
+  --via lab --lab devbox --parallelism 3 <typed arguments>
+bofbench operation resume runs/<run-id>/operation.json --parallelism 4
+bofbench operation cleanup runs/<run-id>/operation.json --parallelism 4
 bofbench operation docs --output docs/operation-reference.md
 ```
 
-See [multi-step operations](operations.md) for result routing, contracts, captures, sensitive inputs, static tests, live proof, incomplete C2 tasks, and reverse cleanup.
+See [multi-step operations](operations.md) for result routing, parallel groups, contracts, captures, sensitive inputs, static tests, live proof, incomplete C2 tasks, and reverse cleanup. `--parallelism` accepts `1–16` and defaults to `4`.
 
 ## Build
 

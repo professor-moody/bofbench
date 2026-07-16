@@ -228,7 +228,7 @@ func TestLoadReceiptMigratesVersionOneContractState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.SchemaVersion != 4 || loaded.Steps[0].ContractState != "legacy" || loaded.Steps[1].ContractState != "" || len(loaded.ActualPath) != 1 {
+	if loaded.SchemaVersion != 5 || loaded.Steps[0].ContractState != "legacy" || loaded.Steps[1].ContractState != "" || len(loaded.ActualPath) != 1 {
 		t.Fatalf("unexpected migrated receipt: %#v", loaded)
 	}
 }
@@ -373,5 +373,107 @@ func TestNestedOperationRegistryRejectsIndirectCycles(t *testing.T) {
 	}
 	if _, err := Load(LoadOptions{Project: project, PackRegistry: packs}); err == nil || !strings.Contains(err.Error(), "operation call cycle") {
 		t.Fatalf("expected indirect cycle rejection, got %v", err)
+	}
+}
+
+func TestSchemaVersionFiveValidatesParallelGroupsAndExports(t *testing.T) {
+	expect := func(tag string) *packsvc.ProofExpectation {
+		return &packsvc.ProofExpectation{Tag: tag, Fields: map[string]string{"status": "complete"}}
+	}
+	document := Document{
+		Schema: Schema, SchemaVersion: 5, ID: "parallel", Version: "1.0.0",
+		Title: "Parallel", Summary: "Parallel validation", Tier: "internal",
+		Steps: []Step{{
+			ID: "fanout",
+			Parallel: &Parallel{
+				Join: "all",
+				Branches: []ParallelBranch{
+					{ID: "left", Pack: "host-discovery", Expect: expect("left"), Captures: map[string]Capture{"value": {Tag: "left", Field: "value"}}},
+					{ID: "right", Pack: "host-discovery", Expect: expect("right")},
+				},
+				Exports: map[string]string{"selected": "$branch.left.value"},
+			},
+		}},
+	}
+	if err := validate(document); err != nil {
+		t.Fatalf("valid parallel operation failed: %v", err)
+	}
+	document.Steps[0].Pack = "host-discovery"
+	if err := validate(document); err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("expected step target exclusivity rejection, got %v", err)
+	}
+	document.Steps[0].Pack = ""
+	document.Steps[0].Parallel.Join = "any"
+	if err := validate(document); err == nil || !strings.Contains(err.Error(), "join must be all") {
+		t.Fatalf("expected join rejection, got %v", err)
+	}
+	document.Steps[0].Parallel.Join = "all"
+	document.Steps[0].Parallel.Exports["selected"] = "$branch.right.missing"
+	if err := validate(document); err == nil || !strings.Contains(err.Error(), "unknown branch capture") {
+		t.Fatalf("expected export rejection, got %v", err)
+	}
+}
+
+func TestParallelReceiptPinsBranchesAndRecordsExpandedPath(t *testing.T) {
+	packs, err := packsvc.Load(packsvc.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := Document{
+		Schema: Schema, SchemaVersion: 5, ID: "parallel-receipt", Version: "1.0.0",
+		Title: "Parallel Receipt", Summary: "Pin parallel dependencies", Tier: "public",
+		Steps: []Step{{
+			ID: "fanout",
+			Parallel: &Parallel{Join: "all", Branches: []ParallelBranch{
+				{ID: "left", Pack: "host-discovery", Expect: &packsvc.ProofExpectation{Tag: "host", Fields: map[string]string{"status": "complete"}}},
+				{ID: "right", Pack: "identity", Expect: &packsvc.ProofExpectation{Tag: "identity", Fields: map[string]string{"status": "complete"}}},
+			}},
+		}},
+	}
+	item := Resolved{Document: document, Catalog: "test", Qualified: "test/parallel-receipt", SHA256: Fingerprint(document)}
+	registry := &Registry{items: map[string]Resolved{}, unqualified: map[string][]string{}, packRegistry: packs}
+	receipt := NewReceipt(item, registry, filepath.Join(t.TempDir(), "operation.json"), "lab", "devbox", "", "x64", "mingw", nil)
+	if receipt.SchemaVersion != 5 || receipt.Steps[0].Parallel == nil || len(receipt.Steps[0].Parallel.Branches) != 2 {
+		t.Fatalf("parallel receipt was not initialized: %#v", receipt)
+	}
+	for _, branch := range receipt.Steps[0].Parallel.Branches {
+		if branch.PackSHA256 == "" {
+			t.Fatalf("parallel branch hash was not pinned: %#v", branch)
+		}
+		branch.State = "completed"
+	}
+	RecordParallelPath(&receipt, "fanout", *receipt.Steps[0].Parallel)
+	want := []string{"fanout", "fanout/left", "fanout/right", "fanout/$join"}
+	if strings.Join(receipt.ExpandedPath, ",") != strings.Join(want, ",") {
+		t.Fatalf("unexpected expanded parallel path: %#v", receipt.ExpandedPath)
+	}
+	graph, err := Graph(document, "json")
+	if err != nil || !strings.Contains(graph, `"id": "fanout/$join"`) || !strings.Contains(graph, `"outcome": "fork"`) || !strings.Contains(graph, `"outcome": "join"`) {
+		t.Fatalf("parallel graph omitted fork/join nodes: %s err=%v", graph, err)
+	}
+}
+
+func TestParallelCleanupDetectsCompletedStatefulBranches(t *testing.T) {
+	document := Document{Steps: []Step{{
+		ID: "fanout",
+		Parallel: &Parallel{Join: "all", Branches: []ParallelBranch{
+			{ID: "left", Pack: "host-discovery", Cleanup: &Cleanup{Pack: "host-discovery"}},
+			{ID: "right", Pack: "identity"},
+		}},
+	}}}
+	receipt := Receipt{Steps: []StepReceipt{{
+		ID: "fanout", State: "completed",
+		Parallel: &ParallelReceipt{State: "completed", Branches: []StepReceipt{
+			{ID: "left", State: "completed"},
+			{ID: "right", State: "completed"},
+		}},
+	}}}
+	indexes := CleanupStepIndexes(document, receipt)
+	if len(indexes) != 1 || indexes[0] != 0 {
+		t.Fatalf("parallel cleanup step was not selected: %#v", indexes)
+	}
+	receipt.Steps[0].Parallel.Branches[0].CleanupState = "completed"
+	if indexes := CleanupStepIndexes(document, receipt); len(indexes) != 0 {
+		t.Fatalf("completed parallel cleanup was selected again: %#v", indexes)
 	}
 }

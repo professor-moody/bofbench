@@ -4,6 +4,8 @@
 
 Use a catalog-backed operation to validate every participating pack, pass structured output between BOFs, route an explicitly understood result, inspect its checkpoint, prove live behavior, and perform reverse cleanup. The virtual-memory example remains linear; the adaptive-memory example prefers section mapping and routes a declared clean failure to allocation, write, protection, and thread start.
 
+For independent work, schema version 5 also supports parallel pack and child-operation branches. See [Parallel Native IPC and RPC](parallel-native-ipc.md) for the fork/join lifecycle.
+
 ## Prerequisites
 
 - The internal catalog is configured.
@@ -30,7 +32,7 @@ Confirm that `allocate` captures `remote_base`, later steps consume that value, 
 ```bash
 bofbench operation prove internal/virtual-memory-execute \
   --catalog ~/bofbench-packs-internal \
-  --via lab --lab devbox --arch x64
+  --via lab --lab devbox --arch x64 --parallelism 4
 ```
 
 The proof engine resolves a disposable target PID and benign return payload, verifies the allocated region after the action, frees the captured region in reverse cleanup, then independently confirms that the exact captured base is absent. The report is written to:
@@ -45,7 +47,7 @@ Repeat with `--arch x86` to exercise the x86 target helper and loader path.
 
 ```bash
 bofbench operation run internal/virtual-memory-execute \
-  --via lab --lab devbox --arch x64 \
+  --via lab --lab devbox --arch x64 --parallelism 4 \
   --arg target_pid=1234 \
   --arg payload=@file:/absolute/path/payload.bin \
   --arg payload_size=1 \

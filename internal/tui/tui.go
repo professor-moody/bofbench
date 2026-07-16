@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +38,7 @@ type model struct {
 	operations         []operationsvc.Resolved
 	operationRegistry  *operationsvc.Registry
 	operationExpanded  bool
+	operationParallel  int
 	topologies         []string
 	labProfiles        []string
 	runArguments       []tuiArgument
@@ -86,6 +88,8 @@ type runEntry struct {
 	MatchedRoutes  []string
 	ChildReceipts  []string
 	NestedCleanup  []string
+	ParallelLanes  []string
+	MaxConcurrency int
 	ModTime        time.Time
 }
 
@@ -151,7 +155,7 @@ func initialModel() model {
 	}
 	return model{projects: listProjects(), arsenalRoot: root, arsenal: entries, runs: runs, packs: packs, operations: operations, operationRegistry: operationRegistry,
 		topologies: lab.TopologyNames(profiles), labProfiles: labProfiles, labProfile: labProfile,
-		message: "new → add packs → build → analyze → run → export"}
+		operationParallel: 4, message: "new → add packs → build → analyze → run → export"}
 }
 
 func (m model) Init() tea.Cmd { return nil }
@@ -228,6 +232,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.tab == 9 {
 				m.operationExpanded = !m.operationExpanded
 			}
+		case "+":
+			if m.tab == 9 && m.operationParallel < 16 {
+				m.operationParallel++
+			}
+		case "-":
+			if m.tab == 9 && m.operationParallel > 1 {
+				m.operationParallel--
+			}
 		case "l":
 			if (m.tab == 3 || m.tab == 7 || m.tab == 9) && len(m.labProfiles) > 0 {
 				m.labProfile = (m.labProfile + 1) % len(m.labProfiles)
@@ -277,6 +289,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.tab == 9 && !m.running {
 				if operation, ok := m.selectedOperation(); ok {
 					command := []string{"operation", "prove", operation.Qualified, "--via", runVias[m.viaCursor]}
+					command = append(command, "--parallelism", strconv.Itoa(max(1, m.operationParallel)))
 					if (runVias[m.viaCursor] == "lab" || runVias[m.viaCursor] == "sliver") && len(m.labProfiles) > 0 {
 						command = append(command, "--lab", m.labProfiles[m.labProfile])
 					}
@@ -317,6 +330,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			next.runtimeFilter = m.runtimeFilter
 			next.artifactFilter = m.artifactFilter
 			next.operationExpanded = m.operationExpanded
+			next.operationParallel = m.operationParallel
 			m = next
 		}
 	case commandResultMsg:
@@ -568,7 +582,7 @@ func (m model) currentCommand() []string {
 		}
 	case 9:
 		if operation, ok := m.selectedOperation(); ok {
-			command := []string{"operation", "run", operation.Qualified, "--via", runVias[m.viaCursor]}
+			command := []string{"operation", "run", operation.Qualified, "--via", runVias[m.viaCursor], "--parallelism", strconv.Itoa(max(1, m.operationParallel))}
 			if (runVias[m.viaCursor] == "lab" || runVias[m.viaCursor] == "sliver") && len(m.labProfiles) > 0 {
 				command = append(command, "--lab", m.labProfiles[m.labProfile])
 			}
@@ -850,7 +864,7 @@ func (m model) viewOperations() string {
 		if len(m.labProfiles) > 0 {
 			labName = m.labProfiles[m.labProfile]
 		}
-		fmt.Fprintf(&b, "\nRuntime  %s  Lab %s\nRun      bofbench operation run %s --via %s\n", hotStyle.Render(runVias[m.viaCursor]), labName, item.Qualified, runVias[m.viaCursor])
+		fmt.Fprintf(&b, "\nRuntime  %s  Lab %s  Parallelism %d (+/-)\nRun      bofbench operation run %s --via %s --parallelism %d\n", hotStyle.Render(runVias[m.viaCursor]), labName, max(1, m.operationParallel), item.Qualified, runVias[m.viaCursor], max(1, m.operationParallel))
 		fmt.Fprintf(&b, "Test [x] bofbench operation test %s\nProve[p] bofbench operation prove %s --via %s\n", item.Qualified, item.Qualified, runVias[m.viaCursor])
 		fmt.Fprintf(&b, "Resume   bofbench operation resume runs/<id>/operation.json\nCleanup  bofbench operation cleanup runs/<id>/operation.json\n")
 		if m.operationRegistry != nil {
@@ -869,9 +883,26 @@ func (m model) viewOperations() string {
 			}
 		}
 		children := []string{}
+		lanes := []string{}
 		for _, step := range item.Document.Steps {
 			if step.Operation != "" {
 				children = append(children, step.ID+" → "+step.Operation)
+			}
+			if step.Parallel != nil {
+				for _, branch := range step.Parallel.Branches {
+					target := branch.Pack
+					if branch.Operation != "" {
+						target = "operation:" + branch.Operation
+						children = append(children, step.ID+"/"+branch.ID+" → "+branch.Operation)
+					}
+					lanes = append(lanes, step.ID+"/"+branch.ID+" → "+target)
+				}
+			}
+		}
+		if len(lanes) > 0 {
+			b.WriteString("\nParallel lanes\n")
+			for _, lane := range lanes {
+				fmt.Fprintf(&b, "  %s\n", lane)
 			}
 		}
 		if len(children) > 0 {
@@ -1074,6 +1105,10 @@ func renderRunDetail(run runEntry) string {
 	if len(run.NestedCleanup) > 0 {
 		fmt.Fprintf(&b, "  nested cleanup: %s\n", strings.Join(run.NestedCleanup, ", "))
 	}
+	if len(run.ParallelLanes) > 0 {
+		fmt.Fprintf(&b, "  parallel lanes: %s\n", strings.Join(run.ParallelLanes, ", "))
+		fmt.Fprintf(&b, "  max concurrency: %d\n", run.MaxConcurrency)
+	}
 	if run.Summary != "" {
 		fmt.Fprintf(&b, "  summary: %s\n", run.Summary)
 	}
@@ -1260,6 +1295,7 @@ func readRunEntry(path string, modTime time.Time) runEntry {
 			run.ActualPath = stringSliceField(v, "actual_path")
 			run.ExpandedPath = stringSliceField(v, "expanded_path")
 			run.SkippedSteps = stringSliceField(v, "skipped_steps")
+			run.MaxConcurrency = int(intField(v, "max_observed_concurrency"))
 			if steps, ok := v["steps"].([]any); ok {
 				for _, raw := range steps {
 					step, ok := raw.(map[string]any)
@@ -1272,6 +1308,26 @@ func readRunEntry(path string, modTime time.Time) runEntry {
 					if child := stringField(step, "child_receipt"); child != "" {
 						run.ChildReceipts = append(run.ChildReceipts, stringField(step, "id")+"="+child)
 						run.NestedCleanup = append(run.NestedCleanup, stringField(step, "id")+"="+emptyDash(stringField(step, "child_cleanup_state")))
+					}
+					if parallel, ok := step["parallel"].(map[string]any); ok {
+						group := stringField(step, "id")
+						if branches, ok := parallel["branches"].([]any); ok {
+							for _, rawBranch := range branches {
+								branch, ok := rawBranch.(map[string]any)
+								if !ok {
+									continue
+								}
+								label := group + "/" + stringField(branch, "id") + "=" + emptyDash(stringField(branch, "state"))
+								if started := stringField(branch, "started_at"); started != "" {
+									label += "@" + started
+								}
+								run.ParallelLanes = append(run.ParallelLanes, label)
+								if child := stringField(branch, "child_receipt"); child != "" {
+									run.ChildReceipts = append(run.ChildReceipts, group+"/"+stringField(branch, "id")+"="+child)
+									run.NestedCleanup = append(run.NestedCleanup, group+"/"+stringField(branch, "id")+"="+emptyDash(stringField(branch, "child_cleanup_state")))
+								}
+							}
+						}
 					}
 				}
 			}

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -47,51 +48,59 @@ var (
 	procCreateTimer     = kernel32.NewProc("CreateWaitableTimerW")
 	procCreateMailslot  = kernel32.NewProc("CreateMailslotW")
 	procGetMailslotInfo = kernel32.NewProc("GetMailslotInfo")
+	procPeekNamedPipe   = kernel32.NewProc("PeekNamedPipe")
 	procNtQuerySystem   = ntdll.NewProc("NtQuerySystemInformation")
 )
 
 type targetState struct {
-	Schema               string `json:"schema"`
-	SchemaVersion        int    `json:"schema_version"`
-	Service              string `json:"service"`
-	PID                  int    `json:"pid"`
-	Architecture         string `json:"architecture,omitempty"`
-	KnownModuleBase      string `json:"known_module_base,omitempty"`
-	KnownModulePath      string `json:"known_module_path,omitempty"`
-	X86PID               int    `json:"x86_pid,omitempty"`
-	X86AlertableTID      uint32 `json:"x86_alertable_tid,omitempty"`
-	X86KnownModuleBase   string `json:"x86_known_module_base,omitempty"`
-	X86KnownModulePath   string `json:"x86_known_module_path,omitempty"`
-	AlertableTID         uint32 `json:"alertable_tid"`
-	NamedPipe            string `json:"named_pipe,omitempty"`
-	KnownHandle          string `json:"known_handle,omitempty"`
-	HolderPID            int    `json:"holder_pid,omitempty"`
-	JobMemberPID         int    `json:"job_member_pid,omitempty"`
-	EventName            string `json:"event_name,omitempty"`
-	SectionName          string `json:"section_name,omitempty"`
-	JobName              string `json:"job_name,omitempty"`
-	MutexName            string `json:"mutex_name,omitempty"`
-	SemaphoreName        string `json:"semaphore_name,omitempty"`
-	TimerName            string `json:"timer_name,omitempty"`
-	MailslotName         string `json:"mailslot_name,omitempty"`
-	MailslotHandle       string `json:"mailslot_handle,omitempty"`
-	MailslotSHA256       string `json:"mailslot_sha256,omitempty"`
-	MailslotAccess       uint32 `json:"mailslot_access,omitempty"`
-	User                 string `json:"user"`
-	CanaryFile           string `json:"canary_file"`
-	CanaryFileSHA256     string `json:"canary_file_sha256"`
-	MemoryCanaryAddress  string `json:"memory_canary_address"`
-	MemoryCanarySize     int    `json:"memory_canary_size"`
-	MemoryCanarySHA256   string `json:"memory_canary_sha256"`
-	ExecutionAddress     string `json:"execution_address"`
-	MemoryWriteAddress   string `json:"memory_write_address,omitempty"`
-	MemoryWriteSize      int    `json:"memory_write_size,omitempty"`
-	MemoryWriteSHA256    string `json:"memory_write_sha256,omitempty"`
-	MemoryProtectAddress string `json:"memory_protection_address,omitempty"`
-	MemoryProtectSize    int    `json:"memory_protection_size,omitempty"`
-	MemoryProtection     string `json:"memory_protection,omitempty"`
-	FixtureError         string `json:"fixture_error,omitempty"`
-	StartedAt            string `json:"started_at"`
+	Schema                string `json:"schema"`
+	SchemaVersion         int    `json:"schema_version"`
+	Service               string `json:"service"`
+	PID                   int    `json:"pid"`
+	Architecture          string `json:"architecture,omitempty"`
+	KnownModuleBase       string `json:"known_module_base,omitempty"`
+	KnownModulePath       string `json:"known_module_path,omitempty"`
+	X86PID                int    `json:"x86_pid,omitempty"`
+	X86AlertableTID       uint32 `json:"x86_alertable_tid,omitempty"`
+	X86KnownModuleBase    string `json:"x86_known_module_base,omitempty"`
+	X86KnownModulePath    string `json:"x86_known_module_path,omitempty"`
+	AlertableTID          uint32 `json:"alertable_tid"`
+	NamedPipe             string `json:"named_pipe,omitempty"`
+	NamedPipeHandle       string `json:"named_pipe_handle,omitempty"`
+	NamedPipeClientHandle string `json:"named_pipe_client_handle,omitempty"`
+	NamedPipeSHA256       string `json:"named_pipe_sha256,omitempty"`
+	ProcessPipePID        int    `json:"process_pipe_pid,omitempty"`
+	ProcessStdinHandle    string `json:"process_stdin_handle,omitempty"`
+	ProcessStdoutHandle   string `json:"process_stdout_handle,omitempty"`
+	ProcessPipeSHA256     string `json:"process_pipe_sha256,omitempty"`
+	KnownHandle           string `json:"known_handle,omitempty"`
+	HolderPID             int    `json:"holder_pid,omitempty"`
+	JobMemberPID          int    `json:"job_member_pid,omitempty"`
+	EventName             string `json:"event_name,omitempty"`
+	SectionName           string `json:"section_name,omitempty"`
+	JobName               string `json:"job_name,omitempty"`
+	MutexName             string `json:"mutex_name,omitempty"`
+	SemaphoreName         string `json:"semaphore_name,omitempty"`
+	TimerName             string `json:"timer_name,omitempty"`
+	MailslotName          string `json:"mailslot_name,omitempty"`
+	MailslotHandle        string `json:"mailslot_handle,omitempty"`
+	MailslotSHA256        string `json:"mailslot_sha256,omitempty"`
+	MailslotAccess        uint32 `json:"mailslot_access,omitempty"`
+	User                  string `json:"user"`
+	CanaryFile            string `json:"canary_file"`
+	CanaryFileSHA256      string `json:"canary_file_sha256"`
+	MemoryCanaryAddress   string `json:"memory_canary_address"`
+	MemoryCanarySize      int    `json:"memory_canary_size"`
+	MemoryCanarySHA256    string `json:"memory_canary_sha256"`
+	ExecutionAddress      string `json:"execution_address"`
+	MemoryWriteAddress    string `json:"memory_write_address,omitempty"`
+	MemoryWriteSize       int    `json:"memory_write_size,omitempty"`
+	MemoryWriteSHA256     string `json:"memory_write_sha256,omitempty"`
+	MemoryProtectAddress  string `json:"memory_protection_address,omitempty"`
+	MemoryProtectSize     int    `json:"memory_protection_size,omitempty"`
+	MemoryProtection      string `json:"memory_protection,omitempty"`
+	FixtureError          string `json:"fixture_error,omitempty"`
+	StartedAt             string `json:"started_at"`
 }
 
 type fixtureState struct {
@@ -155,7 +164,7 @@ func (service helperHandler) Execute(_ []string, requests <-chan svc.ChangeReque
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
-	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 6, Service: service.name, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 7, Service: service.name, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if module, _, _ := procModuleHandle.Call(0); module != 0 {
 		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
 	}
@@ -329,10 +338,52 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	go namedPipeFixture(stop, pipeReady)
 	go maintainMailslot(stop, mailslotHandle, mailslotName, mailslotMessage)
 	pipe := <-pipeReady
+	heldPipe, err := createHeldPipeFixture()
+	if err != nil {
+		close(stop)
+		return true, 2
+	}
+	defer windows.CloseHandle(heldPipe.Server)
+	defer windows.CloseHandle(heldPipe.Client)
+	go maintainHeldPipe(stop, heldPipe.Client, heldPipe.Server, heldPipe.Response)
+	pipeChild := exec.Command(executable, "--pipe-child")
+	pipeStdin, err := pipeChild.StdinPipe()
+	if err != nil {
+		close(stop)
+		return true, 2
+	}
+	pipeStdout, err := pipeChild.StdoutPipe()
+	if err != nil {
+		close(stop)
+		return true, 2
+	}
+	if err := pipeChild.Start(); err != nil {
+		close(stop)
+		return true, 2
+	}
+	defer func() {
+		_ = pipeStdin.Close()
+		_ = pipeStdout.Close()
+		if pipeChild.Process != nil {
+			_ = pipeChild.Process.Kill()
+			_, _ = pipeChild.Process.Wait()
+		}
+	}()
+	pipeMessage := []byte(fmt.Sprintf("BOFBenchProcessPipeFixture-%d", os.Getpid()))
+	_, _ = pipeStdin.Write(pipeMessage)
+	time.Sleep(100 * time.Millisecond)
+	if stdinFile, ok := pipeStdin.(*os.File); ok {
+		if stdoutFile, stdoutOK := pipeStdout.(*os.File); stdoutOK {
+			go maintainProcessPipe(stop, windows.Handle(stdoutFile.Fd()), pipeStdin, pipeMessage)
+			_ = stdinFile
+		}
+	}
 	fixtureErr := launchFixtureInConsoleSession(service.root, "deploy")
 	state := targetState{
-		Schema: "bofbench.target", SchemaVersion: 6, Service: service.name,
+		Schema: "bofbench.target", SchemaVersion: 7, Service: service.name,
 		PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, NamedPipe: pipe.Name, User: `NT AUTHORITY\SYSTEM`,
+		NamedPipeHandle: fmt.Sprintf("0x%X", uintptr(heldPipe.Server)), NamedPipeClientHandle: fmt.Sprintf("0x%X", uintptr(heldPipe.Client)), NamedPipeSHA256: hashBytes(heldPipe.Response),
+		ProcessPipePID: pipeChild.Process.Pid, ProcessStdinHandle: fmt.Sprintf("0x%X", pipeStdin.(*os.File).Fd()), ProcessStdoutHandle: fmt.Sprintf("0x%X", pipeStdout.(*os.File).Fd()), ProcessPipeSHA256: hashBytes(pipeMessage),
 		KnownHandle: fmt.Sprintf("0x%X", knownFile.Fd()),
 		HolderPID:   os.Getpid(), JobMemberPID: jobChild.Process.Pid, EventName: eventName, SectionName: sectionName, JobName: jobName,
 		MutexName: mutexName, SemaphoreName: semaphoreName, TimerName: timerName, MailslotName: mailslotName,
@@ -473,6 +524,115 @@ func alertableThread(stop <-chan struct{}, ready chan<- uint32) {
 type namedPipeResult struct {
 	Name string
 	Err  error
+}
+
+type heldPipeResult struct {
+	Name     string
+	Server   windows.Handle
+	Client   windows.Handle
+	Response []byte
+}
+
+func createHeldPipeFixture() (heldPipeResult, error) {
+	result := heldPipeResult{Name: fmt.Sprintf(`\\.\pipe\BOFBenchHeldPipe-%d`, os.Getpid()), Response: []byte(fmt.Sprintf("BOFBenchNamedPipeFixture-%d", os.Getpid()))}
+	name, err := windows.UTF16PtrFromString(result.Name)
+	if err != nil {
+		return result, err
+	}
+	result.Server, err = windows.CreateNamedPipe(name, windows.PIPE_ACCESS_DUPLEX, windows.PIPE_TYPE_BYTE|windows.PIPE_READMODE_BYTE|windows.PIPE_WAIT, 1, 65536, 65536, 5000, nil)
+	if err != nil {
+		return result, err
+	}
+	connected := make(chan error, 1)
+	go func() {
+		err := windows.ConnectNamedPipe(result.Server, nil)
+		if err == windows.ERROR_PIPE_CONNECTED {
+			err = nil
+		}
+		connected <- err
+	}()
+	result.Client, err = windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		windows.CloseHandle(result.Server)
+		return result, err
+	}
+	if err = <-connected; err != nil {
+		windows.CloseHandle(result.Client)
+		windows.CloseHandle(result.Server)
+		return result, err
+	}
+	probe := []byte("BOFBenchPipeClient")
+	var written, read uint32
+	if err = windows.WriteFile(result.Client, probe, &written, nil); err != nil {
+		windows.CloseHandle(result.Client)
+		windows.CloseHandle(result.Server)
+		return result, err
+	}
+	drain := make([]byte, len(probe))
+	if err = windows.ReadFile(result.Server, drain, &read, nil); err != nil {
+		windows.CloseHandle(result.Client)
+		windows.CloseHandle(result.Server)
+		return result, err
+	}
+	if err = windows.WriteFile(result.Server, result.Response, &written, nil); err != nil {
+		windows.CloseHandle(result.Client)
+		windows.CloseHandle(result.Server)
+		return result, err
+	}
+	return result, nil
+}
+
+func maintainHeldPipe(stop <-chan struct{}, client, server windows.Handle, response []byte) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			var available uint32
+			ok, _, _ := procPeekNamedPipe.Call(uintptr(client), 0, 0, 0, uintptr(unsafe.Pointer(&available)), 0)
+			if ok != 0 && available == 0 {
+				var written uint32
+				_ = windows.WriteFile(server, response, &written, nil)
+			}
+		}
+	}
+}
+
+func maintainProcessPipe(stop <-chan struct{}, stdout windows.Handle, stdin interface{ Write([]byte) (int, error) }, message []byte) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	peek := make([]byte, 65536)
+	drain := make([]byte, 65536)
+	pending := true
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			var read, available uint32
+			ok, _, _ := procPeekNamedPipe.Call(uintptr(stdout), uintptr(unsafe.Pointer(&peek[0])), uintptr(len(peek)), uintptr(unsafe.Pointer(&read)), uintptr(unsafe.Pointer(&available)), 0)
+			if ok == 0 {
+				continue
+			}
+			if available == 0 {
+				if pending {
+					continue
+				}
+				_, _ = stdin.Write(message)
+				pending = true
+				continue
+			}
+			if int(read) == len(message) && available == uint32(len(message)) && bytes.Equal(peek[:read], message) {
+				pending = false
+				continue
+			}
+			_ = windows.ReadFile(stdout, drain[:min(int(available), len(drain))], &read, nil)
+			_, _ = stdin.Write(message)
+			pending = true
+		}
+	}
 }
 
 func namedPipeFixture(stop <-chan struct{}, ready chan<- namedPipeResult) {
@@ -798,8 +958,23 @@ func main() {
 	helper := flag.Bool("helper", false, "run a persistent architecture-specific proof helper")
 	helperService := flag.Bool("helper-service", false, "run the architecture-specific proof helper as a Windows service")
 	jobChild := flag.Bool("job-child", false, "run a disposable job-member child")
+	pipeChild := flag.Bool("pipe-child", false, "run a disposable standard-pipe echo child")
 	jobState := flag.String("job-state", "", "optional PID file written by a disposable job-member child")
 	flag.Parse()
+	if *pipeChild {
+		buffer := make([]byte, 65536)
+		for {
+			count, err := os.Stdin.Read(buffer)
+			if count > 0 {
+				if _, writeErr := os.Stdout.Write(buffer[:count]); writeErr != nil {
+					return
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
 	if *jobChild {
 		if *jobState != "" {
 			if err := os.MkdirAll(filepath.Dir(*jobState), 0o755); err != nil {
@@ -872,7 +1047,7 @@ func runArchitectureHelper(root string) error {
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
-	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 6, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 7, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if module, _, _ := procModuleHandle.Call(0); module != 0 {
 		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
 	}

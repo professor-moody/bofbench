@@ -38,6 +38,7 @@ Use these walkthroughs when you want an outcome, not a command catalog. Each sce
 | [Operate Standalone and Domain Topologies](topologies.md) | Explicit multi-host roles and target selection |
 | [Export for Native and C2 Runtimes](export-packages.md) | Raw, Sliver, and Cobalt Strike packages |
 | [Compose Native IPC Operations](composable-native-ipc.md) | Nested synchronization and mailslot lifecycles with transitive receipts and cleanup |
+| [Run Parallel Native IPC and RPC Workflows](parallel-native-ipc.md) | Concurrent named-pipe, redirected-process, RPC, COM, and discovery branches with deterministic receipts |
 
 ## Recover and release
 

@@ -84,6 +84,7 @@ nav:
       - Multi-Step Operation Lifecycle: scenarios/operation-lifecycle.md
       - Adaptive Native Coordination: scenarios/adaptive-native-coordination.md
       - Composable Native IPC: scenarios/composable-native-ipc.md
+      - Parallel Native IPC and RPC: scenarios/parallel-native-ipc.md
       - Operator Playbooks: playbooks.md
       - Deep Capability Workflows: deep-capabilities.md
       - Native Process Depth: native-process-depth.md
