@@ -10,7 +10,7 @@ import (
 
 const (
 	ReceiptSchema         = "bofbench.runtime-receipt"
-	ReceiptSchemaVersion  = 5
+	ReceiptSchemaVersion  = 6
 	MinimumReceiptVersion = 4
 )
 
@@ -107,6 +107,13 @@ type Receipt struct {
 	RemoteTaskError      string            `json:"remote_task_error,omitempty"`
 	TerminalReason       string            `json:"terminal_reason,omitempty"`
 	OutputClassification string            `json:"output_classification,omitempty"`
+	WorkerPID            int               `json:"worker_pid,omitempty"`
+	RemoteReceiptPath    string            `json:"remote_receipt_path,omitempty"`
+	CancelSupported      bool              `json:"cancel_supported,omitempty"`
+	CancelRequestedAt    string            `json:"cancel_requested_at,omitempty"`
+	CanceledAt           string            `json:"canceled_at,omitempty"`
+	CancelSource         string            `json:"cancel_source,omitempty"`
+	LastOutputAt         string            `json:"last_output_at,omitempty"`
 	// TransientOutput carries unredacted runtime output only inside the current
 	// process so result contracts can verify sensitive payload hashes before
 	// persistence. It is deliberately excluded from every serialized receipt.
@@ -129,8 +136,10 @@ type Adapter interface {
 	Sessions(context.Context) ([]Session, error)
 	ConvertArguments([]Argument) ([]string, error)
 	Prepare(context.Context, Request) (Prepared, error)
+	Start(context.Context, Prepared) (Receipt, error)
 	Execute(context.Context, Prepared) (Receipt, error)
 	Refresh(context.Context, Receipt) (Receipt, error)
+	Cancel(context.Context, Receipt) (Receipt, error)
 	Cleanup(context.Context, Prepared) (Receipt, error)
 }
 
@@ -139,8 +148,10 @@ type Hooks struct {
 	Sessions         func(context.Context) ([]Session, error)
 	ConvertArguments func([]Argument) ([]string, error)
 	Prepare          func(context.Context, Request) (Prepared, error)
+	Start            func(context.Context, Prepared) (Receipt, error)
 	Execute          func(context.Context, Prepared) (Receipt, error)
 	Refresh          func(context.Context, Receipt) (Receipt, error)
+	Cancel           func(context.Context, Receipt) (Receipt, error)
 	Cleanup          func(context.Context, Prepared) (Receipt, error)
 }
 
@@ -203,11 +214,26 @@ func (adapter *Functional) Execute(ctx context.Context, prepared Prepared) (Rece
 	return adapter.hooks.Execute(ctx, prepared)
 }
 
+func (adapter *Functional) Start(ctx context.Context, prepared Prepared) (Receipt, error) {
+	if adapter.hooks.Start != nil {
+		return adapter.hooks.Start(ctx, prepared)
+	}
+	return adapter.Execute(ctx, prepared)
+}
+
 func (adapter *Functional) Refresh(ctx context.Context, receipt Receipt) (Receipt, error) {
 	if adapter.hooks.Refresh == nil {
 		return receipt, nil
 	}
 	return adapter.hooks.Refresh(ctx, receipt)
+}
+
+func (adapter *Functional) Cancel(ctx context.Context, receipt Receipt) (Receipt, error) {
+	if adapter.hooks.Cancel == nil {
+		receipt.CancelSupported = false
+		return receipt, fmt.Errorf("runtime adapter %s does not support task cancellation", adapter.name)
+	}
+	return adapter.hooks.Cancel(ctx, receipt)
 }
 
 func (adapter *Functional) Cleanup(ctx context.Context, prepared Prepared) (Receipt, error) {

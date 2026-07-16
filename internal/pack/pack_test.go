@@ -180,6 +180,29 @@ func TestPackSchemaV4TopologyRolesCapturesAndStateChecks(t *testing.T) {
 	}
 }
 
+func TestPackSchemaV5DelegatedOperationProof(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "pack.h"), []byte("static void pack(void) {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	document := Document{
+		Schema: Schema, SchemaVersion: 4, ID: "delegated", Version: "1.0.0", Title: "Delegated", Summary: "Schema v5 delegated proof", Tier: "internal",
+		Capabilities: []string{"wait for a change"}, Effects: []string{"reads state"}, Platforms: []string{"windows"}, Architecture: []string{"x64"}, Privilege: "user", Network: "none",
+		Arguments: []Argument{{Name: "path", Type: "wstring"}}, Source: Source{HeaderFragments: []string{"pack.h"}}, TargetSupport: []string{"lab"},
+		ProofCases: []ProofCase{{ID: "operation", Via: []string{"lab"}, OperationProof: &OperationProof{Operation: "internal/change-observe", Step: "watch", Phase: "action", Inputs: map[string]string{"path": "$TEMP\\watch"}}}},
+	}
+	path := filepath.Join(root, "pack.json")
+	writeTestJSON(t, path, document)
+	if _, err := ValidateFile(path); err == nil || !strings.Contains(err.Error(), "require schema version 5") {
+		t.Fatalf("schema v4 accepted delegated proof: %v", err)
+	}
+	document.SchemaVersion = 5
+	writeTestJSON(t, path, document)
+	if _, err := ValidateFile(path); err != nil {
+		t.Fatalf("schema v5 delegated proof rejected: %v", err)
+	}
+}
+
 func TestConfiguredCatalogLifecycle(t *testing.T) {
 	configRoot := t.TempDir()
 	t.Setenv("BOFBENCH_CONFIG_HOME", configRoot)

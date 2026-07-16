@@ -23,7 +23,7 @@ import (
 
 const (
 	Schema               = "bofbench.pack"
-	SchemaVersion        = 4
+	SchemaVersion        = 5
 	MinimumSchemaVersion = 1
 	LockSchema           = "bofbench.pack-lock"
 	LockSchemaVersion    = 1
@@ -95,16 +95,24 @@ type ProofCleanupStep struct {
 	Arguments map[string]string `json:"arguments,omitempty"`
 }
 
+type OperationProof struct {
+	Operation string            `json:"operation"`
+	Step      string            `json:"step"`
+	Phase     string            `json:"phase,omitempty"`
+	Inputs    map[string]string `json:"inputs,omitempty"`
+}
+
 type ProofCase struct {
-	ID           string                  `json:"id"`
-	Via          []string                `json:"via"`
-	Arguments    map[string]string       `json:"arguments,omitempty"`
-	Expect       ProofExpectation        `json:"expect"`
-	Cleanup      bool                    `json:"cleanup,omitempty"`
-	CleanupSteps []ProofCleanupStep      `json:"cleanup_steps,omitempty"`
-	StateChecks  []ProofStateCheck       `json:"state_checks,omitempty"`
-	Roles        []string                `json:"roles,omitempty"`
-	Captures     map[string]ProofCapture `json:"captures,omitempty"`
+	ID             string                  `json:"id"`
+	Via            []string                `json:"via"`
+	Arguments      map[string]string       `json:"arguments,omitempty"`
+	Expect         ProofExpectation        `json:"expect"`
+	Cleanup        bool                    `json:"cleanup,omitempty"`
+	CleanupSteps   []ProofCleanupStep      `json:"cleanup_steps,omitempty"`
+	StateChecks    []ProofStateCheck       `json:"state_checks,omitempty"`
+	Roles          []string                `json:"roles,omitempty"`
+	Captures       map[string]ProofCapture `json:"captures,omitempty"`
+	OperationProof *OperationProof         `json:"operation_proof,omitempty"`
 }
 
 type Document struct {
@@ -1004,6 +1012,33 @@ func builtins() []Resolved {
 	windows.AnalysisSignatures = []AnalysisSignature{{ID: "window_inventory", Name: "Window inventory", Summary: "Enumerate bounded top-level or message-only windows and their owning process/thread.", Steps: []AnalysisStep{{Action: "enumerate top-level or message-only windows", APIs: []string{"EnumWindows", "FindWindowExW"}}}, RequiredStrings: []string{"[window-inventory]"}, Effects: []string{"reads desktop window metadata"}, Requirements: []string{"interactive or service window-station visibility"}}}
 	windows.ProofCases = []ProofCase{{ID: "fixture-window", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"scope": "top", "class_filter": "$TARGET_WINDOW_CLASS", "title_filter": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "window-inventory", Fields: map[string]string{"status": "complete", "shown": "1"}}}}
 	byID["window-inventory"] = windows
+	eventChannels := byID["event-log-channel-inventory"]
+	eventChannels.Title = "Event Log Channel Inventory"
+	eventChannels.Capabilities = []string{"bounded Windows Event Log channel configuration and record inventory"}
+	eventChannels.Arguments = []Argument{{Name: "channel_filter", Type: "wstring", Default: "", Description: "case-insensitive channel-name substring"}, {Name: "result_limit", Type: "int", Default: "64", Description: "maximum channels (1-512)"}}
+	eventChannels.ExpectedAnalysis = []string{"event_log_channel_inventory"}
+	eventChannels.OutputFields = []string{"channel", "enabled", "type", "isolation", "records", "oldest", "status", "shown", "limit", "error"}
+	eventChannels.AnalysisSignatures = []AnalysisSignature{{ID: "event_log_channel_inventory", Name: "Event Log channel inventory", Summary: "Enumerate bounded Windows Event Log channels and read their configuration and record metadata.", Steps: []AnalysisStep{{Action: "enumerate Event Log channels", APIs: []string{"EvtOpenChannelEnum", "EvtNextChannelPath"}}, {Action: "read channel and log properties", APIs: []string{"EvtGetChannelConfigProperty", "EvtGetLogInfo"}}}, RequiredStrings: []string{"[event-log-channel-inventory]"}, Effects: []string{"reads Windows Event Log metadata"}, Requirements: []string{"Event Log channel query access"}}}
+	eventChannels.ProofCases = []ProofCase{{ID: "bounded-system", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"channel_filter": "System", "result_limit": "16"}, Expect: ProofExpectation{Tag: "event-log-channel-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["event-log-channel-inventory"] = eventChannels
+	eventQuery := byID["event-log-query"]
+	eventQuery.Title = "Event Log Query"
+	eventQuery.Capabilities = []string{"bounded structured event metadata query for one exact channel or exported log"}
+	eventQuery.Arguments = []Argument{{Name: "path", Type: "wstring", Required: true, Description: "exact channel name or exported log path"}, {Name: "xpath", Type: "wstring", Default: "*", Description: "exact XPath query"}, {Name: "direction", Type: "string", Default: "reverse", Description: "forward or reverse"}, {Name: "result_limit", Type: "int", Default: "32", Description: "maximum events (1-512)"}}
+	eventQuery.ExpectedAnalysis = []string{"event_log_query"}
+	eventQuery.OutputFields = []string{"provider", "event_id", "level", "record_id", "computer", "time", "status", "shown", "limit", "error"}
+	eventQuery.AnalysisSignatures = []AnalysisSignature{{ID: "event_log_query", Name: "Event Log query", Summary: "Query an exact Event Log channel or file and render bounded system metadata.", Steps: []AnalysisStep{{Action: "query selected event records", APIs: []string{"EvtQuery", "EvtNext"}}, {Action: "render structured system fields", APIs: []string{"EvtCreateRenderContext", "EvtRender"}}}, RequiredStrings: []string{"[event-log-query]"}, Effects: []string{"reads Windows Event Log records"}, Requirements: []string{"an exact channel or log path", "Event Log read access"}}}
+	eventQuery.ProofCases = []ProofCase{{ID: "recent-system", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"path": "System", "xpath": "*", "direction": "reverse", "result_limit": "8"}, Expect: ProofExpectation{Tag: "event-log-query", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["event-log-query"] = eventQuery
+	etwProviders := byID["etw-provider-inventory"]
+	etwProviders.Title = "ETW Provider Inventory"
+	etwProviders.Capabilities = []string{"bounded Event Tracing for Windows provider name and GUID discovery"}
+	etwProviders.Arguments = []Argument{{Name: "name_filter", Type: "wstring", Default: "", Description: "case-insensitive provider-name substring"}, {Name: "result_limit", Type: "int", Default: "64", Description: "maximum providers (1-1024)"}}
+	etwProviders.ExpectedAnalysis = []string{"etw_provider_inventory"}
+	etwProviders.OutputFields = []string{"name", "guid", "schema", "status", "shown", "limit", "total", "error"}
+	etwProviders.AnalysisSignatures = []AnalysisSignature{{ID: "etw_provider_inventory", Name: "ETW provider inventory", Summary: "Enumerate registered Event Tracing for Windows providers and their schema sources.", Steps: []AnalysisStep{{Action: "enumerate ETW providers", APIs: []string{"TdhEnumerateProviders"}}}, RequiredStrings: []string{"[etw-provider-inventory]"}, Effects: []string{"reads ETW provider metadata"}, Requirements: []string{"local TDH provider enumeration access"}}}
+	etwProviders.ProofCases = []ProofCase{{ID: "bounded-providers", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"name_filter": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "etw-provider-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["etw-provider-inventory"] = etwProviders
 	pipeInventory := byID["named-pipe-inventory"]
 	pipeInventory.Title = "Named Pipe Inventory"
 	pipeInventory.Capabilities = []string{"bounded named-pipe discovery"}
@@ -1225,6 +1260,7 @@ func validate(document Document, root string) error {
 	}
 	usesV3 := len(document.SensitiveOutputFields) > 0 || len(document.CleanupArguments) > 0
 	usesV4 := false
+	usesV5 := false
 	for _, argument := range document.Arguments {
 		usesV3 = usesV3 || argument.Sensitive
 		usesV4 = usesV4 || argument.TopologyValue != ""
@@ -1232,6 +1268,7 @@ func validate(document Document, root string) error {
 	for _, proof := range document.ProofCases {
 		usesV3 = usesV3 || proof.Expect.Payload != nil || len(proof.StateChecks) > 0 || len(proof.CleanupSteps) > 0
 		usesV4 = usesV4 || len(proof.Roles) > 0 || len(proof.Captures) > 0
+		usesV5 = usesV5 || proof.OperationProof != nil
 		for _, check := range proof.StateChecks {
 			usesV4 = usesV4 || check.Role != ""
 		}
@@ -1241,6 +1278,9 @@ func validate(document Document, root string) error {
 	}
 	if document.SchemaVersion < 4 && usesV4 {
 		problems = append(problems, "topology defaults, proof roles, captures, and role-specific state checks require schema version 4")
+	}
+	if document.SchemaVersion < 5 && usesV5 {
+		problems = append(problems, "delegated operation proofs require schema version 5")
 	}
 	if !idPattern.MatchString(document.ID) {
 		problems = append(problems, "id must contain lowercase letters, numbers, dot, underscore, or hyphen")
@@ -1328,6 +1368,10 @@ func validate(document Document, root string) error {
 		"$TARGET_MAILSLOT_HANDLE": true, "$TARGET_MAILSLOT_SHA256": true,
 		"$TARGET_ALPC_PORT": true, "$TARGET_ALPC_HANDLE": true,
 		"$TARGET_WINDOW_HANDLE": true, "$TARGET_WINDOW_TEXT_HANDLE": true, "$TARGET_WINDOW_CLASS": true, "$TARGET_WINDOW_MESSAGE": true, "$TARGET_WINDOW_POST_MESSAGE": true,
+		"$TARGET_WATCH_REGISTRY_HIVE": true, "$TARGET_WATCH_REGISTRY_PATH": true, "$TARGET_WATCH_REGISTRY_VALUE": true,
+		"$TARGET_WATCH_DIRECTORY": true, "$TARGET_WATCH_SERVICE": true, "$TARGET_EXIT_PID": true,
+		"$TARGET_EVENTLOG_CHANNEL": true, "$TARGET_EVENTLOG_PROVIDER": true,
+		"$TARGET_ETW_PROVIDER_GUID": true, "$TARGET_ETW_SESSION_NAME": true,
 		"$TARGET_ARCH": true, "$TARGET_MODULE_BASE": true, "$TARGET_MODULE_PATH": true, "$EXECUTION_ADDRESS": true,
 		"$X86_TARGET_PID": true, "$X86_TARGET_TID": true, "$X86_TARGET_MODULE_BASE": true, "$X86_TARGET_MODULE_PATH": true,
 		"$MEMORY_ADDRESS": true, "$MEMORY_SIZE": true, "$MEMORY_SHA256": true, "$CANARY_PATH": true, "$CANARY_SHA256": true,
@@ -1381,8 +1425,27 @@ func validate(document Document, root string) error {
 				}
 			}
 		}
-		if len(proof.Via) == 0 || !idPattern.MatchString(proof.Expect.Tag) {
+		delegated := proof.OperationProof != nil
+		if len(proof.Via) == 0 || (!delegated && !idPattern.MatchString(proof.Expect.Tag)) {
 			problems = append(problems, fmt.Sprintf("proof case %s requires via and a valid expected tag", proof.ID))
+		}
+		if delegated {
+			delegation := proof.OperationProof
+			if strings.TrimSpace(delegation.Operation) == "" || !idPattern.MatchString(delegation.Step) {
+				problems = append(problems, fmt.Sprintf("proof case %s delegated operation proof requires operation and step", proof.ID))
+			}
+			if delegation.Phase == "" {
+				delegation.Phase = "action"
+			}
+			if delegation.Phase != "action" && delegation.Phase != "cleanup" {
+				problems = append(problems, fmt.Sprintf("proof case %s delegated operation proof phase must be action or cleanup", proof.ID))
+			}
+			if len(proof.Arguments) > 0 || proof.Cleanup || len(proof.CleanupSteps) > 0 || len(proof.Captures) > 0 || len(proof.StateChecks) > 0 {
+				problems = append(problems, fmt.Sprintf("proof case %s delegated operation proof owns inputs, captures, state checks, and cleanup", proof.ID))
+			}
+			for _, value := range delegation.Inputs {
+				validateProofPlaceholders(value)
+			}
 		}
 		for _, via := range proof.Via {
 			if !contains([]string{"native", "lab", "sliver", "cobaltstrike"}, via) {

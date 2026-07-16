@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -15,6 +16,8 @@ type Request struct {
 	ArgHex    string
 	TimeoutMS int
 	Arch      string
+	Context   context.Context
+	OnOutput  func(string)
 }
 
 type Result struct {

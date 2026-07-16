@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -47,6 +48,7 @@ type runtimeRunContext struct {
 	sensitiveArgumentNames []string
 	sensitiveValues        []string
 	interactiveLab         bool
+	progress               func(string)
 }
 
 func runtimeAdapterRegistry(run *runtimeRunContext) (*runtimeadapter.Registry, error) {
@@ -59,8 +61,15 @@ func runtimeAdapterRegistry(run *runtimeRunContext) (*runtimeadapter.Registry, e
 			Prepare: func(_ context.Context, request runtimeadapter.Request) (runtimeadapter.Prepared, error) {
 				return runtimeadapter.Prepared{Runtime: name, Request: request, PreparedAt: time.Now().UTC().Format(time.RFC3339Nano)}, nil
 			},
+			Start: func(ctx context.Context, prepared runtimeadapter.Prepared) (runtimeadapter.Receipt, error) {
+				if name == "sliver" || name == "cobaltstrike" {
+					return execute(ctx, prepared)
+				}
+				return run.startRuntimeTask(ctx, name, prepared, execute)
+			},
 			Execute: execute,
 			Refresh: run.refreshRuntimeReceipt,
+			Cancel:  run.cancelRuntimeReceipt,
 			Cleanup: execute,
 		})
 	}
@@ -90,7 +99,18 @@ func (run *runtimeRunContext) refreshRuntimeReceipt(ctx context.Context, receipt
 	}
 	switch normalized.Runtime {
 	case "native", "lab":
-		return normalized, nil
+		if normalized.ReceiptPath == "" {
+			return normalized, nil
+		}
+		data, readErr := os.ReadFile(normalized.ReceiptPath)
+		if readErr != nil {
+			return normalized, readErr
+		}
+		var updated runtimeadapter.Receipt
+		if err := json.Unmarshal(data, &updated); err != nil {
+			return normalized, err
+		}
+		return runtimeadapter.NormalizeReceipt(updated)
 	case "sliver":
 		return refreshSliverRuntimeReceipt(ctx, normalized, sliverOptions{Client: run.sliverClient, SessionFilter: normalized.Session, Lab: run.labName, Profiles: run.labProfiles, ProfileName: normalized.Profile, RemoteHost: normalized.RemoteHost})
 	case "cobaltstrike":
@@ -247,7 +267,7 @@ func (run *runtimeRunContext) executeLab(ctx context.Context, _ runtimeadapter.P
 		Runtime: "windows-coff", Args: run.resolved.Tokens, TimeoutMS: run.timeout,
 		SensitiveArguments: run.resolved.Sensitive, SensitiveArgumentNames: run.sensitiveArgumentNames,
 		SensitiveOutputFields: run.sensitiveOutputFields, SensitiveValues: run.sensitiveValues,
-		Interactive: run.interactiveLab,
+		Interactive: run.interactiveLab, Progress: run.progress,
 	})
 	fmt.Fprint(run.stdout, lab.RemoteRunText(report))
 	receipt := runtimeadapter.Receipt{}
@@ -321,7 +341,7 @@ func (run *runtimeRunContext) executeCobaltStrike(ctx context.Context, _ runtime
 	})
 }
 
-func (run *runtimeRunContext) executeNative(_ context.Context, _ runtimeadapter.Prepared) (runtimeadapter.Receipt, error) {
+func (run *runtimeRunContext) executeNative(ctx context.Context, _ runtimeadapter.Prepared) (runtimeadapter.Receipt, error) {
 	object := run.input
 	if run.projectInput {
 		build, err := buildsys.BuildWithOptions(run.input, buildsys.Options{Arch: run.arch, Compiler: run.compiler})
@@ -343,10 +363,28 @@ func (run *runtimeRunContext) executeNative(_ context.Context, _ runtimeadapter.
 	if err != nil {
 		return runtimeadapter.Receipt{}, err
 	}
+	progress := run.progress
+	if progressPath := strings.TrimSpace(os.Getenv("BOFBENCH_PROGRESS_FILE")); progressPath != "" {
+		progress = func(line string) {
+			if run.progress != nil {
+				run.progress(line)
+			}
+			redacted := run.redactReceipt(runtimeadapter.Receipt{Output: []string{line}})
+			if len(redacted.Output) == 0 {
+				return
+			}
+			file, openErr := os.OpenFile(progressPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+			if openErr != nil {
+				return
+			}
+			_, _ = fmt.Fprintln(file, redacted.Output[0])
+			_ = file.Close()
+		}
+	}
 	started := time.Now()
 	result, runErr := runtimesvc.Run(runtimesvc.Request{
 		Path: object, Entry: run.entry, ArgHex: argpack.Hex(run.packed), Tokens: run.resolved.Tokens,
-		TimeoutMS: run.timeout, Runtime: run.runtimeName,
+		TimeoutMS: run.timeout, Runtime: run.runtimeName, Context: ctx, OnOutput: progress,
 	})
 	result.Header = evidence.New(evidence.SchemaRun, runlog.ID(runDir), "")
 	persisted := run.redactResult(result)

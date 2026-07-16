@@ -24,6 +24,7 @@ import (
 	"bofbench/internal/buildsys"
 	"bofbench/internal/evidence"
 	"bofbench/internal/lab"
+	operationsvc "bofbench/internal/operation"
 	packsvc "bofbench/internal/pack"
 	"bofbench/internal/runlog"
 	"bofbench/internal/stage"
@@ -57,17 +58,19 @@ type packTestReport struct {
 }
 
 type packProofResult struct {
-	Pack            string   `json:"pack"`
-	Case            string   `json:"case"`
-	Runtime         string   `json:"runtime"`
-	Architecture    string   `json:"architecture"`
-	Status          string   `json:"status"`
-	Output          []string `json:"output,omitempty"`
-	Receipt         string   `json:"receipt,omitempty"`
-	ObjectSHA256    string   `json:"object_sha256,omitempty"`
-	PayloadVerified bool     `json:"payload_verified,omitempty"`
-	StateChecks     int      `json:"state_checks,omitempty"`
-	Error           string   `json:"error,omitempty"`
+	Pack             string   `json:"pack"`
+	Case             string   `json:"case"`
+	Runtime          string   `json:"runtime"`
+	Architecture     string   `json:"architecture"`
+	Status           string   `json:"status"`
+	Output           []string `json:"output,omitempty"`
+	Receipt          string   `json:"receipt,omitempty"`
+	ObjectSHA256     string   `json:"object_sha256,omitempty"`
+	PayloadVerified  bool     `json:"payload_verified,omitempty"`
+	StateChecks      int      `json:"state_checks,omitempty"`
+	OperationReceipt string   `json:"operation_receipt,omitempty"`
+	OperationStep    string   `json:"operation_step,omitempty"`
+	Error            string   `json:"error,omitempty"`
 }
 
 type packProofReport struct {
@@ -475,6 +478,7 @@ func unavailableCoverage(err error) bool {
 
 func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registry, items []packsvc.Resolved, via, labName, arch string, topology *resolvedTopologyValues, resume *proofResumeSelection) (packProofReport, error) {
 	report := packProofReport{Header: evidence.New("bofbench.pack-proof", "", ""), Status: "pass", Lab: labName, Runtime: via, Architecture: arch, GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
+	report.SchemaVersion = 2
 	if topology != nil {
 		report.Topology = topology.Topology.Name
 	}
@@ -490,6 +494,7 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 		return report, err
 	}
 	report.Header = evidence.New("bofbench.pack-proof", runlog.ID(runDir), "")
+	report.SchemaVersion = 2
 	report.JSONPath = filepath.Join(runDir, "pack-proof.json")
 	work := filepath.Join("work", "pack-proofs", report.RunID)
 	if err := os.MkdirAll(work, 0o755); err != nil {
@@ -643,6 +648,28 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 			placeholders["$PAYLOAD_RET_PATH"] = retPayload
 			placeholders["$MEMORY_NEEDLE_PATH"] = memoryNeedle
 			placeholders["$PROOF_SECRET_PATH"] = secretPath
+			if proof.OperationProof != nil {
+				delegated, delegatedErr := runDelegatedPackProof(ctx, item, proof, placeholders, via, labName, arch, topology)
+				result.Output = delegated.Output
+				result.OperationReceipt, result.OperationStep = delegated.OperationReceipt, delegated.OperationStep
+				result.Receipt, result.ObjectSHA256 = delegated.Receipt, delegated.ObjectSHA256
+				if delegatedErr != nil {
+					if unavailableCoverage(delegatedErr) {
+						result.Status, result.Error = "unavailable", delegatedErr.Error()
+						report.Unavailable++
+						if report.Status != "fail" {
+							report.Status = "pass_with_unavailable"
+						}
+					} else {
+						result.Status, result.Error, report.Status = "fail", delegatedErr.Error(), "fail"
+						report.Failed++
+					}
+				} else {
+					report.Passed++
+				}
+				report.Results = append(report.Results, result)
+				continue
+			}
 			expectation, err := resolveProofExpectation(proof.Expect, placeholders)
 			if err != nil {
 				result.Status, result.Error, report.Status = "fail", err.Error(), "fail"
@@ -776,6 +803,94 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 	return report, nil
 }
 
+func runDelegatedPackProof(ctx context.Context, item packsvc.Resolved, proof packsvc.ProofCase, placeholders map[string]string, via, labName, arch string, topology *resolvedTopologyValues) (packProofResult, error) {
+	delegation := proof.OperationProof
+	if delegation == nil {
+		return packProofResult{}, fmt.Errorf("delegated operation proof is missing")
+	}
+	inputs, err := resolveProofValues(delegation.Inputs, placeholders)
+	if err != nil {
+		return packProofResult{}, err
+	}
+	args := []string{"operation"}
+	if item.CatalogRoot != "" {
+		args = append(args, "--catalog", item.CatalogRoot)
+	}
+	args = append(args, "run", delegation.Operation, "--via", via, "--arch", arch)
+	if topology != nil {
+		args = append(args, "--topology", topology.Topology.Name)
+	} else if labName != "" && (via == "lab" || via == "sliver") {
+		args = append(args, "--lab", labName)
+	}
+	names := make([]string, 0, len(inputs))
+	for name := range inputs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		args = append(args, "--arg", name+"="+inputs[name])
+	}
+	var output bytes.Buffer
+	runErr := Run(args, &output, &output)
+	result := packProofResult{Output: nonemptyLines(output.String()), OperationStep: delegation.Step}
+	operationPath := operationReceiptFromLines(result.Output)
+	if operationPath == "" {
+		if runErr != nil {
+			return result, runErr
+		}
+		return result, fmt.Errorf("delegated operation did not report its receipt")
+	}
+	receipt, err := operationsvc.LoadReceipt(operationPath)
+	if err != nil {
+		return result, err
+	}
+	result.OperationReceipt = operationPath
+	var selected *operationsvc.StepReceipt
+	for index := range receipt.Steps {
+		if receipt.Steps[index].ID == delegation.Step {
+			selected = &receipt.Steps[index]
+			break
+		}
+	}
+	if selected == nil {
+		return result, fmt.Errorf("delegated operation %s has no step %s", delegation.Operation, delegation.Step)
+	}
+	phase := delegation.Phase
+	if phase == "" {
+		phase = "action"
+	}
+	switch phase {
+	case "action":
+		if selected.State != "completed" || selected.PackSHA256 != item.SHA256 {
+			return result, fmt.Errorf("delegated operation step %s did not complete with exact pack hash", delegation.Step)
+		}
+		result.ObjectSHA256, result.Receipt = selected.ObjectSHA256, selected.Runtime.ReceiptPath
+	case "cleanup":
+		if selected.CleanupState != "completed" || selected.CleanupSHA256 != item.SHA256 {
+			return result, fmt.Errorf("delegated operation cleanup %s did not complete with exact pack hash", delegation.Step)
+		}
+		if selected.CleanupRuntime != nil {
+			result.ObjectSHA256, result.Receipt = selected.CleanupRuntime.ObjectSHA256, selected.CleanupRuntime.ReceiptPath
+		}
+	default:
+		return result, fmt.Errorf("unsupported delegated operation proof phase %q", phase)
+	}
+	if runErr != nil {
+		return result, runErr
+	}
+	return result, nil
+}
+
+func operationReceiptFromLines(lines []string) string {
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "receipt" {
+			return strings.TrimSpace(fields[len(fields)-1])
+		}
+	}
+	return ""
+}
+
 func proofFileName(value string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
@@ -836,6 +951,11 @@ func proofUsesTarget(proof packsvc.ProofCase) bool {
 	var values []string
 	for _, value := range proof.Arguments {
 		values = append(values, value)
+	}
+	if proof.OperationProof != nil {
+		for _, value := range proof.OperationProof.Inputs {
+			values = append(values, value)
+		}
 	}
 	if proof.Expect.Payload != nil {
 		values = append(values, proof.Expect.Payload.SHA256)
@@ -901,6 +1021,10 @@ func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) 
 		"$TARGET_ALPC_PORT": target.State.ALPCPort, "$TARGET_ALPC_HANDLE": target.State.ALPCHandle,
 		"$TARGET_WINDOW_HANDLE": target.State.WindowHandle, "$TARGET_WINDOW_TEXT_HANDLE": target.State.WindowTextHandle, "$TARGET_WINDOW_CLASS": target.State.WindowClass,
 		"$TARGET_WINDOW_MESSAGE": strconv.FormatUint(uint64(target.State.WindowMessage), 10), "$TARGET_WINDOW_POST_MESSAGE": strconv.FormatUint(uint64(target.State.WindowPostMessage), 10),
+		"$TARGET_WATCH_REGISTRY_HIVE": target.State.WatchRegistryHive, "$TARGET_WATCH_REGISTRY_PATH": target.State.WatchRegistryPath, "$TARGET_WATCH_REGISTRY_VALUE": target.State.WatchRegistryValue,
+		"$TARGET_WATCH_DIRECTORY": target.State.WatchDirectory, "$TARGET_WATCH_SERVICE": target.State.WatchService, "$TARGET_EXIT_PID": strconv.Itoa(target.State.ExitPID),
+		"$TARGET_EVENTLOG_CHANNEL": target.State.EventLogChannel, "$TARGET_EVENTLOG_PROVIDER": target.State.EventLogProvider,
+		"$TARGET_ETW_PROVIDER_GUID": target.State.ETWProviderGUID, "$TARGET_ETW_SESSION_NAME": target.State.ETWSessionName + "-$RUN_ID",
 		"$TARGET_ARCH": target.State.Architecture, "$TARGET_MODULE_BASE": target.State.KnownModuleBase, "$TARGET_MODULE_PATH": target.State.KnownModulePath,
 		"$EXECUTION_ADDRESS": target.State.ExecutionAddress,
 		"$X86_TARGET_PID":    strconv.Itoa(target.State.X86PID), "$X86_TARGET_TID": strconv.FormatUint(uint64(target.State.X86AlertableTID), 10), "$X86_TARGET_MODULE_BASE": target.State.X86KnownModuleBase, "$X86_TARGET_MODULE_PATH": target.State.X86KnownModulePath,

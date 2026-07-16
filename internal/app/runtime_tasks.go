@@ -43,7 +43,7 @@ func runtimeTasksCommand(stdout io.Writer) *cobra.Command {
 
 func runtimeTaskCommand(stdout io.Writer) *cobra.Command {
 	var via, labName, profilesPath, format string
-	var wait, refresh bool
+	var wait, refresh, cancelTask bool
 	var timeout, interval time.Duration
 	cmd := &cobra.Command{
 		Use: "task <task-id|receipt-path>", Short: "Inspect or wait for one persisted C2 task", Args: cobra.ExactArgs(1),
@@ -56,6 +56,9 @@ func runtimeTaskCommand(stdout io.Writer) *cobra.Command {
 			}
 			for {
 				task, err := findRuntimeTaskReceipt("runs", args[0], via, labName)
+				if err == nil && cancelTask {
+					task, err = cancelRuntimeTask(ctx, task, labName, profilesPath)
+				}
 				if err == nil && refresh {
 					task, err = refreshRuntimeTask(ctx, task, labName, profilesPath)
 				}
@@ -80,6 +83,7 @@ func runtimeTaskCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&labName, "lab", "", "optional receipt profile filter")
 	cmd.Flags().StringVar(&profilesPath, "profiles", lab.ProfilesPath(), "global lab profiles file")
 	cmd.Flags().BoolVar(&refresh, "refresh", false, "ask the selected runtime adapter for current task state and output")
+	cmd.Flags().BoolVar(&cancelTask, "cancel", false, "request cancellation through the selected runtime adapter")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait until the persisted task reaches a terminal state")
 	cmd.Flags().DurationVar(&timeout, "timeout", 10*time.Minute, "maximum wait time")
 	cmd.Flags().DurationVar(&interval, "interval", time.Second, "receipt polling interval")
@@ -204,9 +208,33 @@ func refreshRuntimeTask(ctx context.Context, task runtimeTaskView, labName, prof
 	return task, nil
 }
 
+func cancelRuntimeTask(ctx context.Context, task runtimeTaskView, labName, profilesPath string) (runtimeTaskView, error) {
+	runContext := &runtimeRunContext{stdout: io.Discard, input: ".", runtimeName: task.Receipt.Runtime, labName: labName, labProfiles: profilesPath, sliverSession: task.Receipt.Session}
+	registry, err := runtimeAdapterRegistry(runContext)
+	if err != nil {
+		return task, err
+	}
+	adapter, err := registry.Resolve(task.Receipt.Runtime)
+	if err != nil {
+		return task, err
+	}
+	updated, err := adapter.Cancel(ctx, task.Receipt)
+	if err != nil {
+		return task, err
+	}
+	if updated.ReceiptPath == "" {
+		updated.ReceiptPath = task.Path
+	}
+	if err := writeRuntimeTaskReceipt(task.Path, updated); err != nil {
+		return task, err
+	}
+	task.Receipt, task.Updated = updated, updated.CancelRequestedAt
+	return task, nil
+}
+
 func loadRuntimeTaskReceipts(root, via, profile string) ([]runtimeTaskView, error) {
-	if via != "" && via != "sliver" && via != "cobaltstrike" {
-		return nil, fmt.Errorf("runtime tasks supports sliver or cobaltstrike, got %q", via)
+	if via != "" && via != "native" && via != "lab" && via != "sliver" && via != "cobaltstrike" {
+		return nil, fmt.Errorf("runtime tasks supports native, lab, sliver, or cobaltstrike, got %q", via)
 	}
 	paths, err := filepath.Glob(filepath.Join(root, "*", "result.json"))
 	if err != nil {
@@ -222,7 +250,7 @@ func loadRuntimeTaskReceipts(root, via, profile string) ([]runtimeTaskView, erro
 		if json.Unmarshal(data, &receipt) != nil || receipt.Schema != runtimeadapter.ReceiptSchema {
 			continue
 		}
-		if receipt.Runtime != "sliver" && receipt.Runtime != "cobaltstrike" {
+		if receipt.Runtime != "native" && receipt.Runtime != "lab" && receipt.Runtime != "sliver" && receipt.Runtime != "cobaltstrike" {
 			continue
 		}
 		if via != "" && receipt.Runtime != via || profile != "" && receipt.Profile != profile {

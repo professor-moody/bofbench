@@ -100,6 +100,7 @@ type RemoteRunOptions struct {
 	SensitiveOutputFields  []string
 	SensitiveValues        []string
 	Interactive            bool
+	Progress               func(string)
 }
 
 type RemoteRunReport struct {
@@ -473,12 +474,16 @@ func RemoteRun(ctx context.Context, project string, opts RemoteRunOptions) (Remo
 		}
 		loaderX64 := windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader.exe")
 		loaderX86 := windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader-x86.exe")
-		script := fmt.Sprintf(`$ErrorActionPreference='Continue'; Set-Location %s; $env:BOFBENCH_LOADER=%s; $env:BOFBENCH_LOADER_X86=%s; & %s %s`, powerShellQuote(report.RemoteRunPath), powerShellQuote(loaderX64), powerShellQuote(loaderX86), powerShellQuote(opts.Executable), strings.Join(quotedArgs, " "))
+		progressPath := windowsJoin(report.RemoteRunPath, "progress.log")
+		script := fmt.Sprintf(`$ErrorActionPreference='Continue'; Set-Location %s; $env:BOFBENCH_LOADER=%s; $env:BOFBENCH_LOADER_X86=%s; $env:BOFBENCH_PROGRESS_FILE=%s; & %s %s`, powerShellQuote(report.RemoteRunPath), powerShellQuote(loaderX64), powerShellQuote(loaderX86), powerShellQuote(progressPath), powerShellQuote(opts.Executable), strings.Join(quotedArgs, " "))
 		if opts.Interactive {
 			script = interactiveExecutionScript(report, opts, quotedArgs, loaderX64, loaderX86)
 		}
 		eventStart := time.Now()
+		stopProgress := startRemoteProgressPoller(ctx, opts.RemoteOptions, progressPath, opts.Progress)
 		stdout, stderr, devErr := remoteExecute(ctx, opts.RemoteOptions, script)
+		stopProgress()
+		_, _, _ = remoteExecute(context.Background(), opts.RemoteOptions, fmt.Sprintf(`Remove-Item -LiteralPath %s -Force -ErrorAction SilentlyContinue`, powerShellQuote(progressPath)))
 		report.TransportEvents = append(report.TransportEvents, transportEvent(opts.Transport+"-dev", eventStart, devErr, string(stderr)))
 		report.RemoteStderr = boundedText(string(stderr), 8192)
 		var remoteDev RemoteDevReport
@@ -763,11 +768,15 @@ func runLocallyBuiltObject(ctx context.Context, runDir, project string, report *
 	}
 	remoteResultPath := windowsJoin(remoteRun, "result.json")
 	remoteStderrPath := windowsJoin(remoteRun, "stderr.txt")
+	progressPath := windowsJoin(remoteRun, "progress.log")
 	loaderX64 := windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader.exe")
 	loaderX86 := windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader-x86.exe")
-	script := fmt.Sprintf(`$ErrorActionPreference='Continue'; $env:BOFBENCH_LOADER=%s; $env:BOFBENCH_LOADER_X86=%s; & %s %s 1> %s 2> %s; $exit=$LASTEXITCODE; $output=Get-Content -LiteralPath %s -Raw; $errors=if(Test-Path %s){Get-Content -LiteralPath %s -Raw}else{''}; Write-Output $output; if($errors){[Console]::Error.Write($errors)}; exit $exit`, powerShellQuote(loaderX64), powerShellQuote(loaderX86), powerShellQuote(opts.Executable), strings.Join(quoted, " "), powerShellQuote(remoteResultPath), powerShellQuote(remoteStderrPath), powerShellQuote(remoteResultPath), powerShellQuote(remoteStderrPath), powerShellQuote(remoteStderrPath))
+	script := fmt.Sprintf(`$ErrorActionPreference='Continue'; $env:BOFBENCH_LOADER=%s; $env:BOFBENCH_LOADER_X86=%s; $env:BOFBENCH_PROGRESS_FILE=%s; & %s %s 1> %s 2> %s; $exit=$LASTEXITCODE; $output=Get-Content -LiteralPath %s -Raw; $errors=if(Test-Path %s){Get-Content -LiteralPath %s -Raw}else{''}; Write-Output $output; if($errors){[Console]::Error.Write($errors)}; exit $exit`, powerShellQuote(loaderX64), powerShellQuote(loaderX86), powerShellQuote(progressPath), powerShellQuote(opts.Executable), strings.Join(quoted, " "), powerShellQuote(remoteResultPath), powerShellQuote(remoteStderrPath), powerShellQuote(remoteResultPath), powerShellQuote(remoteStderrPath), powerShellQuote(remoteStderrPath))
 	eventStart = time.Now()
+	stopProgress := startRemoteProgressPoller(ctx, opts.RemoteOptions, progressPath, opts.Progress)
 	stdout, stderr, executeErr := remoteExecute(ctx, opts.RemoteOptions, script)
+	stopProgress()
+	_, _, _ = remoteExecute(context.Background(), opts.RemoteOptions, fmt.Sprintf(`Remove-Item -LiteralPath %s -Force -ErrorAction SilentlyContinue`, powerShellQuote(progressPath)))
 	report.TransportEvents = append(report.TransportEvents, transportEvent(opts.Transport+"-run-object", eventStart, executeErr, string(stderr)))
 	report.RemoteStderr = boundedText(string(stderr), 8192)
 	var result runtimesvc.Result

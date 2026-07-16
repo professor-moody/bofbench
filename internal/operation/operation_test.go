@@ -207,6 +207,46 @@ func TestSchemaVersionSixDAGRejectsCyclesAndLinearFeatures(t *testing.T) {
 	}
 }
 
+func TestSchemaVersionSevenBackgroundReadiness(t *testing.T) {
+	document := Document{Schema: Schema, SchemaVersion: 7, Execution: "dag", ID: "async", Version: "1.0.0", Title: "Async", Summary: "Readiness-aware execution", Tier: "internal", Steps: []Step{
+		{
+			ID: "watch", Pack: "host-discovery", Mode: "background", TimeoutMS: 120000,
+			Ready:         &packsvc.ProofExpectation{Tag: "watch", Fields: map[string]string{"status": "ready"}},
+			Expect:        &packsvc.ProofExpectation{Tag: "watch", Fields: map[string]string{"status": "complete"}},
+			ReadyCaptures: map[string]Capture{"watch_id": {Tag: "watch", Field: "id"}},
+		},
+		{
+			ID: "trigger", Pack: "identity", DependsOnReady: []string{"watch"},
+			Arguments: map[string]string{"watch_id": "$capture.watch_id"},
+			Expect:    &packsvc.ProofExpectation{Tag: "identity", Fields: map[string]string{"status": "complete"}},
+		},
+	}}
+	if err := validate(document); err != nil {
+		t.Fatalf("valid background dag rejected: %v", err)
+	}
+	receipt := Receipt{Steps: []StepReceipt{{ID: "watch", State: "ready", Mode: "background"}, {ID: "trigger", State: "pending"}}}
+	ready, err := ReadyDAGSteps(document, receipt)
+	if err != nil || len(ready) != 2 || ready[0] != 0 || ready[1] != 1 {
+		t.Fatalf("ready background step did not release dependent: ready=%v err=%v", ready, err)
+	}
+}
+
+func TestSchemaVersionSevenRejectsInvalidReadiness(t *testing.T) {
+	document := Document{Schema: Schema, SchemaVersion: 7, Execution: "dag", ID: "async-bad", Version: "1.0.0", Title: "Async", Summary: "Reject invalid readiness", Tier: "internal", Steps: []Step{
+		{ID: "watch", Pack: "host-discovery", Mode: "background", Expect: &packsvc.ProofExpectation{Tag: "watch"}},
+		{ID: "trigger", Pack: "identity", DependsOnReady: []string{"watch"}, Expect: &packsvc.ProofExpectation{Tag: "identity"}},
+	}}
+	if err := validate(document); err == nil || !strings.Contains(err.Error(), "requires schema v7, ready, and timeout_ms") {
+		t.Fatalf("missing readiness contract was not rejected: %v", err)
+	}
+	document.Steps[0].Ready = &packsvc.ProofExpectation{Tag: "watch"}
+	document.Steps[0].TimeoutMS = 1000
+	document.Steps[0].Mode = "foreground"
+	if err := validate(document); err == nil || !strings.Contains(err.Error(), "foreground mode") {
+		t.Fatalf("foreground readiness was not rejected: %v", err)
+	}
+}
+
 func TestDAGReadyWavesBlockingAndCleanupOrder(t *testing.T) {
 	document := Document{Execution: "dag", Steps: []Step{
 		{ID: "root-a", Cleanup: &Cleanup{Pack: "a"}},

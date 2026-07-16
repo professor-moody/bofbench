@@ -95,6 +95,16 @@ type targetState struct {
 	WindowClass           string `json:"window_class,omitempty"`
 	WindowMessage         uint32 `json:"window_message,omitempty"`
 	WindowPostMessage     uint32 `json:"window_post_message,omitempty"`
+	WatchRegistryHive     string `json:"watch_registry_hive,omitempty"`
+	WatchRegistryPath     string `json:"watch_registry_path,omitempty"`
+	WatchRegistryValue    string `json:"watch_registry_value,omitempty"`
+	WatchDirectory        string `json:"watch_directory,omitempty"`
+	WatchService          string `json:"watch_service,omitempty"`
+	ExitPID               int    `json:"exit_pid,omitempty"`
+	EventLogChannel       string `json:"event_log_channel,omitempty"`
+	EventLogProvider      string `json:"event_log_provider,omitempty"`
+	ETWProviderGUID       string `json:"etw_provider_guid,omitempty"`
+	ETWSessionName        string `json:"etw_session_name,omitempty"`
 	User                  string `json:"user"`
 	CanaryFile            string `json:"canary_file"`
 	CanaryFileSHA256      string `json:"canary_file_sha256"`
@@ -173,7 +183,7 @@ func (service helperHandler) Execute(_ []string, requests <-chan svc.ChangeReque
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
-	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 8, Service: service.name, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 9, Service: service.name, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if module, _, _ := procModuleHandle.Call(0); module != 0 {
 		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
 	}
@@ -416,7 +426,7 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	}
 	fixtureErr := launchFixtureInConsoleSession(service.root, "deploy")
 	state := targetState{
-		Schema: "bofbench.target", SchemaVersion: 8, Service: service.name,
+		Schema: "bofbench.target", SchemaVersion: 9, Service: service.name,
 		PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, NamedPipe: pipe.Name, User: `NT AUTHORITY\SYSTEM`,
 		NamedPipeHandle: fmt.Sprintf("0x%X", uintptr(heldPipe.Server)), NamedPipeClientHandle: fmt.Sprintf("0x%X", uintptr(heldPipe.Client)), NamedPipeSHA256: hashBytes(heldPipe.Response),
 		ProcessPipePID: pipeChild.Process.Pid, ProcessStdinHandle: fmt.Sprintf("0x%X", pipeStdin.(*os.File).Fd()), ProcessStdoutHandle: fmt.Sprintf("0x%X", pipeStdout.(*os.File).Fd()), ProcessPipeSHA256: hashBytes(pipeMessage),
@@ -426,6 +436,10 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		MailslotHandle: fmt.Sprintf("0x%X", uintptr(mailslotHandle)), MailslotSHA256: hashBytes(mailslotMessage), MailslotAccess: systemHandleGrantedAccess(mailslotHandle),
 		ALPCPort: alpc.Name, ALPCHandle: fmt.Sprintf("0x%X", uintptr(alpc.Client)),
 		WindowHandle: windowState.WindowHandle, WindowTextHandle: windowState.WindowTextHandle, WindowHelperPID: windowState.PID, WindowStation: windowState.WindowStation, WindowClass: windowState.WindowClass, WindowMessage: windowState.WindowMessage, WindowPostMessage: windowState.WindowPostMessage,
+		WatchRegistryHive: "HKLM", WatchRegistryPath: `Software\BOFBench`, WatchRegistryValue: "RemoteCanary",
+		WatchDirectory: `C:\bofbench\proof`, WatchService: service.name, ExitPID: pipeChild.Process.Pid,
+		EventLogChannel: "Application", EventLogProvider: "BOFBenchTarget",
+		ETWProviderGUID: "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", ETWSessionName: "BOFBench-ETW",
 		CanaryFile: canaryPath, CanaryFileSHA256: hashBytes(fileCanary),
 		MemoryCanaryAddress: fmt.Sprintf("0x%X", uintptr(unsafe.Pointer(&memoryCanary[0]))),
 		MemoryCanarySize:    len(canary), MemoryCanarySHA256: hashBytes(canary),
@@ -1104,7 +1118,7 @@ func runArchitectureHelper(root string) error {
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
-	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 8, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 9, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if module, _, _ := procModuleHandle.Call(0); module != 0 {
 		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
 	}
@@ -1125,7 +1139,7 @@ func runWindowHelper(root string) error {
 		return err
 	}
 	state := targetState{
-		Schema: "bofbench.target-window-helper", SchemaVersion: 8, PID: os.Getpid(), Architecture: runtime.GOARCH,
+		Schema: "bofbench.target-window-helper", SchemaVersion: 9, PID: os.Getpid(), Architecture: runtime.GOARCH,
 		WindowHandle: fmt.Sprintf("0x%X", uintptr(window.Handle)), WindowTextHandle: fmt.Sprintf("0x%X", uintptr(window.TextHandle)),
 		WindowStation: `BOFBenchTargetStation\BOFBenchTargetDesktop`, WindowClass: window.Class,
 		WindowMessage: window.MessageID, WindowPostMessage: window.PostMessage,

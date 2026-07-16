@@ -12,6 +12,7 @@ import (
 	"time"
 
 	operationsvc "bofbench/internal/operation"
+	"bofbench/internal/runtimeadapter"
 )
 
 type dagPreparedStep struct {
@@ -86,8 +87,12 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 		}
 		wave.State, wave.StartedAt = "running", time.Now().UTC().Format(time.RFC3339Nano)
 		for _, index := range ready {
-			receipt.Steps[index].State = "running"
-			receipt.Steps[index].StartedAt = wave.StartedAt
+			if receipt.Steps[index].State == "pending" {
+				receipt.Steps[index].State = "running"
+			}
+			if receipt.Steps[index].StartedAt == "" {
+				receipt.Steps[index].StartedAt = wave.StartedAt
+			}
 		}
 		if err := operationsvc.SaveReceipt(path, receipt); err != nil {
 			return err
@@ -95,7 +100,7 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 		fmt.Fprintf(stdout, "wave %d/%d  ready=%s\n", wave.Index, len(item.Document.Steps), joinDAGStepIDs(item.Document, ready))
 		results := executeDAGWave(ctx, registry, item, inputs, topology, opts, *receipt, path, prepared, ready)
 		sort.Slice(results, func(i, j int) bool { return results[i].index < results[j].index })
-		var failed, incomplete []string
+		var failed, incomplete, active, canceled []string
 		for _, result := range results {
 			receipt.Steps[result.index] = result.receipt
 			if len(result.display) > 0 {
@@ -114,8 +119,17 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 				}
 			case "incomplete":
 				incomplete = append(incomplete, result.receipt.ID)
+			case "running", "ready":
+				active = append(active, result.receipt.ID)
+				if result.receipt.State == "ready" {
+					for name, value := range result.receipt.ReadyCaptures {
+						receipt.Captures[name] = value
+					}
+				}
 			case "failed":
 				failed = append(failed, result.receipt.ID)
+			case "canceled":
+				canceled = append(canceled, result.receipt.ID)
 			}
 		}
 		if len(failed) == 0 && len(incomplete) == 0 {
@@ -123,6 +137,11 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 		}
 		wave.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		switch {
+		case len(canceled) > 0:
+			wave.State, receipt.Status = "canceled", "canceled"
+			receipt.CancellationState, receipt.CanceledAt = "completed", time.Now().UTC().Format(time.RFC3339Nano)
+			receipt.Error = fmt.Sprintf("dag wave canceled at %s", canceled)
+			operationsvc.BlockDAGDescendants(item.Document, receipt, canceled)
 		case len(failed) > 0:
 			wave.State, receipt.Status = "failed", "failed"
 			receipt.Error = fmt.Sprintf("dag wave failed at %s", failed)
@@ -131,6 +150,9 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 			wave.State, receipt.Status = "incomplete", "incomplete"
 			receipt.Error = fmt.Sprintf("dag wave has incomplete runtime work at %s", incomplete)
 			operationsvc.BlockDAGDescendants(item.Document, receipt, incomplete)
+		case len(active) > 0:
+			wave.State, receipt.Status = "active", "running"
+			receipt.Error = ""
 		default:
 			wave.State = "completed"
 			receipt.Status, receipt.Error = "running", ""
@@ -152,9 +174,20 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 			}
 			return fmt.Errorf("%s", receipt.Error)
 		}
+		if len(canceled) > 0 {
+			fmt.Fprintf(stdout, "operation  canceled\nreceipt    %s\n", path)
+			return nil
+		}
 		if len(incomplete) > 0 {
 			fmt.Fprintf(stdout, "operation  incomplete\nreceipt    %s\n", path)
 			return fmt.Errorf("%s; resume %s after the runtime tasks complete", receipt.Error, path)
+		}
+		if len(active) > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+			}
 		}
 	}
 	if !operationsvc.DAGComplete(*receipt) {
@@ -176,7 +209,7 @@ func prepareDAGWave(ctx context.Context, registry *operationsvc.Registry, item o
 	for _, index := range ready {
 		prepared[index] = dagPreparedStep{index: -1}
 		step, state := item.Document.Steps[index], receipt.Steps[index]
-		if state.State == "incomplete" || state.State == "running" {
+		if state.State == "incomplete" || state.State == "running" || state.State == "ready" {
 			prepared[index] = dagPreparedStep{index: index}
 			continue
 		}
@@ -234,13 +267,15 @@ func executeDAGWave(ctx context.Context, registry *operationsvc.Registry, item o
 func executeDAGStep(ctx context.Context, stdout io.Writer, registry *operationsvc.Registry, item operationsvc.Resolved, inputs, topology map[string]string, opts operationOptions, receipt operationsvc.Receipt, path string, prepared dagPreparedStep, index int) dagStepResult {
 	step := item.Document.Steps[index]
 	state := receipt.Steps[index]
-	state.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	if state.StartedAt == "" {
+		state.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
 	result := dagStepResult{index: index, receipt: state}
 	if step.Operation != "" {
 		return executeDAGChild(ctx, stdout, registry, item, step, inputs, topology, opts, receipt, path, index)
 	}
 	var runtimeOutput []string
-	if prepared.pack == nil && (state.State == "incomplete" || state.State == "running") {
+	if prepared.pack == nil && (state.State == "incomplete" || state.State == "running" || state.State == "ready") {
 		updated, err := refreshOperationRuntimeReceipt(ctx, state.Runtime, opts)
 		if err != nil {
 			result.err = err
@@ -266,7 +301,13 @@ func executeDAGStep(ctx context.Context, stdout io.Writer, registry *operationsv
 			result.receipt.State, result.receipt.ContractState, result.receipt.Error = "failed", "failed", err.Error()
 			return result
 		}
-		updated, err := executePreparedOperationPack(ctx, *prepared.pack, opts)
+		var updated runtimeadapter.Receipt
+		var err error
+		if step.Mode == "background" {
+			updated, err = startPreparedOperationPack(ctx, *prepared.pack, opts)
+		} else {
+			updated, err = executePreparedOperationPack(ctx, *prepared.pack, opts)
+		}
 		result.receipt.Runtime, result.receipt.ObjectSHA256, result.receipt.OutputComplete = updated, updated.ObjectSHA256, updated.OutputComplete
 		result.receipt.State, _ = operationsvc.ClassifyExecution(updated.ExecutionState, updated.OutputComplete, err != nil)
 		if err != nil {
@@ -278,6 +319,44 @@ func executeDAGStep(ctx context.Context, stdout io.Writer, registry *operationsv
 		}
 	}
 	result.output = runtimeOutput
+	if step.Mode == "background" {
+		if result.receipt.StartedAt != "" && step.TimeoutMS > 0 {
+			if started, parseErr := time.Parse(time.RFC3339Nano, result.receipt.StartedAt); parseErr == nil && time.Since(started) > time.Duration(step.TimeoutMS)*time.Millisecond {
+				result.receipt.State, result.receipt.ContractState, result.receipt.Error = "failed", "failed", "background step timed out"
+				result.err = fmt.Errorf("background step %s timed out after %dms", step.ID, step.TimeoutMS)
+				return result
+			}
+		}
+		if result.receipt.ReadyState != "ready" {
+			fields, _, readyErr := operationsvc.EvaluateExpectation(runtimeOutput, step.Ready, inputs, receipt.Captures, topology)
+			if readyErr == nil {
+				captured, captureErr := operationsvc.CaptureOutput(runtimeOutput, step.ReadyCaptures)
+				if captureErr != nil {
+					result.err = captureErr
+					result.receipt.State, result.receipt.ReadyContractState, result.receipt.Error = "failed", "failed", captureErr.Error()
+					return result
+				}
+				now := time.Now().UTC().Format(time.RFC3339Nano)
+				result.receipt.ReadyState, result.receipt.ReadyContractState = "ready", "matched"
+				result.receipt.ReadyMatchedTag, result.receipt.ReadyMatchedFields = step.Ready.Tag, fields
+				result.receipt.ReadyCaptures, result.receipt.ReadyAt, result.receipt.LastProgressAt = captured, now, now
+			}
+		}
+		if !result.receipt.OutputComplete && result.receipt.State != "failed" {
+			if result.receipt.ReadyState == "ready" {
+				result.receipt.State = "ready"
+			} else {
+				result.receipt.State = "running"
+			}
+			return result
+		}
+		if result.receipt.ReadyState != "ready" {
+			err := fmt.Errorf("background step %s completed before its readiness contract matched", step.ID)
+			result.err = err
+			result.receipt.State, result.receipt.ReadyContractState, result.receipt.Error = "failed", "failed", err.Error()
+			return result
+		}
+	}
 	if result.receipt.State != "completed" {
 		if result.receipt.State == "failed" {
 			result.receipt.ContractState = "failed"

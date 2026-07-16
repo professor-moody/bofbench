@@ -24,10 +24,14 @@ func Run(req Request) (Result, error) {
 		res.Errors = []string{err.Error()}
 		return res, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(req.TimeoutMS)*time.Millisecond)
+	parent := req.Context
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, time.Duration(req.TimeoutMS)*time.Millisecond)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "--object", req.Object, "--entry", req.Entry, "--arg-hex", req.ArgHex)
-	stdout := newBoundedBuffer(maxProcessStreamBytes)
+	stdout := newObservedBuffer(maxProcessStreamBytes, req.OnOutput)
 	stderr := newBoundedBuffer(maxProcessStreamBytes)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

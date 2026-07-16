@@ -9,10 +9,53 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/masterzen/winrm"
 )
+
+func startRemoteProgressPoller(parent context.Context, opts RemoteOptions, path string, progress func(string)) func() {
+	if progress == nil || path == "" {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(parent)
+	var wait sync.WaitGroup
+	wait.Add(1)
+	seen := 0
+	poll := func(pollContext context.Context) {
+		stdout, _, err := remoteExecute(pollContext, opts, fmt.Sprintf(`if(Test-Path -LiteralPath %s){[Console]::Out.Write([IO.File]::ReadAllText(%s))}`, powerShellQuote(path), powerShellQuote(path)))
+		if err != nil || len(stdout) <= seen {
+			return
+		}
+		text := string(stdout[seen:])
+		seen = len(stdout)
+		for _, line := range strings.Split(text, "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				progress(line)
+			}
+		}
+	}
+	go func() {
+		defer wait.Done()
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				poll(ctx)
+			}
+		}
+	}()
+	return func() {
+		poll(context.Background())
+		cancel()
+		wait.Wait()
+	}
+}
 
 type winRMTransportFunc func(context.Context, RemoteOptions, string, string) ([]byte, []byte, error)
 

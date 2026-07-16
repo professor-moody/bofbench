@@ -142,6 +142,11 @@ func executeCobaltStrike(parent context.Context, stdout io.Writer, opts cobaltSt
 			receipt.Error = remoteError
 			runtimeadapter.AddTransition(&receipt, "failed", remoteError, time.Now())
 			runErr = fmt.Errorf("%s", emptyText(remoteError, "Cobalt Strike callback reported failure"))
+		case "canceled":
+			receipt.Status, receipt.ExecutionState, receipt.OutputComplete = "canceled", "canceled", false
+			receipt.OutputClassification, receipt.FinalChunk, receipt.ExitState, receipt.TerminalReason = "partial", true, "canceled", "task_canceled"
+			receipt.CanceledAt = time.Now().UTC().Format(time.RFC3339Nano)
+			runtimeadapter.AddTransition(&receipt, "canceled", "Cobalt Strike callback reported task cancellation", time.Now())
 		case "timeout":
 			receipt.Status, receipt.ExecutionState, receipt.OutputComplete = "fail", "timeout", false
 			receipt.OutputClassification, receipt.ExitState, receipt.TerminalReason = "partial", "timeout", "callback_timeout"
@@ -262,7 +267,7 @@ func cobaltAutomationScript(beacon, object, entry string, tokens, cliValues []st
 	b.WriteString("  println(\"BOFBENCH_CALLBACK type=\" $+ $type $+ \" chunk=\" $+ $chunk $+ \" final=\" $+ $final $+ \" task=\" $+ $task);\n")
 	b.WriteString("  if ($2 ne \"\") { println($2); }\n")
 	b.WriteString("  if ($type eq \"error\") { $bofbench_failed = 1; $bofbench_done = 1; }\n")
-	b.WriteString("  if ($type eq \"task_completed\" || $type eq \"job_completed\" || $final) { $bofbench_done = 1; }\n")
+	b.WriteString("  if ($type eq \"task_completed\" || $type eq \"task_canceled\" || $type eq \"canceled\" || $type eq \"job_completed\" || $final) { $bofbench_done = 1; }\n")
 	b.WriteString("}\n")
 	b.WriteString("on ready {\n")
 	locals = append(locals, "$bofbench_elapsed")
@@ -314,11 +319,13 @@ func parseCobaltCallbacks(lines []string) (string, []runtimeadapter.OutputChunk,
 		}
 		chunks = append(chunks, chunk)
 		switch match[1] {
-		case "error", "failed", "canceled", "cancelled":
+		case "error", "failed":
 			state = "failed"
 			if index+1 < len(lines) {
 				remoteError = strings.TrimSpace(lines[index+1])
 			}
+		case "task_canceled", "canceled", "cancelled":
+			state = "canceled"
 		case "task_completed", "job_completed", "success":
 			state = "completed"
 		default:

@@ -20,10 +20,10 @@ import (
 
 const (
 	Schema                = "bofbench.operation"
-	SchemaVersion         = 6
+	SchemaVersion         = 7
 	MinimumSchemaVersion  = 1
 	ReceiptSchema         = "bofbench.operation-receipt"
-	ReceiptSchemaVersion  = 6
+	ReceiptSchemaVersion  = 7
 	MinimumReceiptVersion = 1
 )
 
@@ -76,16 +76,21 @@ type Parallel struct {
 }
 
 type Step struct {
-	ID        string                    `json:"id"`
-	Pack      string                    `json:"pack,omitempty"`
-	Operation string                    `json:"operation,omitempty"`
-	DependsOn []string                  `json:"depends_on,omitempty"`
-	Arguments map[string]string         `json:"arguments,omitempty"`
-	Captures  map[string]Capture        `json:"captures,omitempty"`
-	Cleanup   *Cleanup                  `json:"cleanup,omitempty"`
-	Expect    *packsvc.ProofExpectation `json:"expect,omitempty"`
-	Outcomes  []Outcome                 `json:"outcomes,omitempty"`
-	Parallel  *Parallel                 `json:"parallel,omitempty"`
+	ID             string                    `json:"id"`
+	Pack           string                    `json:"pack,omitempty"`
+	Operation      string                    `json:"operation,omitempty"`
+	Mode           string                    `json:"mode,omitempty"`
+	DependsOn      []string                  `json:"depends_on,omitempty"`
+	DependsOnReady []string                  `json:"depends_on_ready,omitempty"`
+	Arguments      map[string]string         `json:"arguments,omitempty"`
+	Captures       map[string]Capture        `json:"captures,omitempty"`
+	ReadyCaptures  map[string]Capture        `json:"ready_captures,omitempty"`
+	Cleanup        *Cleanup                  `json:"cleanup,omitempty"`
+	Expect         *packsvc.ProofExpectation `json:"expect,omitempty"`
+	Ready          *packsvc.ProofExpectation `json:"ready,omitempty"`
+	TimeoutMS      int                       `json:"timeout_ms,omitempty"`
+	Outcomes       []Outcome                 `json:"outcomes,omitempty"`
+	Parallel       *Parallel                 `json:"parallel,omitempty"`
 }
 
 type ProofCase struct {
@@ -102,6 +107,8 @@ type ProofCase struct {
 	ExpectParallel     map[string]map[string]string `json:"expect_parallel,omitempty"`
 	ExpectWaves        [][]string                   `json:"expect_waves,omitempty"`
 	ExpectSteps        map[string]string            `json:"expect_steps,omitempty"`
+	ExpectReadySteps   []string                     `json:"expect_ready_steps,omitempty"`
+	ExpectTransitions  map[string][]string          `json:"expect_transitions,omitempty"`
 }
 
 type Document struct {
@@ -141,35 +148,44 @@ type Registry struct {
 }
 
 type StepReceipt struct {
-	ID                string                  `json:"id"`
-	Pack              string                  `json:"pack"`
-	PackSHA256        string                  `json:"pack_sha256"`
-	CleanupPack       string                  `json:"cleanup_pack,omitempty"`
-	CleanupSHA256     string                  `json:"cleanup_pack_sha256,omitempty"`
-	State             string                  `json:"state"`
-	ObjectSHA256      string                  `json:"object_sha256,omitempty"`
-	OutputComplete    bool                    `json:"output_complete"`
-	Runtime           runtimeadapter.Receipt  `json:"runtime_receipt,omitempty"`
-	Captures          map[string]string       `json:"captures,omitempty"`
-	Error             string                  `json:"error,omitempty"`
-	CleanupState      string                  `json:"cleanup_state,omitempty"`
-	CleanupRuntime    *runtimeadapter.Receipt `json:"cleanup_runtime_receipt,omitempty"`
-	ContractState     string                  `json:"contract_state,omitempty"`
-	MatchedTag        string                  `json:"matched_tag,omitempty"`
-	MatchedFields     []string                `json:"matched_fields,omitempty"`
-	PayloadVerified   bool                    `json:"payload_verified,omitempty"`
-	MatchedOutcome    string                  `json:"matched_outcome,omitempty"`
-	NextStep          string                  `json:"next_step,omitempty"`
-	Operation         string                  `json:"operation,omitempty"`
-	OperationSHA256   string                  `json:"operation_sha256,omitempty"`
-	ChildReceipt      string                  `json:"child_receipt,omitempty"`
-	ChildCleanupState string                  `json:"child_cleanup_state,omitempty"`
-	StartedAt         string                  `json:"started_at,omitempty"`
-	CompletedAt       string                  `json:"completed_at,omitempty"`
-	ReadyAt           string                  `json:"ready_at,omitempty"`
-	DependsOn         []string                `json:"depends_on,omitempty"`
-	BlockedBy         []string                `json:"blocked_by,omitempty"`
-	Parallel          *ParallelReceipt        `json:"parallel,omitempty"`
+	ID                 string                  `json:"id"`
+	Pack               string                  `json:"pack"`
+	PackSHA256         string                  `json:"pack_sha256"`
+	CleanupPack        string                  `json:"cleanup_pack,omitempty"`
+	CleanupSHA256      string                  `json:"cleanup_pack_sha256,omitempty"`
+	State              string                  `json:"state"`
+	ObjectSHA256       string                  `json:"object_sha256,omitempty"`
+	OutputComplete     bool                    `json:"output_complete"`
+	Runtime            runtimeadapter.Receipt  `json:"runtime_receipt,omitempty"`
+	Captures           map[string]string       `json:"captures,omitempty"`
+	Error              string                  `json:"error,omitempty"`
+	CleanupState       string                  `json:"cleanup_state,omitempty"`
+	CleanupRuntime     *runtimeadapter.Receipt `json:"cleanup_runtime_receipt,omitempty"`
+	ContractState      string                  `json:"contract_state,omitempty"`
+	MatchedTag         string                  `json:"matched_tag,omitempty"`
+	MatchedFields      []string                `json:"matched_fields,omitempty"`
+	PayloadVerified    bool                    `json:"payload_verified,omitempty"`
+	MatchedOutcome     string                  `json:"matched_outcome,omitempty"`
+	NextStep           string                  `json:"next_step,omitempty"`
+	Operation          string                  `json:"operation,omitempty"`
+	OperationSHA256    string                  `json:"operation_sha256,omitempty"`
+	ChildReceipt       string                  `json:"child_receipt,omitempty"`
+	ChildCleanupState  string                  `json:"child_cleanup_state,omitempty"`
+	StartedAt          string                  `json:"started_at,omitempty"`
+	CompletedAt        string                  `json:"completed_at,omitempty"`
+	ReadyAt            string                  `json:"ready_at,omitempty"`
+	DependsOn          []string                `json:"depends_on,omitempty"`
+	DependsOnReady     []string                `json:"depends_on_ready,omitempty"`
+	BlockedBy          []string                `json:"blocked_by,omitempty"`
+	Mode               string                  `json:"mode,omitempty"`
+	ReadyState         string                  `json:"ready_state,omitempty"`
+	ReadyContractState string                  `json:"ready_contract_state,omitempty"`
+	ReadyMatchedTag    string                  `json:"ready_matched_tag,omitempty"`
+	ReadyMatchedFields []string                `json:"ready_matched_fields,omitempty"`
+	ReadyCaptures      map[string]string       `json:"ready_captures,omitempty"`
+	LastProgressAt     string                  `json:"last_progress_at,omitempty"`
+	CancellationState  string                  `json:"cancellation_state,omitempty"`
+	Parallel           *ParallelReceipt        `json:"parallel,omitempty"`
 }
 
 type ExecutionWave struct {
@@ -192,36 +208,42 @@ type ParallelReceipt struct {
 }
 
 type Receipt struct {
-	Schema           string            `json:"schema"`
-	SchemaVersion    int               `json:"schema_version"`
-	Operation        string            `json:"operation"`
-	OperationSHA256  string            `json:"operation_sha256"`
-	Status           string            `json:"status"`
-	Runtime          string            `json:"runtime"`
-	Lab              string            `json:"lab,omitempty"`
-	Topology         string            `json:"topology,omitempty"`
-	Architecture     string            `json:"architecture"`
-	Compiler         string            `json:"compiler"`
-	Inputs           map[string]string `json:"inputs,omitempty"`
-	RedactedInputs   []string          `json:"redacted_inputs,omitempty"`
-	Captures         map[string]string `json:"captures,omitempty"`
-	ActualPath       []string          `json:"actual_path,omitempty"`
-	ExpandedPath     []string          `json:"expanded_path,omitempty"`
-	SkippedSteps     []string          `json:"skipped_steps,omitempty"`
-	DependencySHA256 map[string]string `json:"dependency_sha256,omitempty"`
-	Steps            []StepReceipt     `json:"steps"`
-	CleanupState     string            `json:"cleanup_state,omitempty"`
-	StartedAt        string            `json:"started_at"`
-	UpdatedAt        string            `json:"updated_at"`
-	CompletedAt      string            `json:"completed_at,omitempty"`
-	Path             string            `json:"path"`
-	Error            string            `json:"error,omitempty"`
-	Parallelism      int               `json:"parallelism,omitempty"`
-	MaxConcurrency   int               `json:"max_observed_concurrency,omitempty"`
-	Execution        string            `json:"execution,omitempty"`
-	TopologicalOrder []string          `json:"topological_order,omitempty"`
-	BlockedSteps     []string          `json:"blocked_steps,omitempty"`
-	ExecutionWaves   []ExecutionWave   `json:"execution_waves,omitempty"`
+	Schema            string            `json:"schema"`
+	SchemaVersion     int               `json:"schema_version"`
+	Operation         string            `json:"operation"`
+	OperationSHA256   string            `json:"operation_sha256"`
+	Status            string            `json:"status"`
+	Runtime           string            `json:"runtime"`
+	Lab               string            `json:"lab,omitempty"`
+	Topology          string            `json:"topology,omitempty"`
+	Architecture      string            `json:"architecture"`
+	Compiler          string            `json:"compiler"`
+	Inputs            map[string]string `json:"inputs,omitempty"`
+	RedactedInputs    []string          `json:"redacted_inputs,omitempty"`
+	Captures          map[string]string `json:"captures,omitempty"`
+	ActualPath        []string          `json:"actual_path,omitempty"`
+	ExpandedPath      []string          `json:"expanded_path,omitempty"`
+	SkippedSteps      []string          `json:"skipped_steps,omitempty"`
+	DependencySHA256  map[string]string `json:"dependency_sha256,omitempty"`
+	Steps             []StepReceipt     `json:"steps"`
+	CleanupState      string            `json:"cleanup_state,omitempty"`
+	StartedAt         string            `json:"started_at"`
+	UpdatedAt         string            `json:"updated_at"`
+	CompletedAt       string            `json:"completed_at,omitempty"`
+	Path              string            `json:"path"`
+	Error             string            `json:"error,omitempty"`
+	Parallelism       int               `json:"parallelism,omitempty"`
+	MaxConcurrency    int               `json:"max_observed_concurrency,omitempty"`
+	Execution         string            `json:"execution,omitempty"`
+	TopologicalOrder  []string          `json:"topological_order,omitempty"`
+	BlockedSteps      []string          `json:"blocked_steps,omitempty"`
+	ExecutionWaves    []ExecutionWave   `json:"execution_waves,omitempty"`
+	ControllerPID     int               `json:"controller_pid,omitempty"`
+	ControlPath       string            `json:"control_path,omitempty"`
+	CancelRequestedAt string            `json:"cancel_requested_at,omitempty"`
+	CanceledAt        string            `json:"canceled_at,omitempty"`
+	CancellationState string            `json:"cancellation_state,omitempty"`
+	ActiveSteps       []string          `json:"active_steps,omitempty"`
 }
 
 func Load(opts LoadOptions) (*Registry, error) {
@@ -688,8 +710,14 @@ func validate(document Document) error {
 		if document.SchemaVersion < 6 && len(step.DependsOn) > 0 {
 			return fmt.Errorf("step %s dependencies require schema version 6", step.ID)
 		}
+		if document.SchemaVersion < 7 && (step.Mode != "" || step.Ready != nil || len(step.ReadyCaptures) > 0 || len(step.DependsOnReady) > 0 || step.TimeoutMS != 0) {
+			return fmt.Errorf("step %s background readiness requires schema version 7", step.ID)
+		}
 		if document.Execution != "dag" && len(step.DependsOn) > 0 {
 			return fmt.Errorf("step %s depends_on is available only in dag execution", step.ID)
+		}
+		if document.Execution != "dag" && len(step.DependsOnReady) > 0 {
+			return fmt.Errorf("step %s depends_on_ready is available only in dag execution", step.ID)
 		}
 		if document.SchemaVersion >= 5 && stepTargetCount(step) != 1 {
 			return fmt.Errorf("step %s must declare exactly one of pack, operation, or parallel", step.ID)
@@ -891,13 +919,31 @@ func validate(document Document) error {
 				return fmt.Errorf("proof case %s step %s has unsupported state %q", proof.ID, stepID, state)
 			}
 		}
+		for _, stepID := range proof.ExpectReadySteps {
+			index, ok := stepIndexes[stepID]
+			if !ok || document.Steps[index].Mode != "background" {
+				return fmt.Errorf("proof case %s expects unknown or non-background ready step %q", proof.ID, stepID)
+			}
+		}
+		for stepID, transitions := range proof.ExpectTransitions {
+			if _, ok := stepIndexes[stepID]; !ok {
+				return fmt.Errorf("proof case %s expects transitions for unknown step %q", proof.ID, stepID)
+			}
+			for _, state := range transitions {
+				switch state {
+				case "pending", "preparing", "running", "ready", "completed", "failed", "incomplete", "canceling", "canceled", "blocked", "skipped":
+				default:
+					return fmt.Errorf("proof case %s step %s has unsupported transition %q", proof.ID, stepID, state)
+				}
+			}
+		}
 	}
 	return nil
 }
 
 func validateDAG(document Document, inputs map[string]Input, stepIndexes map[string]int) (map[string]string, error) {
-	if document.SchemaVersion != 6 {
-		return nil, fmt.Errorf("dag execution requires operation schema version 6")
+	if document.SchemaVersion != 6 && document.SchemaVersion != 7 {
+		return nil, fmt.Errorf("dag execution requires operation schema version 6 or 7")
 	}
 	captureOwners := map[string]string{}
 	for _, step := range document.Steps {
@@ -907,15 +953,55 @@ func validateDAG(document Document, inputs map[string]Input, stepIndexes map[str
 		if step.Expect == nil {
 			return nil, fmt.Errorf("dag step %s requires expect", step.ID)
 		}
-		for _, dependency := range step.DependsOn {
+		mode := step.Mode
+		if mode == "" {
+			mode = "foreground"
+		}
+		if mode != "foreground" && mode != "background" {
+			return nil, fmt.Errorf("dag step %s mode must be foreground or background", step.ID)
+		}
+		if mode == "foreground" && (step.Ready != nil || len(step.ReadyCaptures) > 0 || step.TimeoutMS != 0) {
+			return nil, fmt.Errorf("dag step %s foreground mode cannot declare readiness fields", step.ID)
+		}
+		if mode == "background" {
+			if document.SchemaVersion < 7 || step.Ready == nil || step.TimeoutMS <= 0 {
+				return nil, fmt.Errorf("dag step %s background mode requires schema v7, ready, and timeout_ms", step.ID)
+			}
+			if step.Operation != "" || step.Parallel != nil {
+				return nil, fmt.Errorf("dag step %s background mode currently requires a direct pack", step.ID)
+			}
+		}
+		allDependencies := append(append([]string(nil), step.DependsOn...), step.DependsOnReady...)
+		seenDependencies := map[string]bool{}
+		for _, dependency := range allDependencies {
 			if dependency == step.ID {
 				return nil, fmt.Errorf("dag step %s cannot depend on itself", step.ID)
 			}
 			if _, ok := stepIndexes[dependency]; !ok {
 				return nil, fmt.Errorf("dag step %s depends on unknown step %q", step.ID, dependency)
 			}
+			if seenDependencies[dependency] {
+				return nil, fmt.Errorf("dag step %s repeats dependency %q", step.ID, dependency)
+			}
+			seenDependencies[dependency] = true
 		}
+		for _, dependency := range step.DependsOnReady {
+			target := document.Steps[stepIndexes[dependency]]
+			if target.Mode != "background" {
+				return nil, fmt.Errorf("dag step %s depends_on_ready requires background step %q", step.ID, dependency)
+			}
+		}
+		allCaptures := map[string]Capture{}
 		for name, capture := range step.Captures {
+			allCaptures[name] = capture
+		}
+		for name, capture := range step.ReadyCaptures {
+			if _, exists := allCaptures[name]; exists {
+				return nil, fmt.Errorf("step %s declares capture %q more than once", step.ID, name)
+			}
+			allCaptures[name] = capture
+		}
+		for name, capture := range allCaptures {
 			if !idPattern.MatchString(name) {
 				return nil, fmt.Errorf("step %s has invalid capture %q", step.ID, name)
 			}
@@ -966,6 +1052,11 @@ func validateDAG(document Document, inputs map[string]Input, stepIndexes map[str
 		}
 		if err := validateDAGExpectation(step.ID, *step.Expect, inputs, available, allSteps, ancestors[step.ID]); err != nil {
 			return nil, err
+		}
+		if step.Ready != nil {
+			if err := validateDAGExpectation(step.ID+" ready", *step.Ready, inputs, available, allSteps, ancestors[step.ID]); err != nil {
+				return nil, err
+			}
 		}
 		if step.Cleanup != nil {
 			cleanupAvailable := map[string]string{}
@@ -1043,7 +1134,7 @@ func dagTopology(document Document) ([]string, map[string]map[string]bool, error
 	for position, step := range document.Steps {
 		index[step.ID] = position
 		seen := map[string]bool{}
-		for _, dependency := range step.DependsOn {
+		for _, dependency := range append(append([]string(nil), step.DependsOn...), step.DependsOnReady...) {
 			if seen[dependency] {
 				return nil, nil, fmt.Errorf("dag step %s repeats dependency %q", step.ID, dependency)
 			}
@@ -1242,6 +1333,13 @@ func ExecutionMode(document Document) string {
 	return document.Execution
 }
 
+func emptyDefault(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
 func IsDAG(document Document) bool { return ExecutionMode(document) == "dag" }
 
 func ResolveValue(value string, inputs, captures, topology map[string]string) (string, error) {
@@ -1308,17 +1406,24 @@ func ReadyDAGSteps(document Document, receipt Receipt) ([]int, error) {
 	if len(document.Steps) != len(receipt.Steps) {
 		return nil, fmt.Errorf("operation receipt step count does not match definition")
 	}
-	var incomplete []int
+	var foregroundActive, backgroundActive []int
 	for index, step := range receipt.Steps {
 		if step.State == "failed" {
 			return nil, fmt.Errorf("dag step %q failed and cannot be resumed without an explicit retry", step.ID)
 		}
 		if step.State == "incomplete" || step.State == "running" {
-			incomplete = append(incomplete, index)
+			if document.Steps[index].Mode == "background" {
+				backgroundActive = append(backgroundActive, index)
+			} else {
+				foregroundActive = append(foregroundActive, index)
+			}
+		}
+		if step.State == "ready" {
+			backgroundActive = append(backgroundActive, index)
 		}
 	}
-	if len(incomplete) > 0 {
-		return incomplete, nil
+	if len(foregroundActive) > 0 {
+		return foregroundActive, nil
 	}
 	state := map[string]string{}
 	for _, step := range receipt.Steps {
@@ -1337,10 +1442,18 @@ func ReadyDAGSteps(document Document, receipt Receipt) ([]int, error) {
 			}
 		}
 		if dependenciesComplete {
+			for _, dependency := range step.DependsOnReady {
+				if state[dependency] != "ready" && state[dependency] != "completed" {
+					dependenciesComplete = false
+					break
+				}
+			}
+		}
+		if dependenciesComplete {
 			ready = append(ready, index)
 		}
 	}
-	return ready, nil
+	return append(backgroundActive, ready...), nil
 }
 
 func UnblockDAGSteps(document Document, receipt *Receipt) {
@@ -1360,6 +1473,14 @@ func UnblockDAGSteps(document Document, receipt *Receipt) {
 			}
 		}
 		if ready {
+			for _, dependency := range step.DependsOnReady {
+				if state[dependency] != "ready" && state[dependency] != "completed" {
+					ready = false
+					break
+				}
+			}
+		}
+		if ready {
 			receipt.Steps[index].State = "pending"
 			receipt.Steps[index].ContractState = "pending"
 			receipt.Steps[index].BlockedBy = nil
@@ -1369,7 +1490,7 @@ func UnblockDAGSteps(document Document, receipt *Receipt) {
 
 func DAGComplete(receipt Receipt) bool {
 	for _, step := range receipt.Steps {
-		if step.State != "completed" && step.State != "skipped" {
+		if step.State != "completed" && step.State != "skipped" && step.State != "canceled" {
 			return false
 		}
 	}
@@ -1392,7 +1513,7 @@ func BlockDAGDescendants(document Document, receipt *Receipt, causes []string) {
 				continue
 			}
 			var blockers []string
-			for _, dependency := range step.DependsOn {
+			for _, dependency := range append(append([]string(nil), step.DependsOn...), step.DependsOnReady...) {
 				if blocked[dependency] {
 					blockers = append(blockers, dependency)
 				}
@@ -1670,6 +1791,9 @@ func EvaluateOutcomes(lines []string, outcomes []Outcome, inputs, captures, topo
 // ClassifyExecution converts a runtime result into operation step and receipt
 // states without treating submission as completion.
 func ClassifyExecution(executionState string, outputComplete, failed bool) (string, string) {
+	if executionState == "canceled" || executionState == "cancelled" {
+		return "canceled", "canceled"
+	}
 	if failed || executionState == "failed" || executionState == "timeout" {
 		return "failed", "failed"
 	}
@@ -1826,7 +1950,7 @@ func parseStructuredLine(line string) (string, map[string]string) {
 }
 
 func NewReceipt(item Resolved, registry *Registry, path, runtime, lab, topology, arch, compiler string, inputs map[string]string) Receipt {
-	receipt := Receipt{Schema: ReceiptSchema, SchemaVersion: ReceiptSchemaVersion, Operation: item.Qualified, OperationSHA256: item.SHA256, Status: "pending", Runtime: runtime, Lab: lab, Topology: topology, Architecture: arch, Compiler: compiler, Inputs: map[string]string{}, Captures: map[string]string{}, DependencySHA256: map[string]string{}, Path: path, StartedAt: time.Now().UTC().Format(time.RFC3339Nano), Execution: ExecutionMode(item.Document)}
+	receipt := Receipt{Schema: ReceiptSchema, SchemaVersion: ReceiptSchemaVersion, Operation: item.Qualified, OperationSHA256: item.SHA256, Status: "pending", Runtime: runtime, Lab: lab, Topology: topology, Architecture: arch, Compiler: compiler, Inputs: map[string]string{}, Captures: map[string]string{}, DependencySHA256: map[string]string{}, Path: path, StartedAt: time.Now().UTC().Format(time.RFC3339Nano), Execution: ExecutionMode(item.Document), ControllerPID: os.Getpid(), ControlPath: filepath.Join(filepath.Dir(path), "control.json")}
 	receipt.DependencySHA256 = registry.DependencyHashes(item)
 	receipt.TopologicalOrder, _ = TopologicalOrder(item.Document)
 	for _, input := range item.Document.Inputs {
@@ -1847,11 +1971,14 @@ func NewReceipt(item Resolved, registry *Registry, path, runtime, lab, topology,
 			for _, branch := range step.Parallel.Branches {
 				parallel.Branches = append(parallel.Branches, newInvocationReceipt(branch.ID, branch.Pack, branch.Operation, branch.Cleanup, registry))
 			}
-			receipt.Steps = append(receipt.Steps, StepReceipt{ID: step.ID, State: "pending", ContractState: "pending", DependsOn: append([]string(nil), step.DependsOn...), Parallel: parallel})
+			receipt.Steps = append(receipt.Steps, StepReceipt{ID: step.ID, State: "pending", ContractState: "pending", DependsOn: append([]string(nil), step.DependsOn...), DependsOnReady: append([]string(nil), step.DependsOnReady...), Mode: emptyDefault(step.Mode, "foreground"), ReadyState: "pending", ReadyContractState: "pending", Parallel: parallel})
 			continue
 		}
 		state := newInvocationReceipt(step.ID, step.Pack, step.Operation, step.Cleanup, registry)
 		state.DependsOn = append([]string(nil), step.DependsOn...)
+		state.DependsOnReady = append([]string(nil), step.DependsOnReady...)
+		state.Mode = emptyDefault(step.Mode, "foreground")
+		state.ReadyState, state.ReadyContractState = "pending", "pending"
 		receipt.Steps = append(receipt.Steps, state)
 	}
 	return receipt
@@ -1941,7 +2068,28 @@ func SaveReceipt(path string, receipt *Receipt) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o600)
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".operation-*.json")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
 }
 
 func LoadReceipt(path string) (Receipt, error) {
@@ -2101,7 +2249,29 @@ func builtins() []Resolved {
 			ExpectSteps: map[string]string{"rpc": "completed", "com-registration": "completed", "rot": "completed", "alpc": "completed", "windows": "completed"},
 		}},
 	}
-	documents := []Document{triage, network, waitTriage, coordination, ipc, ipcActivation}
+	eventing := Document{
+		Schema: Schema, SchemaVersion: 7, Execution: "dag", ID: "windows-eventing-posture", Version: "1.0.0",
+		Title: "Windows Eventing Posture", Summary: "Inventory Event Log channels, query bounded events, and enumerate ETW providers as concurrent roots", Tier: "public",
+		Inputs: []Input{
+			{Name: "channel_filter", Type: "wstring", Default: "System"},
+			{Name: "channel", Type: "wstring", Default: "System"},
+			{Name: "xpath", Type: "wstring", Default: "*"},
+			{Name: "provider_filter", Type: "wstring", Default: ""},
+			{Name: "result_limit", Type: "int", Default: "16"},
+		},
+		Steps: []Step{
+			{ID: "channels", Pack: "event-log-channel-inventory", Arguments: map[string]string{"channel_filter": "$input.channel_filter", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "event-log-channel-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+			{ID: "events", Pack: "event-log-query", Arguments: map[string]string{"path": "$input.channel", "xpath": "$input.xpath", "direction": "reverse", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "event-log-query", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+			{ID: "providers", Pack: "etw-provider-inventory", Arguments: map[string]string{"name_filter": "$input.provider_filter", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "etw-provider-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+		},
+		ProofCases: []ProofCase{{
+			ID: "local-eventing", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"},
+			Inputs:      map[string]string{"channel_filter": "System", "channel": "System", "xpath": "*", "provider_filter": "", "result_limit": "8"},
+			ExpectWaves: [][]string{{"channels", "events", "providers"}},
+			ExpectSteps: map[string]string{"channels": "completed", "events": "completed", "providers": "completed"},
+		}},
+	}
+	documents := []Document{triage, network, waitTriage, coordination, ipc, ipcActivation, eventing}
 	items := make([]Resolved, 0, len(documents))
 	for _, document := range documents {
 		item := Resolved{Document: document, Catalog: "builtin", Qualified: "builtin/" + document.ID}

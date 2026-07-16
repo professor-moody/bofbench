@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -92,9 +93,152 @@ func operationCommand(stdout io.Writer) *cobra.Command {
 			fmt.Fprintf(stdout, "OPERATION VALID\noperation  %s\nid         %s\nversion    %s\nsteps      %d\n", qualified, document.ID, document.Version, len(document.Steps))
 			return nil
 		}},
-		operationDocsCommand(stdout, load), operationTestCommand(stdout, load, func() []string { return append([]string(nil), catalogs...) }), operationProveCommand(stdout, load, func() []string { return append([]string(nil), catalogs...) }), operationRunCommand(stdout, load), operationResumeCommand(stdout, load), operationCleanupCommand(stdout, load),
+		operationDocsCommand(stdout, load), operationTestCommand(stdout, load, func() []string { return append([]string(nil), catalogs...) }), operationProveCommand(stdout, load, func() []string { return append([]string(nil), catalogs...) }), operationRunCommand(stdout, load), operationResumeCommand(stdout, load), operationWatchCommand(stdout), operationCancelCommand(stdout, load), operationCleanupCommand(stdout, load),
 	)
 	return cmd
+}
+
+func operationWatchCommand(stdout io.Writer) *cobra.Command {
+	var follow bool
+	var interval, timeout time.Duration
+	var format string
+	cmd := &cobra.Command{Use: "watch <operation.json>", Short: "Watch persisted operation step and readiness state", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		path := operationReceiptPath(args[0])
+		ctx := cmd.Context()
+		if follow {
+			var cancel context.CancelFunc
+			ctx, cancel = contextWithTimeout(ctx, timeout)
+			defer cancel()
+		}
+		previous := ""
+		for {
+			receipt, err := operationsvc.LoadReceipt(path)
+			if err != nil {
+				return err
+			}
+			data := operationWatchText(receipt)
+			if format == "json" {
+				encoded, encodeErr := json.Marshal(receipt)
+				if encodeErr != nil {
+					return encodeErr
+				}
+				data = string(encoded) + "\n"
+			}
+			if data != previous {
+				fmt.Fprint(stdout, data)
+				previous = data
+			}
+			if !follow || operationTerminal(receipt.Status) {
+				return nil
+			}
+			select {
+			case <-ctx.Done():
+				if ctx.Err() == context.DeadlineExceeded {
+					return nil
+				}
+				return ctx.Err()
+			case <-time.After(interval):
+			}
+		}
+	}}
+	cmd.Flags().BoolVar(&follow, "follow", false, "follow changes until the operation reaches a terminal state")
+	cmd.Flags().DurationVar(&interval, "interval", 250*time.Millisecond, "receipt polling interval")
+	cmd.Flags().DurationVar(&timeout, "timeout", 10*time.Minute, "maximum follow duration")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	return cmd
+}
+
+func operationCancelCommand(stdout io.Writer, load func() (*operationsvc.Registry, error)) *cobra.Command {
+	opts := operationOptions{profiles: lab.ProfilesPath(), parallelism: 4}
+	var cleanup bool
+	cmd := &cobra.Command{Use: "cancel <operation.json>", Short: "Cancel active operation runtime tasks", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		path := operationReceiptPath(args[0])
+		receipt, err := operationsvc.LoadReceipt(path)
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		receipt.CancelRequestedAt, receipt.CancellationState = now.Format(time.RFC3339Nano), "canceling"
+		var failures []string
+		for index := range receipt.Steps {
+			step := &receipt.Steps[index]
+			if step.State != "running" && step.State != "ready" && step.State != "incomplete" {
+				continue
+			}
+			updated, cancelErr := cancelOperationRuntimeReceipt(cmd.Context(), step.Runtime, opts)
+			if cancelErr != nil {
+				step.CancellationState = "unsupported"
+				failures = append(failures, step.ID+": "+cancelErr.Error())
+				continue
+			}
+			step.Runtime, step.CancellationState = updated, "requested"
+		}
+		if len(failures) == 0 {
+			receipt.CancellationState = "requested"
+		}
+		if err := operationsvc.SaveReceipt(path, &receipt); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "operation  cancellation_%s\nreceipt    %s\n", receipt.CancellationState, path)
+		if cleanup {
+			registry, loadErr := load()
+			if loadErr != nil {
+				return loadErr
+			}
+			item, resolveErr := registry.Resolve(receipt.Operation)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			inputs, inputErr := resolveOperationInputs(item.Document, opts.arguments, receipt.Inputs, true)
+			if inputErr != nil {
+				return inputErr
+			}
+			opts.via, opts.lab, opts.topology, opts.arch, opts.compiler = receipt.Runtime, receipt.Lab, receipt.Topology, receipt.Architecture, receipt.Compiler
+			if cleanupErr := cleanupOperation(cmd.Context(), stdout, registry, item, inputs, &receipt, path, opts); cleanupErr != nil {
+				return cleanupErr
+			}
+		}
+		if len(failures) > 0 {
+			return fmt.Errorf("some active runtime tasks could not be canceled: %s", strings.Join(failures, "; "))
+		}
+		return nil
+	}}
+	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "clean completed stateful steps after requesting cancellation")
+	cmd.Flags().StringArrayVar(&opts.arguments, "arg", nil, "resupply sensitive operation inputs needed by cleanup")
+	cmd.Flags().StringVar(&opts.profiles, "profiles", lab.ProfilesPath(), "global lab profiles file")
+	cmd.Flags().IntVar(&opts.parallelism, "parallelism", 4, "maximum concurrent cleanup branches (1-16)")
+	return cmd
+}
+
+func cancelOperationRuntimeReceipt(ctx context.Context, receipt runtimeadapter.Receipt, opts operationOptions) (runtimeadapter.Receipt, error) {
+	run := &runtimeRunContext{stdout: io.Discard, input: ".", runtimeName: receipt.Runtime, labName: opts.lab, labProfiles: opts.profiles, sliverSession: receipt.Session}
+	registry, err := runtimeAdapterRegistry(run)
+	if err != nil {
+		return receipt, err
+	}
+	adapter, err := registry.Resolve(receipt.Runtime)
+	if err != nil {
+		return receipt, err
+	}
+	return adapter.Cancel(ctx, receipt)
+}
+
+func operationWatchText(receipt operationsvc.Receipt) string {
+	var body strings.Builder
+	fmt.Fprintf(&body, "operation  %s\nstatus     %s\n", receipt.Operation, receipt.Status)
+	for _, step := range receipt.Steps {
+		fmt.Fprintf(&body, "%-18s %-10s ready=%-8s runtime=%s\n", step.ID, step.State, step.ReadyState, emptyText(step.Runtime.ExecutionState, "-"))
+	}
+	fmt.Fprintf(&body, "receipt    %s\n", receipt.Path)
+	return body.String()
+}
+
+func operationTerminal(status string) bool {
+	switch status {
+	case "completed", "cleaned", "failed", "canceled", "cancelled":
+		return true
+	}
+	return false
 }
 
 func operationShowCommand(stdout io.Writer, load func() (*operationsvc.Registry, error)) *cobra.Command {
@@ -1229,7 +1373,7 @@ func prepareOperationPack(ctx context.Context, packs *packsvc.Registry, item pac
 	if !availability.Available {
 		return preparedOperationPack{}, fmt.Errorf("%s runtime is unavailable: %s", adapter.Name(), availability.Detail)
 	}
-	request := runtimeadapter.Request{Input: project, Entrypoint: "go"}
+	request := runtimeadapter.Request{Input: project, Object: build.Object, Entrypoint: "go"}
 	for index, arg := range items {
 		name := fmt.Sprintf("arg%d", index+1)
 		if index < len(resolved.Names) {
@@ -1268,6 +1412,18 @@ func executePreparedOperationPack(ctx context.Context, prepared preparedOperatio
 		}
 	}
 	return prepared.adapter.Execute(ctx, prepared.prepared)
+}
+
+func startPreparedOperationPack(ctx context.Context, prepared preparedOperationPack, opts operationOptions) (runtimeadapter.Receipt, error) {
+	if opts.parallelSem != nil {
+		select {
+		case opts.parallelSem <- struct{}{}:
+			defer func() { <-opts.parallelSem }()
+		case <-ctx.Done():
+			return runtimeadapter.Receipt{}, ctx.Err()
+		}
+	}
+	return prepared.adapter.Start(ctx, prepared.prepared)
 }
 
 func executeOperationPack(ctx context.Context, stdout io.Writer, packs *packsvc.Registry, item packsvc.Resolved, arguments map[string]string, sensitiveArguments map[string]bool, opts operationOptions, work string) (runtimeadapter.Receipt, error) {

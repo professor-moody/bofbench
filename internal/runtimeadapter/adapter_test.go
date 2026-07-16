@@ -19,6 +19,11 @@ func TestRegistryAndFunctionalAdapterContract(t *testing.T) {
 			receipt.OutputComplete = true
 			return receipt, nil
 		},
+		Cancel: func(_ context.Context, receipt Receipt) (Receipt, error) {
+			receipt.CancelSupported = true
+			receipt.ExecutionState = "canceled"
+			return receipt, nil
+		},
 		Cleanup: func(_ context.Context, prepared Prepared) (Receipt, error) {
 			return Receipt{Schema: ReceiptSchema, SchemaVersion: ReceiptSchemaVersion, Runtime: prepared.Runtime, Status: "clean", Session: prepared.Request.Session}, nil
 		},
@@ -49,9 +54,17 @@ func TestRegistryAndFunctionalAdapterContract(t *testing.T) {
 	if err != nil || receipt.Runtime != "sliver" || receipt.Session != "WINDOWS-SESSION" {
 		t.Fatalf("receipt=%+v err=%v", receipt, err)
 	}
+	started, err := selected.Start(context.Background(), prepared)
+	if err != nil || started.Runtime != "sliver" {
+		t.Fatalf("started=%+v err=%v", started, err)
+	}
 	refreshed, err := selected.Refresh(context.Background(), receipt)
 	if err != nil || refreshed.ExecutionState != "completed" || !refreshed.OutputComplete {
 		t.Fatalf("refreshed=%+v err=%v", refreshed, err)
+	}
+	canceled, err := selected.Cancel(context.Background(), refreshed)
+	if err != nil || !canceled.CancelSupported || canceled.ExecutionState != "canceled" {
+		t.Fatalf("canceled=%+v err=%v", canceled, err)
 	}
 }
 

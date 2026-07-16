@@ -60,6 +60,16 @@ type TargetState struct {
 	WindowClass           string `json:"window_class,omitempty"`
 	WindowMessage         uint32 `json:"window_message,omitempty"`
 	WindowPostMessage     uint32 `json:"window_post_message,omitempty"`
+	WatchRegistryHive     string `json:"watch_registry_hive,omitempty"`
+	WatchRegistryPath     string `json:"watch_registry_path,omitempty"`
+	WatchRegistryValue    string `json:"watch_registry_value,omitempty"`
+	WatchDirectory        string `json:"watch_directory,omitempty"`
+	WatchService          string `json:"watch_service,omitempty"`
+	ExitPID               int    `json:"exit_pid,omitempty"`
+	EventLogChannel       string `json:"event_log_channel,omitempty"`
+	EventLogProvider      string `json:"event_log_provider,omitempty"`
+	ETWProviderGUID       string `json:"etw_provider_guid,omitempty"`
+	ETWSessionName        string `json:"etw_session_name,omitempty"`
 	User                  string `json:"user"`
 	CanaryFile            string `json:"canary_file"`
 	CanaryFileSHA256      string `json:"canary_file_sha256,omitempty"`

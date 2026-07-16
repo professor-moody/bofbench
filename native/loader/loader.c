@@ -154,6 +154,7 @@ static size_t g_stub_allocation_size = 0;
 static const char *g_stub_protection = "";
 static uint32_t g_writable_executable_sections = 0;
 static int g_memory_ready = 0;
+static void json_escape(const char *value);
 
 static void add_error(const char *code, const char *fmt, ...) {
     va_list ap;
@@ -173,6 +174,10 @@ static void add_output(const char *fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(g_output[g_output_count], sizeof(g_output[g_output_count]), fmt, ap);
     va_end(ap);
+    printf("{\"protocol_event\":\"beacon_output\",\"line\":\"");
+    json_escape(g_output[g_output_count]);
+    printf("\"}\n");
+    fflush(stdout);
     g_output_count++;
 }
 

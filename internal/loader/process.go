@@ -15,6 +15,46 @@ type boundedBuffer struct {
 	truncated bool
 }
 
+type observedBuffer struct {
+	buffer   *boundedBuffer
+	partial  []byte
+	onOutput func(string)
+}
+
+func newObservedBuffer(limit int, onOutput func(string)) *observedBuffer {
+	return &observedBuffer{buffer: newBoundedBuffer(limit), onOutput: onOutput}
+}
+
+func (buffer *observedBuffer) Write(value []byte) (int, error) {
+	written, err := buffer.buffer.Write(value)
+	if err != nil || buffer.onOutput == nil {
+		return written, err
+	}
+	buffer.partial = append(buffer.partial, value...)
+	for {
+		index := bytes.IndexByte(buffer.partial, '\n')
+		if index < 0 {
+			break
+		}
+		line := bytes.TrimSpace(buffer.partial[:index])
+		buffer.partial = append(buffer.partial[:0], buffer.partial[index+1:]...)
+		if len(line) == 0 {
+			continue
+		}
+		var event struct {
+			ProtocolEvent string `json:"protocol_event"`
+			Line          string `json:"line"`
+		}
+		if json.Unmarshal(line, &event) == nil && event.ProtocolEvent == "beacon_output" {
+			buffer.onOutput(event.Line)
+		}
+	}
+	return written, nil
+}
+
+func (buffer *observedBuffer) Bytes() []byte   { return buffer.buffer.Bytes() }
+func (buffer *observedBuffer) Truncated() bool { return buffer.buffer.Truncated() }
+
 func newBoundedBuffer(limit int) *boundedBuffer {
 	if limit <= 0 {
 		limit = maxProcessStreamBytes

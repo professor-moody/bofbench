@@ -26,6 +26,8 @@ type Request struct {
 	Tokens    []string
 	TimeoutMS int
 	Runtime   string
+	Context   context.Context
+	OnOutput  func(string)
 }
 
 type Result struct {
@@ -93,7 +95,7 @@ func Run(req Request) (Result, error) {
 			preflightStatus = "warn"
 		}
 		addTimedEvent(&base, start, "preflight", preflightStatus, compatibilityMessage(*analysis.LoaderCompatibility))
-		res, err := loader.Run(loader.Request{Object: req.Path, Entry: req.Entry, ArgHex: req.ArgHex, TimeoutMS: req.TimeoutMS, Arch: analysis.Arch})
+		res, err := loader.Run(loader.Request{Object: req.Path, Entry: req.Entry, ArgHex: req.ArgHex, TimeoutMS: req.TimeoutMS, Arch: analysis.Arch, Context: req.Context, OnOutput: req.OnOutput})
 		out := base
 		out.Object = res.Object
 		out.Entry = res.Entry
