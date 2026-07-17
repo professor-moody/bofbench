@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -124,5 +125,24 @@ func TestOperationInputSensitivityFlowsToPackArgument(t *testing.T) {
 	got := operationArgumentSensitivity(document, map[string]string{"content": "$input.payload", "target_pid": "$input.pid", "literal": "value"})
 	if !got["content"] || got["target_pid"] || got["literal"] {
 		t.Fatalf("unexpected sensitivity mapping: %#v", got)
+	}
+}
+
+func TestNormalizeOperationPackArgumentsLoadsFileInputsForByteArguments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "payload.bin")
+	if err := os.WriteFile(path, []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	document := packsvc.Document{Arguments: []packsvc.Argument{{Name: "payload", Type: "bytes"}, {Name: "path", Type: "wstring"}}}
+	got := normalizeOperationPackArguments(document, map[string]string{"payload": path, "path": path})
+	if got["payload"] != "@"+path {
+		t.Fatalf("byte payload was not normalized as a file: %q", got["payload"])
+	}
+	if got["path"] != path {
+		t.Fatalf("non-byte argument changed: %q", got["path"])
+	}
+	got = normalizeOperationPackArguments(document, map[string]string{"payload": "@file:" + path})
+	if got["payload"] != "@"+path {
+		t.Fatalf("@file byte payload was not normalized: %q", got["payload"])
 	}
 }

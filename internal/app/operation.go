@@ -276,7 +276,20 @@ func operationWatchText(receipt operationsvc.Receipt) string {
 	var body strings.Builder
 	fmt.Fprintf(&body, "operation  %s\nstatus     %s\n", receipt.Operation, receipt.Status)
 	for _, step := range receipt.Steps {
-		fmt.Fprintf(&body, "%-18s %-10s ready=%-8s runtime=%s\n", step.ID, step.State, step.ReadyState, emptyText(step.Runtime.ExecutionState, "-"))
+		retry := "-"
+		if step.MaxAttempts > 1 {
+			retry = fmt.Sprintf("%d/%d", step.Attempt, step.MaxAttempts)
+			if step.RetryState != "" {
+				retry += ":" + step.RetryState
+			}
+			if step.RetryReason != "" {
+				retry += ":" + step.RetryReason
+			}
+			if step.NextAttemptAt != "" {
+				retry += " next=" + step.NextAttemptAt
+			}
+		}
+		fmt.Fprintf(&body, "%-18s %-10s ready=%-8s runtime=%-10s attempt=%s\n", step.ID, step.State, step.ReadyState, emptyText(step.Runtime.ExecutionState, "-"), retry)
 	}
 	fmt.Fprintf(&body, "receipt    %s\n", receipt.Path)
 	return body.String()
@@ -1368,6 +1381,7 @@ type preparedOperationPack struct {
 }
 
 func prepareOperationPack(ctx context.Context, packs *packsvc.Registry, item packsvc.Resolved, arguments map[string]string, sensitiveArguments map[string]bool, opts operationOptions, work string) (preparedOperationPack, error) {
+	arguments = normalizeOperationPackArguments(item.Document, arguments)
 	project, err := materializePackProject(work, item, packs)
 	if err != nil {
 		return preparedOperationPack{}, err
@@ -1435,6 +1449,30 @@ func prepareOperationPack(ctx context.Context, packs *packsvc.Registry, item pac
 		return preparedOperationPack{}, err
 	}
 	return preparedOperationPack{adapter: adapter, prepared: prepared}, nil
+}
+
+func normalizeOperationPackArguments(document packsvc.Document, arguments map[string]string) map[string]string {
+	result := make(map[string]string, len(arguments))
+	for name, value := range arguments {
+		result[name] = value
+	}
+	for _, argument := range document.Arguments {
+		if normalizedPackArgumentType(argument.Type) != "bytes" {
+			continue
+		}
+		value := result[argument.Name]
+		if strings.HasPrefix(value, "@file:") {
+			result[argument.Name] = "@" + strings.TrimPrefix(value, "@file:")
+			continue
+		}
+		if value == "" || strings.HasPrefix(value, "@") {
+			continue
+		}
+		if info, err := os.Stat(value); err == nil && !info.IsDir() {
+			result[argument.Name] = "@" + value
+		}
+	}
+	return result
 }
 
 func operationPackTimeout(arguments map[string]string) int {

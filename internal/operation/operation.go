@@ -20,10 +20,10 @@ import (
 
 const (
 	Schema                = "bofbench.operation"
-	SchemaVersion         = 7
+	SchemaVersion         = 8
 	MinimumSchemaVersion  = 1
 	ReceiptSchema         = "bofbench.operation-receipt"
-	ReceiptSchemaVersion  = 7
+	ReceiptSchemaVersion  = 8
 	MinimumReceiptVersion = 1
 )
 
@@ -59,6 +59,24 @@ type Outcome struct {
 	Next   string                   `json:"next"`
 }
 
+// RetryContract names one complete terminal result that the operator has
+// explicitly declared transient. Runtime failures, partial output, and
+// incomplete tasks never reach retry-contract evaluation.
+type RetryContract struct {
+	ID     string                   `json:"id"`
+	Expect packsvc.ProofExpectation `json:"expect"`
+}
+
+// RetryPolicy is intentionally bounded and deterministic. MaxAttempts counts
+// the first invocation, so a value of three permits at most two retries.
+type RetryPolicy struct {
+	MaxAttempts int             `json:"max_attempts"`
+	DelayMS     int             `json:"delay_ms"`
+	Backoff     string          `json:"backoff"`
+	MaxDelayMS  int             `json:"max_delay_ms,omitempty"`
+	When        []RetryContract `json:"when"`
+}
+
 type ParallelBranch struct {
 	ID        string                    `json:"id"`
 	Pack      string                    `json:"pack,omitempty"`
@@ -89,6 +107,7 @@ type Step struct {
 	Expect         *packsvc.ProofExpectation `json:"expect,omitempty"`
 	Ready          *packsvc.ProofExpectation `json:"ready,omitempty"`
 	TimeoutMS      int                       `json:"timeout_ms,omitempty"`
+	Retry          *RetryPolicy              `json:"retry,omitempty"`
 	Outcomes       []Outcome                 `json:"outcomes,omitempty"`
 	Parallel       *Parallel                 `json:"parallel,omitempty"`
 }
@@ -109,6 +128,8 @@ type ProofCase struct {
 	ExpectSteps        map[string]string            `json:"expect_steps,omitempty"`
 	ExpectReadySteps   []string                     `json:"expect_ready_steps,omitempty"`
 	ExpectTransitions  map[string][]string          `json:"expect_transitions,omitempty"`
+	ExpectAttempts     map[string]int               `json:"expect_attempts,omitempty"`
+	ExpectRetryReasons map[string][]string          `json:"expect_retry_reasons,omitempty"`
 }
 
 type Document struct {
@@ -185,7 +206,35 @@ type StepReceipt struct {
 	ReadyCaptures      map[string]string       `json:"ready_captures,omitempty"`
 	LastProgressAt     string                  `json:"last_progress_at,omitempty"`
 	CancellationState  string                  `json:"cancellation_state,omitempty"`
+	Attempt            int                     `json:"attempt,omitempty"`
+	MaxAttempts        int                     `json:"max_attempts,omitempty"`
+	RetryState         string                  `json:"retry_state,omitempty"`
+	RetryReason        string                  `json:"retry_reason,omitempty"`
+	NextAttemptAt      string                  `json:"next_attempt_at,omitempty"`
+	Attempts           []AttemptReceipt        `json:"attempts,omitempty"`
 	Parallel           *ParallelReceipt        `json:"parallel,omitempty"`
+}
+
+// AttemptReceipt preserves the exact runtime result that caused success,
+// failure, or a declared retry. The parent StepReceipt continues to mirror the
+// latest attempt for compatibility with operation-receipt versions 1-7.
+type AttemptReceipt struct {
+	Number         int                     `json:"number"`
+	State          string                  `json:"state"`
+	ObjectSHA256   string                  `json:"object_sha256,omitempty"`
+	OutputComplete bool                    `json:"output_complete"`
+	Runtime        runtimeadapter.Receipt  `json:"runtime_receipt,omitempty"`
+	ContractState  string                  `json:"contract_state,omitempty"`
+	MatchedTag     string                  `json:"matched_tag,omitempty"`
+	MatchedFields  []string                `json:"matched_fields,omitempty"`
+	Captures       map[string]string       `json:"captures,omitempty"`
+	RetryReason    string                  `json:"retry_reason,omitempty"`
+	DelayMS        int                     `json:"delay_ms,omitempty"`
+	NextEligibleAt string                  `json:"next_eligible_at,omitempty"`
+	StartedAt      string                  `json:"started_at,omitempty"`
+	CompletedAt    string                  `json:"completed_at,omitempty"`
+	CleanupState   string                  `json:"cleanup_state,omitempty"`
+	CleanupRuntime *runtimeadapter.Receipt `json:"cleanup_runtime_receipt,omitempty"`
 }
 
 type ExecutionWave struct {
@@ -713,6 +762,12 @@ func validate(document Document) error {
 		if document.SchemaVersion < 7 && (step.Mode != "" || step.Ready != nil || len(step.ReadyCaptures) > 0 || len(step.DependsOnReady) > 0 || step.TimeoutMS != 0) {
 			return fmt.Errorf("step %s background readiness requires schema version 7", step.ID)
 		}
+		if document.SchemaVersion < 8 && step.Retry != nil {
+			return fmt.Errorf("step %s retry requires schema version 8", step.ID)
+		}
+		if document.Execution != "dag" && step.Retry != nil {
+			return fmt.Errorf("step %s retry is available only in dag execution", step.ID)
+		}
 		if document.Execution != "dag" && len(step.DependsOn) > 0 {
 			return fmt.Errorf("step %s depends_on is available only in dag execution", step.ID)
 		}
@@ -931,9 +986,32 @@ func validate(document Document) error {
 			}
 			for _, state := range transitions {
 				switch state {
-				case "pending", "preparing", "running", "ready", "completed", "failed", "incomplete", "canceling", "canceled", "blocked", "skipped":
+				case "pending", "preparing", "running", "ready", "retry_wait", "completed", "failed", "incomplete", "canceling", "canceled", "blocked", "skipped":
 				default:
 					return fmt.Errorf("proof case %s step %s has unsupported transition %q", proof.ID, stepID, state)
+				}
+			}
+		}
+		for stepID, attempts := range proof.ExpectAttempts {
+			if _, ok := stepIndexes[stepID]; !ok {
+				return fmt.Errorf("proof case %s expects attempts for unknown step %q", proof.ID, stepID)
+			}
+			if attempts < 1 || attempts > 16 {
+				return fmt.Errorf("proof case %s step %s has invalid expected attempt count %d", proof.ID, stepID, attempts)
+			}
+		}
+		for stepID, reasons := range proof.ExpectRetryReasons {
+			index, ok := stepIndexes[stepID]
+			if !ok || document.Steps[index].Retry == nil {
+				return fmt.Errorf("proof case %s expects retry reasons for unknown or non-retry step %q", proof.ID, stepID)
+			}
+			known := map[string]bool{}
+			for _, contract := range document.Steps[index].Retry.When {
+				known[contract.ID] = true
+			}
+			for _, reason := range reasons {
+				if !known[reason] {
+					return fmt.Errorf("proof case %s step %s expects unknown retry reason %q", proof.ID, stepID, reason)
 				}
 			}
 		}
@@ -942,8 +1020,8 @@ func validate(document Document) error {
 }
 
 func validateDAG(document Document, inputs map[string]Input, stepIndexes map[string]int) (map[string]string, error) {
-	if document.SchemaVersion != 6 && document.SchemaVersion != 7 {
-		return nil, fmt.Errorf("dag execution requires operation schema version 6 or 7")
+	if document.SchemaVersion < 6 || document.SchemaVersion > 8 {
+		return nil, fmt.Errorf("dag execution requires operation schema version 6, 7, or 8")
 	}
 	captureOwners := map[string]string{}
 	for _, step := range document.Steps {
@@ -969,6 +1047,39 @@ func validateDAG(document Document, inputs map[string]Input, stepIndexes map[str
 			}
 			if step.Operation != "" || step.Parallel != nil {
 				return nil, fmt.Errorf("dag step %s background mode currently requires a direct pack", step.ID)
+			}
+		}
+		if step.Retry != nil {
+			if document.SchemaVersion < 8 {
+				return nil, fmt.Errorf("dag step %s retry requires schema v8", step.ID)
+			}
+			if step.Operation != "" || step.Parallel != nil {
+				return nil, fmt.Errorf("dag step %s retry currently requires a direct pack", step.ID)
+			}
+			if step.Retry.MaxAttempts < 2 || step.Retry.MaxAttempts > 16 {
+				return nil, fmt.Errorf("dag step %s retry max_attempts must be between 2 and 16", step.ID)
+			}
+			if step.Retry.DelayMS < 0 || step.Retry.MaxDelayMS < 0 {
+				return nil, fmt.Errorf("dag step %s retry delays cannot be negative", step.ID)
+			}
+			if step.Retry.Backoff != "fixed" && step.Retry.Backoff != "exponential" {
+				return nil, fmt.Errorf("dag step %s retry backoff must be fixed or exponential", step.ID)
+			}
+			if step.Retry.Backoff == "exponential" && step.Retry.MaxDelayMS > 0 && step.Retry.MaxDelayMS < step.Retry.DelayMS {
+				return nil, fmt.Errorf("dag step %s retry max_delay_ms cannot be less than delay_ms", step.ID)
+			}
+			if len(step.Retry.When) == 0 {
+				return nil, fmt.Errorf("dag step %s retry requires at least one when contract", step.ID)
+			}
+			seenRetry := map[string]bool{}
+			for _, contract := range step.Retry.When {
+				if !idPattern.MatchString(contract.ID) || seenRetry[contract.ID] {
+					return nil, fmt.Errorf("dag step %s has invalid or duplicate retry contract %q", step.ID, contract.ID)
+				}
+				seenRetry[contract.ID] = true
+				if err := validateExpectation(step.ID+" retry "+contract.ID, contract.Expect, inputs, captureOwners, map[string]bool{}); err != nil {
+					return nil, err
+				}
 			}
 		}
 		allDependencies := append(append([]string(nil), step.DependsOn...), step.DependsOnReady...)
@@ -1421,6 +1532,9 @@ func ReadyDAGSteps(document Document, receipt Receipt) ([]int, error) {
 		if step.State == "ready" {
 			backgroundActive = append(backgroundActive, index)
 		}
+		if step.State == "retry_wait" && RetryDue(step, time.Now()) {
+			foregroundActive = append(foregroundActive, index)
+		}
 	}
 	if len(foregroundActive) > 0 {
 		return foregroundActive, nil
@@ -1454,6 +1568,74 @@ func ReadyDAGSteps(document Document, receipt Receipt) ([]int, error) {
 		}
 	}
 	return append(backgroundActive, ready...), nil
+}
+
+// RetryDue reports whether a persisted retry backoff has elapsed. A missing
+// timestamp is treated as immediately eligible so older or hand-carried
+// receipts cannot become permanently stuck.
+func RetryDue(step StepReceipt, now time.Time) bool {
+	if step.State != "retry_wait" {
+		return false
+	}
+	if strings.TrimSpace(step.NextAttemptAt) == "" {
+		return true
+	}
+	eligible, err := time.Parse(time.RFC3339Nano, step.NextAttemptAt)
+	return err != nil || !now.Before(eligible)
+}
+
+// NextRetryDelay returns the shortest pending deterministic backoff.
+func NextRetryDelay(receipt Receipt, now time.Time) (time.Duration, bool) {
+	var shortest time.Duration
+	found := false
+	for _, step := range receipt.Steps {
+		if step.State != "retry_wait" {
+			continue
+		}
+		eligible, err := time.Parse(time.RFC3339Nano, step.NextAttemptAt)
+		if err != nil || !now.Before(eligible) {
+			return 0, true
+		}
+		delay := eligible.Sub(now)
+		if !found || delay < shortest {
+			shortest, found = delay, true
+		}
+	}
+	return shortest, found
+}
+
+// MatchRetry returns the first explicitly declared transient result contract.
+func MatchRetry(lines []string, policy *RetryPolicy, inputs, captures, topology map[string]string) (string, bool) {
+	if policy == nil {
+		return "", false
+	}
+	for _, contract := range policy.When {
+		if _, _, err := EvaluateExpectation(lines, &contract.Expect, inputs, captures, topology); err == nil {
+			return contract.ID, true
+		}
+	}
+	return "", false
+}
+
+// RetryDelay returns the deterministic delay before the next attempt. The
+// completedAttempts value includes the initial attempt.
+func RetryDelay(policy *RetryPolicy, completedAttempts int) time.Duration {
+	if policy == nil || policy.DelayMS <= 0 {
+		return 0
+	}
+	delay := int64(policy.DelayMS)
+	if policy.Backoff == "exponential" && completedAttempts > 1 {
+		for i := 1; i < completedAttempts; i++ {
+			if delay > int64(^uint(0)>>1)/2 {
+				break
+			}
+			delay *= 2
+		}
+	}
+	if policy.MaxDelayMS > 0 && delay > int64(policy.MaxDelayMS) {
+		delay = int64(policy.MaxDelayMS)
+	}
+	return time.Duration(delay) * time.Millisecond
 }
 
 func UnblockDAGSteps(document Document, receipt *Receipt) {
@@ -1979,6 +2161,10 @@ func NewReceipt(item Resolved, registry *Registry, path, runtime, lab, topology,
 		state.DependsOnReady = append([]string(nil), step.DependsOnReady...)
 		state.Mode = emptyDefault(step.Mode, "foreground")
 		state.ReadyState, state.ReadyContractState = "pending", "pending"
+		state.Attempt, state.MaxAttempts = 1, 1
+		if step.Retry != nil {
+			state.MaxAttempts = step.Retry.MaxAttempts
+		}
 		receipt.Steps = append(receipt.Steps, state)
 	}
 	return receipt
@@ -2108,6 +2294,9 @@ func LoadReceipt(path string) (Receipt, error) {
 		previous := receipt.SchemaVersion
 		receipt.SchemaVersion = ReceiptSchemaVersion
 		for index := range receipt.Steps {
+			if receipt.Steps[index].Attempt == 0 {
+				receipt.Steps[index].Attempt, receipt.Steps[index].MaxAttempts = 1, 1
+			}
 			if previous == 1 && receipt.Steps[index].State == "completed" {
 				receipt.Steps[index].ContractState = "legacy"
 			}
@@ -2271,7 +2460,18 @@ func builtins() []Resolved {
 			ExpectSteps: map[string]string{"channels": "completed", "events": "completed", "providers": "completed"},
 		}},
 	}
-	documents := []Document{triage, network, waitTriage, coordination, ipc, ipcActivation, eventing}
+	networkConnectivity := Document{
+		Schema: Schema, SchemaVersion: 8, Execution: "dag", ID: "network-connectivity-triage", Version: "1.0.0",
+		Title: "Network Connectivity Triage", Summary: "Inventory local network profiles, socket endpoints, and DNS cache state as one concurrent ready wave", Tier: "public",
+		Inputs: []Input{{Name: "protocol", Type: "string", Default: "all"}, {Name: "family", Type: "string", Default: "all"}, {Name: "result_limit", Type: "int", Default: "32"}},
+		Steps: []Step{
+			{ID: "profiles", Pack: "network-profile-inventory", Arguments: map[string]string{"result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "network-profile-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+			{ID: "sockets", Pack: "socket-endpoint-inventory", Arguments: map[string]string{"protocol": "$input.protocol", "family": "$input.family", "pid": "0", "state": "0", "local_port": "0", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "socket-endpoint-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+			{ID: "dns-cache", Pack: "dns-cache-inventory", Arguments: map[string]string{"name_filter": "", "record_type": "0", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "dns-cache-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+		},
+		ProofCases: []ProofCase{{ID: "local-connectivity", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Inputs: map[string]string{"protocol": "all", "family": "all", "result_limit": "32"}, ExpectWaves: [][]string{{"profiles", "sockets", "dns-cache"}}, ExpectSteps: map[string]string{"profiles": "completed", "sockets": "completed", "dns-cache": "completed"}}},
+	}
+	documents := []Document{triage, network, waitTriage, coordination, ipc, ipcActivation, eventing, networkConnectivity}
 	items := make([]Resolved, 0, len(documents))
 	for _, document := range documents {
 		item := Resolved{Document: document, Catalog: "builtin", Qualified: "builtin/" + document.ID}
@@ -2282,10 +2482,12 @@ func builtins() []Resolved {
 }
 
 type GraphNode struct {
-	ID        string `json:"id"`
-	Pack      string `json:"pack,omitempty"`
-	Operation string `json:"operation,omitempty"`
-	Kind      string `json:"kind"`
+	ID               string   `json:"id"`
+	Pack             string   `json:"pack,omitempty"`
+	Operation        string   `json:"operation,omitempty"`
+	Kind             string   `json:"kind"`
+	RetryMaxAttempts int      `json:"retry_max_attempts,omitempty"`
+	RetryReasons     []string `json:"retry_reasons,omitempty"`
 }
 
 type GraphEdge struct {
@@ -2325,7 +2527,14 @@ func graphDocument(document Document, prefix string, registry *Registry, expand 
 			if step.Operation != "" {
 				kind = "operation"
 			}
-			graph.Nodes = append(graph.Nodes, GraphNode{ID: id, Pack: step.Pack, Operation: step.Operation, Kind: kind})
+			node := GraphNode{ID: id, Pack: step.Pack, Operation: step.Operation, Kind: kind}
+			if step.Retry != nil {
+				node.RetryMaxAttempts = step.Retry.MaxAttempts
+				for _, condition := range step.Retry.When {
+					node.RetryReasons = append(node.RetryReasons, condition.ID)
+				}
+			}
+			graph.Nodes = append(graph.Nodes, node)
 			if len(step.DependsOn) == 0 {
 				graph.Edges = append(graph.Edges, GraphEdge{From: prefix + "$start", To: id, Outcome: "ready"})
 			}
@@ -2450,6 +2659,9 @@ func renderGraph(graph GraphDocument, format string) (string, error) {
 			if target == "" {
 				target = node.Kind
 			}
+			if node.RetryMaxAttempts > 1 {
+				target += fmt.Sprintf(" · retry≤%d (%s)", node.RetryMaxAttempts, strings.Join(node.RetryReasons, ","))
+			}
 			fmt.Fprintf(&body, "  %s[\"%s · %s\"]\n", mermaidID(node.ID), node.ID, strings.ReplaceAll(target, "\"", "'"))
 		}
 		body.WriteString("  complete([\"complete\"])\n  fail([\"fail\"])\n")
@@ -2527,6 +2739,13 @@ func ReferenceMarkdown(items []Resolved) string {
 			}
 			for _, outcome := range step.Outcomes {
 				fmt.Fprintf(&body, "    - outcome `%s` → `%s` when `[%s]` matches\n", outcome.ID, outcome.Next, outcome.Expect.Tag)
+			}
+			if step.Retry != nil {
+				var reasons []string
+				for _, condition := range step.Retry.When {
+					reasons = append(reasons, condition.ID)
+				}
+				fmt.Fprintf(&body, "    - retry: up to `%d` attempts, `%s` backoff from `%dms`, when `%s` matches\n", step.Retry.MaxAttempts, step.Retry.Backoff, step.Retry.DelayMS, strings.Join(reasons, "`, `"))
 			}
 		}
 		if len(item.Document.ProofCases) > 0 {

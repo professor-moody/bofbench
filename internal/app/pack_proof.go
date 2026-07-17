@@ -688,6 +688,7 @@ func provePacks(ctx context.Context, stdout io.Writer, registry *packsvc.Registr
 				report.Results = append(report.Results, result)
 				continue
 			}
+			arguments = normalizeOperationPackArguments(item.Document, arguments)
 			args := []string{"run", project, "--via", via, "--arch", arch}
 			if labName != "" && (via == "lab" || via == "sliver") {
 				args = append(args, "--lab", labName)
@@ -1029,6 +1030,11 @@ func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) 
 		"$TARGET_WATCH_DIRECTORY": target.State.WatchDirectory, "$TARGET_WATCH_SERVICE": target.State.WatchService, "$TARGET_EXIT_PID": strconv.Itoa(target.State.ExitPID),
 		"$TARGET_EVENTLOG_CHANNEL": target.State.EventLogChannel, "$TARGET_EVENTLOG_PROVIDER": target.State.EventLogProvider,
 		"$TARGET_ETW_PROVIDER_GUID": target.State.ETWProviderGUID, "$TARGET_ETW_SESSION_NAME": target.State.ETWSessionName + "-$RUN_ID",
+		"$TARGET_TCP_HOST": target.State.TCPHost, "$TARGET_TCP_PORT": strconv.Itoa(target.State.TCPPort),
+		"$TARGET_UDP_HOST": target.State.UDPHost, "$TARGET_UDP_PORT": strconv.Itoa(target.State.UDPPort),
+		"$TARGET_HTTP_URL": target.State.HTTPURL, "$TARGET_HTTP_BLOB_URL": target.State.HTTPBlobURL,
+		"$TARGET_HTTP_TRANSIENT_URL": target.State.HTTPTransientURL, "$TARGET_WEBSOCKET_URL": target.State.WebSocketURL,
+		"$TARGET_DNS_NAME": target.State.DNSName, "$TARGET_NETWORK_PAYLOAD_SHA256": target.State.NetworkPayloadSHA256,
 		"$TARGET_ARCH": target.State.Architecture, "$TARGET_MODULE_BASE": target.State.KnownModuleBase, "$TARGET_MODULE_PATH": target.State.KnownModulePath,
 		"$EXECUTION_ADDRESS": target.State.ExecutionAddress,
 		"$X86_TARGET_PID":    strconv.Itoa(target.State.X86PID), "$X86_TARGET_TID": strconv.FormatUint(uint64(target.State.X86AlertableTID), 10), "$X86_TARGET_MODULE_BASE": target.State.X86KnownModuleBase, "$X86_TARGET_MODULE_PATH": target.State.X86KnownModulePath,
@@ -1352,6 +1358,20 @@ func proofStateCheckScript(kind, expect string, parameters map[string]string) (s
 		probe = `$path=Join-Path $env:SystemDrive 'bofbench\target\window-state.json'; $present=Test-Path -LiteralPath $path; $matches=$false; if($present){$state=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json; $matches=([string]$state.copydata_sha256 -ieq ` + q(parameters["sha256"]) + `) -and ([string]$state.copydata_id -ieq ` + q(parameters["data_id"]) + `)}`
 	case "window_text":
 		probe = `$path=Join-Path $env:SystemDrive 'bofbench\target\window-state.json'; $present=Test-Path -LiteralPath $path; $matches=$false; if($present){$state=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json; $matches=([string]$state.text_handle -ieq ` + q(parameters["window_handle"]) + `) -and ([string]$state.text -ceq ` + q(parameters["text"]) + `)}`
+	case "network_listener":
+		protocol := strings.ToLower(parameters["protocol"])
+		if protocol != "tcp" && protocol != "udp" {
+			return "", fmt.Errorf("network_listener protocol must be tcp or udp")
+		}
+		if protocol == "tcp" {
+			probe = `$items=@(Get-NetTCPConnection -State Listen -LocalPort ([uint16]` + q(parameters["port"]) + `) -ErrorAction SilentlyContinue); $present=$items.Count -gt 0; $matches=$present`
+		} else {
+			probe = `$items=@(Get-NetUDPEndpoint -LocalPort ([uint16]` + q(parameters["port"]) + `) -ErrorAction SilentlyContinue); $present=$items.Count -gt 0; $matches=$present`
+		}
+	case "network_observation":
+		probe = `$path=Join-Path $env:SystemDrive 'bofbench\target\network-state.json'; $present=Test-Path -LiteralPath $path; $matches=$false; if($present){$state=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json; $transport=` + q(strings.ToLower(parameters["transport"])) + `; $count=if($transport -eq 'tcp'){[uint32]$state.tcp_requests}elseif($transport -eq 'udp'){[uint32]$state.udp_requests}elseif($transport -eq 'http'){[uint32]$state.http_requests}elseif($transport -eq 'websocket'){[uint32]$state.websocket_requests}else{0}; $matches=($count -gt 0) -and ([string]$state.last_transport -ieq $transport) -and ([string]$state.last_request_sha256 -ieq ` + q(parameters["request_sha256"]) + `) -and ([string]$state.last_response_sha256 -ieq ` + q(parameters["response_sha256"]) + `); if(` + q(parameters["minimum_attempts"]) + `){$matches=$matches -and ([uint32]$state.transient_attempts -ge [uint32]` + q(parameters["minimum_attempts"]) + `)}}`
+	case "bits_job":
+		probe = `$jobs=@(Get-BitsTransfer -AllUsers -ErrorAction SilentlyContinue | Where-Object {[string]$_.JobId -ieq ` + q(parameters["job_id"]) + `}); $present=$jobs.Count -gt 0; $matches=$present`
 	case "inherited_handle":
 		probe = `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class BOFBenchInheritedHandleCheck{[DllImport("kernel32.dll",SetLastError=true)]static extern IntPtr OpenProcess(uint a,bool i,uint p);[DllImport("kernel32.dll",SetLastError=true)]static extern bool DuplicateHandle(IntPtr s,IntPtr h,IntPtr d,out IntPtr c,uint a,bool i,uint o);[DllImport("kernel32.dll")]static extern IntPtr GetCurrentProcess();[DllImport("kernel32.dll")]static extern bool CloseHandle(IntPtr h);public static bool Present(uint p,ulong v){IntPtr s=OpenProcess(0x40,false,p);if(s==IntPtr.Zero)return false;try{IntPtr h;if(!DuplicateHandle(s,(IntPtr)unchecked((long)v),GetCurrentProcess(),out h,0,false,2))return false;CloseHandle(h);return true;}finally{CloseHandle(s);}}}' -ErrorAction SilentlyContinue; $handleText=(` + q(parameters["handle"]) + ` -replace '^0x',''); $present=[BOFBenchInheritedHandleCheck]::Present([uint32]` + q(parameters["pid"]) + `,[Convert]::ToUInt64($handleText,16)); $matches=$present`
 	case "section_payload":

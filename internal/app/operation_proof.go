@@ -54,6 +54,8 @@ type operationProofResult struct {
 	MaxConcurrency int                          `json:"max_observed_concurrency,omitempty"`
 	Waves          [][]string                   `json:"execution_waves,omitempty"`
 	Steps          map[string]string            `json:"step_states,omitempty"`
+	Attempts       map[string]int               `json:"attempts,omitempty"`
+	RetryReasons   map[string][]string          `json:"retry_reasons,omitempty"`
 	Output         []string                     `json:"output,omitempty"`
 	Error          string                       `json:"error,omitempty"`
 }
@@ -275,6 +277,28 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 	}
 	memoryNeedleHash := sha256.Sum256(memoryNeedleBytes)
 	targets, owned := map[string]lab.TargetReport{}, map[string]bool{}
+	proofWorkspaces := map[string]bool{}
+	ensureProofWorkspace := func(profile string) error {
+		if proofWorkspaces[profile] || (via != "lab" && via != "sliver") {
+			return nil
+		}
+		resolved, err := lab.ResolveProfile(profile, "", lab.ProfilesPath())
+		if err != nil {
+			return err
+		}
+		remote, err := lab.ResolveRemoteOptions(ctx, resolved.Name, resolved.Profile)
+		if err != nil {
+			return err
+		}
+		path := `C:\bofbench\proof\` + report.RunID
+		script := `$ErrorActionPreference='Stop'; New-Item -ItemType Directory -Force -Path '` + strings.ReplaceAll(path, "'", "''") + `' | Out-Null`
+		_, stderr, err := lab.ExecutePowerShell(ctx, remote, script)
+		if err != nil {
+			return fmt.Errorf("prepare operation proof workspace: %w: %s", err, strings.TrimSpace(string(stderr)))
+		}
+		proofWorkspaces[profile] = true
+		return nil
+	}
 	ensureTarget := func(profile string) (lab.TargetReport, error) {
 		if target, ok := targets[profile]; ok {
 			return target, nil
@@ -348,6 +372,12 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 					report.Results = append(report.Results, result)
 					continue
 				}
+				if err = ensureProofWorkspace(fixtureProfile); err != nil {
+					result.Status, result.Error = "fail", err.Error()
+					report.Failed++
+					report.Results = append(report.Results, result)
+					continue
+				}
 			}
 			proofSecret, err := newProofSecret()
 			if err != nil {
@@ -413,6 +443,7 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 			result.Parallel = operationParallelStates(receipt)
 			result.Waves = operationWaveSteps(receipt)
 			result.Steps = operationStepStates(receipt)
+			result.Attempts, result.RetryReasons = operationRetryResults(receipt)
 			if err := matchOperationProofCaptures(proof.ExpectCaptures, receipt.Captures, placeholders); err != nil {
 				result.Status, result.Error = "fail", err.Error()
 				report.Failed++
@@ -444,6 +475,18 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 				continue
 			}
 			if err := matchOperationProofSteps(proof.ExpectSteps, result.Steps); err != nil {
+				result.Status, result.Error = "fail", err.Error()
+				report.Failed++
+				report.Results = append(report.Results, result)
+				continue
+			}
+			if err := matchOperationProofAttempts(proof.ExpectAttempts, result.Attempts); err != nil {
+				result.Status, result.Error = "fail", err.Error()
+				report.Failed++
+				report.Results = append(report.Results, result)
+				continue
+			}
+			if err := matchOperationProofRetryReasons(proof.ExpectRetryReasons, result.RetryReasons); err != nil {
 				result.Status, result.Error = "fail", err.Error()
 				report.Failed++
 				report.Results = append(report.Results, result)
@@ -668,6 +711,45 @@ func matchOperationProofSteps(expected, actual map[string]string) error {
 	for step, want := range expected {
 		if actual[step] != want {
 			return fmt.Errorf("operation step %s=%q did not match %q", step, actual[step], want)
+		}
+	}
+	return nil
+}
+
+func operationRetryResults(receipt operationsvc.Receipt) (map[string]int, map[string][]string) {
+	attempts := map[string]int{}
+	reasons := map[string][]string{}
+	for _, step := range receipt.Steps {
+		count := step.Attempt
+		if count == 0 && len(step.Attempts) > 0 {
+			count = len(step.Attempts)
+		}
+		if count > 0 {
+			attempts[step.ID] = count
+		}
+		for _, attempt := range step.Attempts {
+			if attempt.RetryReason != "" {
+				reasons[step.ID] = append(reasons[step.ID], attempt.RetryReason)
+			}
+		}
+	}
+	return attempts, reasons
+}
+
+func matchOperationProofAttempts(expected, actual map[string]int) error {
+	for step, want := range expected {
+		if got := actual[step]; got != want {
+			return fmt.Errorf("operation step %s attempts=%d did not match %d", step, got, want)
+		}
+	}
+	return nil
+}
+
+func matchOperationProofRetryReasons(expected, actual map[string][]string) error {
+	for step, want := range expected {
+		got := actual[step]
+		if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+			return fmt.Errorf("operation step %s retry reasons %v did not match %v", step, got, want)
 		}
 	}
 	return nil

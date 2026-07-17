@@ -63,7 +63,7 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 			if len(ready) == 0 {
 				now := time.Now().UTC().Format(time.RFC3339Nano)
 				for index := range receipt.Steps {
-					if receipt.Steps[index].State == "pending" {
+					if receipt.Steps[index].State == "pending" || receipt.Steps[index].State == "retry_wait" {
 						receipt.Steps[index].State = "blocked"
 						receipt.Steps[index].ContractState = "blocked"
 						receipt.Steps[index].BlockedBy = []string{"operator-cancel"}
@@ -79,13 +79,24 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 			}
 		}
 		if len(ready) == 0 {
+			if delay, waiting := operationsvc.NextRetryDelay(*receipt, time.Now()); waiting {
+				if delay > 250*time.Millisecond {
+					delay = 250 * time.Millisecond
+				}
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(delay):
+					continue
+				}
+			}
 			break
 		}
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		wave := operationsvc.ExecutionWave{Index: len(receipt.ExecutionWaves) + 1, State: "preparing", ReadyAt: now}
 		recordWave := false
 		for _, index := range ready {
-			if receipt.Steps[index].State == "pending" {
+			if receipt.Steps[index].State == "pending" || receipt.Steps[index].State == "retry_wait" {
 				recordWave = true
 				wave.Steps = append(wave.Steps, item.Document.Steps[index].ID)
 			}
@@ -120,7 +131,7 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 				switch receipt.Steps[index].State {
 				case "running", "ready", "incomplete":
 					active = append(active, index)
-				case "pending":
+				case "pending", "retry_wait":
 					receipt.Steps[index].State = "blocked"
 					receipt.Steps[index].ContractState = "blocked"
 					receipt.Steps[index].BlockedBy = []string{"operator-cancel"}
@@ -143,7 +154,7 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 		}
 		wave.State, wave.StartedAt = "running", time.Now().UTC().Format(time.RFC3339Nano)
 		for _, index := range ready {
-			if receipt.Steps[index].State == "pending" {
+			if receipt.Steps[index].State == "pending" || receipt.Steps[index].State == "retry_wait" {
 				receipt.Steps[index].State = "running"
 			}
 			if receipt.Steps[index].StartedAt == "" {
@@ -158,8 +169,9 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 		}
 		results := executeDAGWave(ctx, registry, item, inputs, topology, opts, *receipt, path, prepared, ready)
 		sort.Slice(results, func(i, j int) bool { return results[i].index < results[j].index })
-		var failed, incomplete, active, canceled []string
+		var failed, incomplete, active, retrying, canceled []string
 		for _, result := range results {
+			result = applyDAGRetry(item.Document.Steps[result.index], result, inputs, receipt.Captures, topology)
 			receipt.Steps[result.index] = result.receipt
 			if len(result.display) > 0 {
 				_, _ = stdout.Write(result.display)
@@ -186,6 +198,8 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 				}
 			case "failed":
 				failed = append(failed, result.receipt.ID)
+			case "retry_wait":
+				retrying = append(retrying, result.receipt.ID)
 			case "canceled":
 				canceled = append(canceled, result.receipt.ID)
 			}
@@ -214,6 +228,9 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 			operationsvc.BlockDAGDescendants(item.Document, receipt, incomplete)
 		case len(active) > 0:
 			wave.State, receipt.Status = "active", "running"
+			receipt.Error = ""
+		case len(retrying) > 0:
+			wave.State, receipt.Status = "retry_wait", "running"
 			receipt.Error = ""
 		default:
 			wave.State = "completed"
@@ -266,6 +283,19 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 			case <-time.After(100 * time.Millisecond):
 			}
 		}
+		if len(retrying) > 0 && len(active) == 0 {
+			if delay, waiting := operationsvc.NextRetryDelay(*receipt, time.Now()); waiting {
+				fmt.Fprintf(stdout, "retry     steps=%v wait=%s\n", retrying, delay.Round(time.Millisecond))
+				if delay > 250*time.Millisecond {
+					delay = 250 * time.Millisecond
+				}
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(delay):
+				}
+			}
+		}
 	}
 	if !operationsvc.DAGComplete(*receipt) {
 		return fmt.Errorf("dag operation has no ready steps but is not complete")
@@ -279,6 +309,74 @@ func runDAGOperation(ctx context.Context, stdout io.Writer, registry *operations
 		return cleanupOperation(ctx, stdout, registry, item, inputs, receipt, path, opts)
 	}
 	return nil
+}
+
+func applyDAGRetry(step operationsvc.Step, result dagStepResult, inputs, captures, topology map[string]string) dagStepResult {
+	if result.receipt.Attempt <= 0 {
+		result.receipt.Attempt = 1
+	}
+	if result.receipt.MaxAttempts <= 0 {
+		result.receipt.MaxAttempts = 1
+	}
+	if result.receipt.State != "completed" && result.receipt.State != "failed" {
+		return result
+	}
+	now := time.Now().UTC()
+	attempt := operationsvc.AttemptReceipt{
+		Number:         result.receipt.Attempt,
+		State:          result.receipt.State,
+		ObjectSHA256:   result.receipt.ObjectSHA256,
+		OutputComplete: result.receipt.OutputComplete,
+		Runtime:        result.receipt.Runtime,
+		ContractState:  result.receipt.ContractState,
+		MatchedTag:     result.receipt.MatchedTag,
+		MatchedFields:  append([]string(nil), result.receipt.MatchedFields...),
+		Captures:       cloneStringMap(result.receipt.Captures),
+		StartedAt:      result.receipt.StartedAt,
+		CompletedAt:    now.Format(time.RFC3339Nano),
+	}
+	if result.receipt.State == "failed" && step.Retry != nil && result.receipt.OutputComplete && result.receipt.Runtime.ExecutionState == "completed" && result.receipt.ReadyState != "ready" {
+		if reason, matched := operationsvc.MatchRetry(result.output, step.Retry, inputs, captures, topology); matched {
+			attempt.RetryReason = reason
+			if result.receipt.Attempt < step.Retry.MaxAttempts {
+				delay := operationsvc.RetryDelay(step.Retry, result.receipt.Attempt)
+				next := now.Add(delay)
+				attempt.State, attempt.DelayMS, attempt.NextEligibleAt = "retry", int(delay/time.Millisecond), next.Format(time.RFC3339Nano)
+				result.receipt.Attempts = append(result.receipt.Attempts, attempt)
+				result.receipt.Attempt++
+				result.receipt.State, result.receipt.ContractState = "retry_wait", "pending"
+				result.receipt.RetryState, result.receipt.RetryReason, result.receipt.NextAttemptAt = "waiting", reason, attempt.NextEligibleAt
+				result.receipt.Runtime, result.receipt.ObjectSHA256 = runtimeadapter.Receipt{}, ""
+				result.receipt.OutputComplete, result.receipt.Captures = false, nil
+				result.receipt.Error, result.receipt.StartedAt, result.receipt.CompletedAt = "", "", ""
+				result.receipt.MatchedTag, result.receipt.MatchedFields = "", nil
+				result.receipt.ReadyState, result.receipt.ReadyContractState = "pending", "pending"
+				result.receipt.ReadyAt, result.receipt.ReadyCaptures = "", nil
+				result.err = nil
+				return result
+			}
+			result.receipt.RetryState, result.receipt.RetryReason = "exhausted", reason
+			if result.receipt.Error == "" {
+				result.receipt.Error = fmt.Sprintf("retry limit exhausted after %d attempts (%s)", result.receipt.Attempt, reason)
+			}
+		}
+	}
+	result.receipt.Attempts = append(result.receipt.Attempts, attempt)
+	if result.receipt.State == "completed" && len(result.receipt.Attempts) > 1 {
+		result.receipt.RetryState = "completed"
+	}
+	return result
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
 }
 
 func settleDAGRuntimeTasks(ctx context.Context, receipt *operationsvc.Receipt, opts operationOptions, path string, timeout time.Duration) {
@@ -380,7 +478,7 @@ func dagWaveState(ids []string, steps []operationsvc.StepReceipt) string {
 				if state != "canceled" {
 					state = "incomplete"
 				}
-			case "pending", "running", "ready":
+			case "pending", "running", "ready", "retry_wait":
 				if state == "completed" {
 					state = "active"
 				}

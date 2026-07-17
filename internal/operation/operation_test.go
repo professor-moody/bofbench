@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	packsvc "bofbench/internal/pack"
 	"bofbench/internal/runtimeadapter"
@@ -244,6 +245,59 @@ func TestSchemaVersionSevenRejectsInvalidReadiness(t *testing.T) {
 	document.Steps[0].Mode = "foreground"
 	if err := validate(document); err == nil || !strings.Contains(err.Error(), "foreground mode") {
 		t.Fatalf("foreground readiness was not rejected: %v", err)
+	}
+}
+
+func TestSchemaVersionEightValidatesBoundedRetry(t *testing.T) {
+	document := Document{
+		Schema: Schema, SchemaVersion: 8, Execution: "dag", ID: "retry", Version: "1.0.0", Title: "Retry", Summary: "Explicit terminal-result retry", Tier: "internal",
+		Steps: []Step{{
+			ID: "request", Pack: "host-discovery",
+			Expect: &packsvc.ProofExpectation{Tag: "request", Fields: map[string]string{"status": "complete", "http_status": "200"}},
+			Retry: &RetryPolicy{
+				MaxAttempts: 3, DelayMS: 50, Backoff: "exponential", MaxDelayMS: 200,
+				When: []RetryContract{{ID: "transient-http", Expect: packsvc.ProofExpectation{Tag: "request", Fields: map[string]string{"status": "complete", "http_status": "503"}}}},
+			},
+		}},
+		ProofCases: []ProofCase{{ID: "bounded", Via: []string{"lab"}, ExpectAttempts: map[string]int{"request": 2}, ExpectRetryReasons: map[string][]string{"request": []string{"transient-http"}}}},
+	}
+	if err := validate(document); err != nil {
+		t.Fatalf("valid retry document rejected: %v", err)
+	}
+	document.Steps[0].Retry.MaxAttempts = 17
+	if err := validate(document); err == nil || !strings.Contains(err.Error(), "between 2 and 16") {
+		t.Fatalf("unbounded retry was not rejected: %v", err)
+	}
+	document.Steps[0].Retry.MaxAttempts = 3
+	document.Steps[0].Mode = "background"
+	document.Steps[0].Ready = &packsvc.ProofExpectation{Tag: "request", Fields: map[string]string{"status": "ready"}}
+	document.Steps[0].TimeoutMS = 1000
+	if err := validate(document); err != nil {
+		t.Fatalf("background retry-before-readiness should validate: %v", err)
+	}
+}
+
+func TestRetryMatchingDelayAndEligibility(t *testing.T) {
+	policy := &RetryPolicy{MaxAttempts: 4, DelayMS: 100, Backoff: "exponential", MaxDelayMS: 250, When: []RetryContract{{ID: "busy", Expect: packsvc.ProofExpectation{Tag: "request", Fields: map[string]string{"status": "complete", "code": "503"}}}}}
+	if reason, ok := MatchRetry([]string{"[request] status=complete code=503"}, policy, nil, nil, nil); !ok || reason != "busy" {
+		t.Fatalf("explicit retry contract did not match: reason=%q ok=%v", reason, ok)
+	}
+	if _, ok := MatchRetry([]string{"[request] status=complete code=500"}, policy, nil, nil, nil); ok {
+		t.Fatal("undeclared terminal result was classified as retryable")
+	}
+	if got := RetryDelay(policy, 1); got != 100*time.Millisecond {
+		t.Fatalf("first retry delay = %s", got)
+	}
+	if got := RetryDelay(policy, 3); got != 250*time.Millisecond {
+		t.Fatalf("capped retry delay = %s", got)
+	}
+	now := time.Now().UTC()
+	receipt := Receipt{Steps: []StepReceipt{{ID: "request", State: "retry_wait", NextAttemptAt: now.Add(25 * time.Millisecond).Format(time.RFC3339Nano)}}}
+	if RetryDue(receipt.Steps[0], now) {
+		t.Fatal("retry became eligible before its declared backoff")
+	}
+	if delay, ok := NextRetryDelay(receipt, now); !ok || delay <= 0 {
+		t.Fatalf("pending retry delay not reported: delay=%s ok=%v", delay, ok)
 	}
 }
 

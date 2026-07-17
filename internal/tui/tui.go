@@ -97,6 +97,7 @@ type runEntry struct {
 	ActiveTasks    []string
 	Cancellation   string
 	DependencyRows []string
+	RetryRows      []string
 	ModTime        time.Time
 }
 
@@ -1144,6 +1145,9 @@ func renderRunDetail(run runEntry) string {
 	if len(run.DependencyRows) > 0 {
 		fmt.Fprintf(&b, "  dependency state: %s\n", strings.Join(run.DependencyRows, ", "))
 	}
+	if len(run.RetryRows) > 0 {
+		fmt.Fprintf(&b, "  retries: %s\n", strings.Join(run.RetryRows, ", "))
+	}
 	if len(run.ReadinessRows) > 0 {
 		fmt.Fprintf(&b, "  readiness: %s\n", strings.Join(run.ReadinessRows, ", "))
 	}
@@ -1383,6 +1387,19 @@ func readRunEntry(path string, modTime time.Time) runEntry {
 							label += "@" + readyAt
 						}
 						run.ReadinessRows = append(run.ReadinessRows, label)
+					}
+					if maximum := int(intField(step, "max_attempts")); maximum > 1 {
+						label := fmt.Sprintf("%s=%d/%d", stringField(step, "id"), int(intField(step, "attempt")), maximum)
+						if state := stringField(step, "retry_state"); state != "" {
+							label += ":" + state
+						}
+						if reason := stringField(step, "retry_reason"); reason != "" {
+							label += ":" + reason
+						}
+						if next := stringField(step, "next_attempt_at"); next != "" {
+							label += "@" + next
+						}
+						run.RetryRows = append(run.RetryRows, label)
 					}
 					if runtimeReceipt, ok := step["runtime_receipt"].(map[string]any); ok {
 						state := stringField(runtimeReceipt, "execution_state")
