@@ -105,6 +105,34 @@ Inventory RPC endpoints, COM registrations, and ALPC ports concurrently
 
 - `local-ipc`: via `lab,sliver`, architectures `x64,x86`, expected path `surfaces`, expanded path `surfaces → surfaces/rpc → surfaces/com → surfaces/alpc → surfaces/$join`
 
+## `builtin/network-connectivity-triage`
+
+Inventory local network profiles, socket endpoints, and DNS cache state as one concurrent ready wave
+
+- Schema version: `8`
+- Execution: `dag`
+- Tier: `public`
+- Steps: `3`
+- Proof cases: `1`
+
+### Inputs
+
+| Name | Type | Required | Sensitive | Topology value |
+|---|---|---:|---:|---|
+| `protocol` | `string` | false | false | `` |
+| `family` | `string` | false | false | `` |
+| `result_limit` | `int` | false | false | `` |
+
+### Steps
+
+1. `profiles` → `network-profile-inventory`
+2. `sockets` → `socket-endpoint-inventory`
+3. `dns-cache` → `dns-cache-inventory`
+
+### Proof cases
+
+- `local-connectivity`: via `lab,sliver`, architectures `x64,x86`, waves `profiles+sockets+dns-cache`
+
 ## `builtin/network-posture`
 
 Inventory local adapters, forwarding routes, and proxy configuration

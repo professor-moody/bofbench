@@ -42,6 +42,7 @@ Use these walkthroughs when you want an outcome, not a command catalog. Each sce
 | [Compose Native IPC Operations](composable-native-ipc.md) | Nested synchronization and mailslot lifecycles with transitive receipts and cleanup |
 | [Run Parallel Native IPC and RPC Workflows](parallel-native-ipc.md) | Concurrent named-pipe, redirected-process, RPC, COM, and discovery branches with deterministic receipts |
 | [Run a Dependency-Aware IPC Operation](dependency-aware-ipc.md) | Ready-wave scheduling, dependent captures, C2 resume, and reverse-topological cleanup |
+| [Run Resilient Network Transport](network-transport-retry.md) | TCP/UDP/HTTP/WebSocket/DNS/BITS proof with explicit finite 503→200 retry |
 
 ## Recover and release
 

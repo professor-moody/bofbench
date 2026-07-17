@@ -127,6 +127,18 @@ bofbench runtime task runs/<task-run>/result.json --refresh
 
 The watcher must emit the exact tag and fields declared under `ready`. A terminal result before readiness is a failure, even if the loader itself exited normally. Confirm that the watched key, directory, service, process, channel, ETW session, or event exists in the selected Windows view and user context. For 32-bit registry work, select the intended `view=32|64|native`.
 
+## Retry did not happen or is exhausted
+
+Inspect the step and its `attempts` array:
+
+```bash
+bofbench operation watch runs/<operation-run>/operation.json --follow
+jq '.steps[] | select(.max_attempts > 1) | {id,state,attempt,max_attempts,retry_state,retry_reason,next_attempt_at,attempts}' \
+  runs/<operation-run>/operation.json
+```
+
+BOFBench retries only complete terminal output that matches one named `retry.when` contract. A runtime failure, timeout, partial output, incomplete C2 task, or undeclared application result cannot consume the retry path. `exhausted` means the most recent complete transient result matched but the finite attempt limit was reached. `retry_wait` may be resumed or canceled; cancellation interrupts the deterministic backoff immediately. A background watcher cannot retry after it has emitted readiness.
+
 ## Cancel an active operation
 
 ```sh

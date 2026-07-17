@@ -1,6 +1,6 @@
 # Composable, Provable Multi-Step Operations
 
-Operations connect capability packs into result-aware workflows. A step can capture a structured output field—such as a PID, address, hash, path, object name, pipe name, window handle, or retained handle—and pass it to later work. Version 3 can route a completed, understood result to a later step. Version 4 can invoke another catalog operation as an atomic child step. Version 5 can run explicit parallel groups. Version 6 adds dependency-aware DAG execution. Version 7 adds bounded background steps, readiness dependencies, live progress, and cancellation. Work advances only when the relevant contract is true:
+Operations connect capability packs into result-aware workflows. A step can capture a structured output field—such as a PID, address, hash, path, object name, pipe name, window handle, or retained handle—and pass it to later work. Version 3 can route a completed, understood result to a later step. Version 4 can invoke another catalog operation as an atomic child step. Version 5 can run explicit parallel groups. Version 6 adds dependency-aware DAG execution. Version 7 adds bounded background steps, readiness dependencies, live progress, and cancellation. Version 8 adds finite retry for explicitly declared complete transient results. Work advances only when the relevant contract is true:
 
 1. the runtime task completed with complete output; and
 2. the step's declared structured-result contract matched.
@@ -52,7 +52,7 @@ bofbench operation run internal/virtual-memory-execute \
 
 Normal operation accepts operator-selected targets and payloads. Proof fixtures and benign proof payloads are acceptance infrastructure, not runtime restrictions. `--cleanup` and `--cleanup-on-failure` remain optional.
 
-The run creates `runs/<run-id>/operation.json`. The version-7 receipt pins the complete transitive operation and pack set, action and cleanup pack hashes, child receipt paths, object hashes, runtime receipts, terminal and readiness contract state, matched outcomes, completion/readiness dependencies, waves, blocked steps, active task identity, timestamps, cancellation state, parent and expanded execution paths, non-sensitive captures, and cleanup results. Sensitive values are never stored.
+The run creates `runs/<run-id>/operation.json`. The version-8 receipt pins the complete transitive operation and pack set, action and cleanup pack hashes, child receipt paths, object hashes, runtime receipts, terminal and readiness contract state, matched outcomes, completion/readiness dependencies, waves, blocked steps, active task identity, timestamps, cancellation state, parent and expanded execution paths, non-sensitive captures, retry attempts/reasons/backoff, and cleanup results. Sensitive values are never stored.
 
 ```mermaid
 flowchart LR
@@ -219,6 +219,48 @@ bofbench operation cancel runs/<run-id>/operation.json --cleanup
 Native and lab execution use isolated task workers and atomically written receipts. Lab background work runs beneath a run-specific Windows scheduled-task controller so cancellation can terminate the recorded worker and every descendant loader process instead of merely closing the transport. Cancellation stops new scheduling first, cancels every active exact task, waits for terminal receipts, and only then performs requested cleanup. Sliver and Cobalt Strike cancellation is reported only when the detected runtime provides an exact supported mechanism.
 
 Pack schema version 5 can delegate a pack's live proof to an operation step. The proof passes only when the operation used the exact resolved pack hash and the selected action or cleanup phase completed successfully.
+
+## Explicit bounded retry
+
+Schema version 8 allows a direct pack step in a DAG to retry only a complete result that matches a named `when` contract:
+
+```json
+{
+  "id": "request",
+  "pack": "winhttp-request",
+  "expect": {
+    "tag": "winhttp-request",
+    "fields": {"status": "complete", "http_status": "200"}
+  },
+  "retry": {
+    "max_attempts": 3,
+    "delay_ms": 500,
+    "backoff": "exponential",
+    "max_delay_ms": 4000,
+    "when": [
+      {
+        "id": "transient-http",
+        "expect": {
+          "tag": "winhttp-request",
+          "fields": {"status": "complete", "http_status": "503"}
+        }
+      }
+    ]
+  }
+}
+```
+
+The boundary is deliberate:
+
+- `max_attempts` is 2–16 and counts the first attempt;
+- backoff is deterministic `fixed` or `exponential`, with no jitter;
+- a runtime crash, timeout, partial output, incomplete C2 task, or undeclared result is not retried;
+- a background step may retry only before it reaches readiness;
+- cancellation interrupts pending backoff;
+- resume refreshes the current attempt and preserves the attempt budget;
+- each attempt retains its exact runtime receipt, matched reason, captures, delay, and optional cleanup result.
+
+Proof cases can assert `expect_attempts` and the ordered `expect_retry_reasons`. Watch, graph, JSON, and the TUI expose `attempt N/max`, the current reason, next eligible time, and exhaustion. See [Resilient Network Transport](scenarios/network-transport-retry.md) for a 503→200 run that uses no wrapper scripts.
 
 ## Parallel groups
 

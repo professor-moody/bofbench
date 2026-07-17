@@ -12,10 +12,10 @@
 </div>
 
 <div class="bb-proof">
-  <div><strong>231 packs</strong><span>87 public · 144 private</span></div>
+  <div><strong>244 packs</strong><span>90 public · 154 private</span></div>
   <div><strong>x64 + x86</strong><span>separate native loaders</span></div>
   <div><strong>4 runtimes</strong><span>native · lab · Sliver · CS</span></div>
-  <div><strong class="bb-impact">43 operations</strong><span>linear · routed · parallel · async DAG</span></div>
+  <div><strong class="bb-impact">50 operations</strong><span>linear · routed · async · bounded retry</span></div>
 </div>
 
 # The operator loop
@@ -72,7 +72,7 @@ bofbench operation run internal/ipc-dependency-matrix \
   --via lab --lab devbox --parallelism 4
 ```
 
-Version-7 operations can keep bounded watchers active while a dependent action waits only for a declared readiness result:
+Version-7 operations can keep bounded watchers active while a dependent action waits only for a declared readiness result. Version 8 can retry only a named, complete transient result, with a finite deterministic delay:
 
 ```bash
 bofbench operation run internal/registry-change-observe \
@@ -81,7 +81,7 @@ bofbench operation watch runs/<run-id>/operation.json --follow
 bofbench operation cancel runs/<run-id>/operation.json --cleanup
 ```
 
-Native and lab tasks stream structured progress into atomically readable receipts. A trigger is not scheduled until its watcher emits the exact `status=ready` contract, and cancellation is reported separately from ordinary runtime failure.
+Native and lab tasks stream structured progress into atomically readable receipts. A trigger is not scheduled until its watcher emits the exact `status=ready` contract. Retry never guesses that a crash, timeout, partial response, or incomplete C2 task is transient, and cancellation interrupts pending backoff immediately.
 
 ## Use the same interface at different depths
 

@@ -24,6 +24,8 @@
 | Proof | Manifest-declared runtime case with expected output and optional independent state verification |
 | Receipt | `bofbench.runtime-receipt` JSON result normalized across runtime adapters |
 | Ready wave | Set of dependency-satisfied DAG steps fully prepared before concurrent execution |
+| Retry contract | Named version-8 result contract that permits one finite retry only after complete terminal output matches |
+| Retry attempt | One exact pack/runtime execution with its own receipt, captures, reason, delay, and optional cleanup state |
 | Runtime refresh | Adapter request that updates a persisted C2 receipt from its recorded session and task |
 | Source and version | Repository, revision, object path, and object hash when known |
 | Topology | Named mapping from execution, target, and domain-controller roles to lab profiles |

@@ -33,7 +33,7 @@ cleanup() {
     export/docs-capture-* export/docs-lab-* export/docs-export-* \
     dist/docs-capture.* dist/docs-lab.* dist/docs-export.* || true
 	if [[ "$MEDIA_RUNS_STASHED" == "1" ]]; then
-		rm -rf runs/*operation-process-lifecycle-observe* || true
+		rm -rf runs/*operation-network-transport-matrix* runs/*operation-http-transaction-roundtrip* runs/*operation-tcp-echo-roundtrip* || true
 		for saved in "$MEDIA_RUN_STASH"/*; do
 			[[ -e "$saved" ]] || continue
 			mv "$saved" runs/
@@ -47,7 +47,7 @@ rm -rf \
   bofs/docs-capture bofs/docs-lab bofs/docs-export \
   export/docs-capture-* export/docs-lab-* export/docs-export-* \
   dist/docs-capture.* dist/docs-lab.* dist/docs-export.* || true
-for existing in runs/*operation-process-lifecycle-observe*; do
+for existing in runs/*operation-network-transport-matrix* runs/*operation-http-transaction-roundtrip* runs/*operation-tcp-echo-roundtrip*; do
 	[[ -e "$existing" ]] || continue
 	mv "$existing" "$MEDIA_RUN_STASH"/
 done

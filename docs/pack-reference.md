@@ -155,6 +155,24 @@ Combine bounded process, token, service, TCP endpoint, domain, host, identity, f
 | `process_filter` | `string` | no | no | `` | case-insensitive process image substring; empty matches all |
 | `result_limit` | `int` | no | no | `25` | maximum matching process rows (1-256) |
 
+## `builtin/dns-cache-inventory`
+
+enumerate bounded local DNS resolver cache names and record metadata
+
+- Can do: bounded local DNS resolver cache inventory
+- Effects: reads data
+- Needs: privilege=user; network=local; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `dns_cache_inventory`
+- Live proofs: bounded-cache (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `name_filter` | `wstring` | no | no | `` | case-insensitive cached-name substring |
+| `record_type` | `int` | no | no | `0` | exact DNS record type; zero matches all |
+| `result_limit` | `int` | no | no | `64` | maximum cache rows (1-512) |
+
 ## `builtin/domain-context`
 
 report local workgroup or domain join context
@@ -701,6 +719,22 @@ enumerate bounded IPv4 and IPv6 neighbor-cache metadata
 | `interface_index` | `int` | no | no | `0` | exact interface index; zero matches all |
 | `result_limit` | `int` | no | no | `64` | maximum neighbor rows (1-512) |
 
+## `builtin/network-profile-inventory`
+
+read Network List Manager connectivity and bounded network profile metadata
+
+- Can do: Network List Manager connectivity and bounded network-profile inventory
+- Effects: reads data
+- Needs: privilege=user; network=local; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `network_profile_inventory`
+- Live proofs: bounded-profiles (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `result_limit` | `int` | no | no | `64` | maximum profiles (1-512) |
+
 ## `builtin/network-route-inventory`
 
 enumerate bounded IPv4 and IPv6 forwarding routes
@@ -1139,6 +1173,27 @@ enumerate a bounded set of local Windows services
 - Needs: privilege=user; network=none; platform=windows/x64,x86
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
+
+## `builtin/socket-endpoint-inventory`
+
+enumerate bounded IPv4 and IPv6 TCP and UDP endpoints with owning process metadata
+
+- Can do: bounded IPv4 and IPv6 TCP and UDP endpoint inventory
+- Effects: reads data
+- Needs: privilege=user; network=local; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `socket_endpoint_inventory`
+- Live proofs: bounded-endpoints (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `protocol` | `string` | no | no | `all` | all, tcp, or udp |
+| `family` | `string` | no | no | `all` | all, ipv4, or ipv6 |
+| `pid` | `int` | no | no | `0` | exact owning PID; zero matches all |
+| `state` | `int` | no | no | `0` | exact TCP state; zero matches all |
+| `local_port` | `int` | no | no | `0` | exact local port; zero matches all |
+| `result_limit` | `int` | no | no | `64` | maximum endpoints (1-512) |
 
 ## `builtin/survey`
 
