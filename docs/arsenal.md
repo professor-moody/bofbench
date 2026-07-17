@@ -10,7 +10,7 @@ bofbench arsenal acquire https://github.com/trustedsec/CS-Situational-Awareness-
 bofbench arsenal inventory arsenal/trustedsec-sa
 ```
 
-The inventory records capabilities, behavior chains, effects, arguments, architecture, loader support, source/version, target compatibility, and duplicate object groups. Arsenal index version 2 stores a separate analysis for every object and architecture. Analysis is cached outside the arsenal by object hash, source identity, architecture, and analyzer-signature-set hash. Repeating a search reuses unchanged objects and reports `cached` versus `refreshed` counts. Old version-1 caches are ignored and rebuilt without touching the source arsenal.
+The inventory records capabilities, behavior chains, effects, arguments, architecture, loader support, source/version, target compatibility, and duplicate object groups. Arsenal index version 2 stores a separate analysis for every object and architecture. Analysis is cached outside the arsenal by object hash, source identity, architecture, analyzer-signature-set hash, and analysis schema version. Repeating a search reuses unchanged objects and reports `cached` versus `refreshed` counts. Old or older-analysis caches are ignored and rebuilt without touching the source arsenal.
 
 ## Search in operator language
 
@@ -32,6 +32,7 @@ Search filters are ANDed. Results are grouped by operator capability and show co
 ```bash
 bofbench arsenal matrix arsenal/trustedsec-sa
 bofbench arsenal matrix arsenal/trustedsec-sa --format json
+bofbench arsenal matrix arsenal/trustedsec-sa --analysis-version 3
 ```
 
 The matrix analyzes x64 and x86 independently, then reports:
@@ -43,6 +44,21 @@ The matrix analyzes x64 and x86 independently, then reports:
 - cache reuse and concrete loader blockers.
 
 A hash difference is expected between architectures and does not itself make behavior different. The equivalence decision compares normalized operator behavior and runtime contracts.
+
+## Capability graph
+
+Graph objects to one focused capability using analysis v3 evidence:
+
+```bash
+bofbench arsenal graph arsenal/trustedsec-sa \
+  --capability remote-execution
+bofbench arsenal graph arsenal/trustedsec-sa \
+  --capability token --format mermaid
+bofbench arsenal graph arsenal/trustedsec-sa \
+  --capability process --format json
+```
+
+The graph is capability-focused, not an import dump. Object nodes connect to inferred capabilities, with architecture, confidence, interprocedural evidence, and loader state retained in the machine-readable form.
 
 ## Analyze and compare
 

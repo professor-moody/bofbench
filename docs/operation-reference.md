@@ -33,6 +33,35 @@ Correlate detailed process handles, exact synchronization state, and the local m
 
 - `target-coordination`: via `lab,sliver`, architectures `x64,x86`, expected path `handles → state → mailslots`, expanded path `handles → state → mailslots`
 
+## `builtin/domain-identity-posture`
+
+Inventory Active Directory sites, organizational units, managed service accounts, and Kerberos policy as concurrent domain queries
+
+- Schema version: `11`
+- Execution: `dag`
+- Tier: `public`
+- Steps: `4`
+- Proof cases: `1`
+
+### Inputs
+
+| Name | Type | Required | Sensitive | Topology value |
+|---|---|---:|---:|---|
+| `server` | `string` | false | false | `domain_controller.computer_name` |
+| `base_dn` | `string` | false | false | `` |
+| `result_limit` | `int` | false | false | `` |
+
+### Steps
+
+1. `sites` → `ad-site-inventory`
+2. `ous` → `ldap-ou-inventory`
+3. `service-accounts` → `ldap-managed-service-account-inventory`
+4. `kerberos-policy` → `kerberos-policy-inventory`
+
+### Proof cases
+
+- `domain`: via `lab,sliver`, architectures `x64,x86`, waves `sites+ous+service-accounts+kerberos-policy`
+
 ## `builtin/filesystem-and-smb-posture`
 
 Inspect NTFS streams, reparse metadata, and active SMB connections as one concurrent ready wave
@@ -189,6 +218,33 @@ Inventory local adapters, forwarding routes, and proxy configuration
 
 - `local-network`: via `lab,sliver`, architectures `x64,x86`
 
+## `builtin/process-execution-surface`
+
+Inspect mitigation policy, CFG executable regions, and instrumentation callback state for one exact process
+
+- Schema version: `11`
+- Execution: `dag`
+- Tier: `public`
+- Steps: `3`
+- Proof cases: `1`
+
+### Inputs
+
+| Name | Type | Required | Sensitive | Topology value |
+|---|---|---:|---:|---|
+| `target_pid` | `int` | true | false | `` |
+| `result_limit` | `int` | false | false | `` |
+
+### Steps
+
+1. `mitigations` → `process-mitigation-inventory`
+2. `cfg` → `process-cfg-target-inventory`
+3. `instrumentation` → `process-instrumentation-callback-inventory`
+
+### Proof cases
+
+- `target`: via `lab,sliver`, architectures `x64,x86`, waves `mitigations+cfg+instrumentation`
+
 ## `builtin/process-triage`
 
 Inspect a selected process, its loaded images, thread state, and security context
@@ -215,6 +271,34 @@ Inspect a selected process, its loaded images, thread state, and security contex
 ### Proof cases
 
 - `target-process`: via `lab,sliver`, architectures `x64,x86`
+
+## `builtin/remote-host-posture`
+
+Inspect exact-host identity, Event Log, share permissions, and firewall policy as one bounded remote operation
+
+- Schema version: `11`
+- Execution: `dag`
+- Tier: `public`
+- Steps: `4`
+- Proof cases: `1`
+
+### Inputs
+
+| Name | Type | Required | Sensitive | Topology value |
+|---|---|---:|---:|---|
+| `target_host` | `wstring` | false | false | `target.computer_name` |
+| `result_limit` | `int` | false | false | `` |
+
+### Steps
+
+1. `identity` → `remote-host-info`
+2. `events` → `remote-event-log-query`
+3. `shares` → `remote-share-permission-inventory`
+4. `firewall` → `remote-firewall-profile-inventory`
+
+### Proof cases
+
+- `target`: via `lab,sliver`, architectures `x64,x86`, waves `identity+events+shares+firewall`
 
 ## `builtin/secure-network-posture`
 

@@ -41,6 +41,24 @@ bofbench pack prove --all --catalog internal --via sliver --lab devbox \
 
 The resumed report records its source report and executes only matching pack/proof cases. Existing completed cases remain in the original report, so an operator can retry live coverage without rebuilding the entire proof lane.
 
+## Compare completed runtimes
+
+Runtime comparison builds one exact object, runs it through each selected adapter, then evaluates the structured fields declared by pack schema v6:
+
+```bash
+bofbench runtime compare bofs/portable-survey \
+  --via lab,sliver --lab proxmox-dev \
+  --arg process_filter=lsass --arg result_limit=5
+
+bofbench runtime compare operation internal/domain-remote-operation-matrix \
+  --catalog ~/bofbench-packs-internal \
+  --via lab,sliver --topology proxmox-domain
+```
+
+Comparison behavior is explicit per field: exact, presence, normalized, payload hash, or ignored volatile value. The `bofbench.runtime-comparison` receipt records the shared object hash (or complete operation object-set digest), each underlying receipt, field decisions, and availability. Submitted, running, partial, timed-out, or hash-mismatched work is never equivalent to a completed result.
+
+If Sliver is unavailable, the comparison remains useful: lab results are retained and the Sliver lane is recorded as unavailable rather than passed. Re-run after starting a matching session to close that coverage.
+
 ## Native Windows
 
 On Windows, `native` launches the selected COFF loader in a child process with timeout, output limits, exception reporting, and per-section memory protections. x64 and x86 objects dispatch to separate helpers.

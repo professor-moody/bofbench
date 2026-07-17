@@ -8,7 +8,7 @@ bofbench analyze arsenal/trustedsec-sa/SA/whoami/whoami.x64.o
 bofbench analyze first.x64.o --compare second.x64.o
 ```
 
-Project input is source-checked, built, and enriched with its locked pack arguments and expectations. Third-party objects are analyzed directly from COFF structure, relocations, function symbols, imported APIs, and useful strings.
+Project input is source-checked, built, and enriched with its locked pack arguments and expectations. Third-party objects are analyzed directly from COFF structure, relocations, function symbols, imported APIs, useful strings, and cross-function call/resource flow.
 
 ## Read the default result
 
@@ -38,10 +38,28 @@ The operator summary comes first. Section layouts, raw imports, relocations, fin
 | Confidence | Meaning |
 | --- | --- |
 | `confirmed primitive` | The object has a concrete API primitive such as process open, registry write, or token query. |
-| `strong chain` | Required steps occur in the same function and form a recognized behavior sequence. |
+| `strong chain` | Required steps form a recognized same-function or call-connected interprocedural sequence with correlated resources. |
 | `possible` | A resolved pack declares the capability, or object evidence is suggestive but not a complete chain. |
 
-An isolated `OpenProcess` import does not become injection. BOFBench reports remote-thread injection only when process open, remote allocation, memory write, and remote thread start correlate inside one function. APC injection requires the corresponding queue step. Token impersonation requires token open, duplicate, and apply.
+An isolated `OpenProcess` import does not become injection. BOFBench reports remote-thread injection only when process open, remote allocation, memory write, and remote thread start correlate inside one function or a statically connected wrapper/callee flow. APC injection requires the corresponding queue step. Token impersonation requires token open, duplicate, and apply. Unconnected functions never become a chain merely because the global import set contains every API.
+
+## Analysis schema v3
+
+Schema v3 retains every v1/v2 structural and capability field and adds:
+
+- normalized compiler thunks and wrapper functions;
+- API-return correlation across a call-connected function graph;
+- resource flows for handles, tokens, processes, threads, memory, registry keys, services, and network objects;
+- `evidence_functions` and an `interprocedural` marker on behavior chains;
+- architecture-aware evidence for x64/x86 matrix comparison.
+
+Focus on one capability without losing the full JSON/Markdown evidence:
+
+```bash
+bofbench analyze third-party.x64.o --explain token-impersonation
+```
+
+The explanation names the matched chain, confidence, evidence functions, ordered APIs, effects, requirements, and unresolved gaps. Capability names normalize hyphens and underscores for operator convenience.
 
 ## Current behavior chains
 
@@ -97,7 +115,7 @@ The diff includes added and removed capabilities, behavior chains, imports, find
 bofbench analyze arsenal/trustedsec-sa/SA/whoami/whoami.x64.o
 ```
 
-The object’s identity, SID, group, privilege, and token-query APIs support current identity and token discovery. They do not form token duplication, impersonation, process injection, persistence, or service-execution chains. That distinction is the point of capability analysis v2.
+The object’s identity, SID, group, privilege, and token-query APIs support current identity and token discovery. They do not form token duplication, impersonation, process injection, persistence, or service-execution chains. That distinction remains central in capability analysis v3; wrapper normalization improves evidence without relaxing the required sequence.
 
 ## Loader support
 

@@ -4,6 +4,30 @@ BOFBench uses Sliver's BOF extension model: COFF `.o` artifacts, `extension.json
 
 Use this adapter only with an authorized Sliver server and Windows session.
 
+## Proxmox control and disposable lab sessions
+
+BOFBench can manage the lifecycle of an isolated, BOFBench-owned Sliver control VM without storing Sliver credentials in a lab profile:
+
+```bash
+bofbench runtime control add sliver-lab \
+  --runtime sliver --provider proxmox \
+  --proxmox-prep ~/.config/bofbench/proxmox-lab.json \
+  --vmid 4120 --template-vmid 4104
+bofbench runtime control up sliver-lab
+
+bofbench sliver lab-session start \
+  --control sliver-lab --lab proxmox-dev --arch x64 --context user
+```
+
+Repeat session creation sequentially for `x64 user`, `x64 system`, and `x86 user` proof coverage. Do not place an implant in a Windows template or clean snapshot. Stop and remove the disposable session when its lane completes:
+
+```bash
+bofbench sliver lab-session stop --lab proxmox-dev --cleanup
+bofbench runtime control down sliver-lab
+```
+
+`lab-session start` waits for a profile-matching live session and writes a secret-free receipt. It does not manufacture success when no session checks in.
+
 ## Bind a session to a lab profile
 
 Store a session selector while registering or cloning the Windows target:
@@ -49,6 +73,15 @@ The adapter:
 6. captures full output, task/session identifiers, timeout, and exit state in `runs/<id>/result.json`.
 
 The receipt is complete only after Sliver reports task completion and BOFBench captures the task output. A submitted task with no completed output remains `submitted`; it is not converted into a pass.
+
+Compare a completed Sliver result with native lab execution only when both lanes use the exact same object:
+
+```bash
+bofbench runtime compare bofs/portable-survey \
+  --via lab,sliver --lab dedicated
+```
+
+The comparison uses the manifest's field contracts and retains separate runtime receipts. Volatile PIDs or timestamps may be ignored or normalized only when the pack declares that behavior.
 
 Use `--session <id-or-name>` for a one-command override. Otherwise `--lab`, `BOFBENCH_LAB`, project default, and active-profile selection apply in that order.
 

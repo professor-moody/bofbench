@@ -12,10 +12,10 @@
 </div>
 
 <div class="bb-proof">
-  <div><strong>267 packs</strong><span>96 public · 171 private</span></div>
+  <div><strong>297 packs</strong><span>105 public · 192 private</span></div>
   <div><strong>x64 + x86</strong><span>separate native loaders</span></div>
   <div><strong>4 runtimes</strong><span>native · lab · Sliver · CS</span></div>
-  <div><strong class="bb-impact">63 operations</strong><span>DAG · async · retry · fan-out</span></div>
+  <div><strong class="bb-impact">80 operations</strong><span>DAG · async · retry · target sets</span></div>
 </div>
 
 # The operator loop
@@ -40,7 +40,7 @@ The project lock records the resolved pack versions, source hashes, arguments, a
 flowchart LR
     C["Public or private catalog"] --> P["Compose packs"]
     P --> O["COFF .o"]
-    X["Third-party .o"] --> A["Capability analysis v2"]
+    X["Third-party .o"] --> A["Capability analysis v3"]
     O --> A
     A --> R["Native · Lab · Sliver · Cobalt Strike"]
     R --> E["Runtime receipt + observed output"]
@@ -100,6 +100,26 @@ bofbench operation run internal/multi-path-file-collection \
 ```
 
 See [Fan-Out SMB and NTFS](scenarios/fanout-smb-ntfs.md) for single-target and multi-target workflows and [Proxmox-Native Labs](proxmox-labs.md) for reusable VM profiles and topologies.
+
+Version 11 can fan out over an ordered, explicitly named topology target set. Every target branch records the resolved lab profile, observed computer identity, exact object hash, runtime receipt, effects, and cleanup state:
+
+```bash
+bofbench lab topology target add proxmox-standalone \
+  --set windows-targets --lab proxmox-target-a
+bofbench lab topology target add proxmox-standalone \
+  --set windows-targets --lab proxmox-target-b
+bofbench operation run internal/multi-target-remote-triage \
+  --via lab --topology proxmox-standalone --targets windows-targets
+```
+
+The same object can be compared across completed runtimes, and analysis v3 can explain cross-function evidence instead of treating wrappers as unrelated imports:
+
+```bash
+bofbench runtime compare bofs/portable-survey \
+  --via lab,sliver --lab proxmox-dev
+bofbench analyze third-party.x64.o --explain token-impersonation
+bofbench arsenal graph arsenal/trustedsec-sa --capability remote-execution
+```
 
 ## Use the same interface at different depths
 

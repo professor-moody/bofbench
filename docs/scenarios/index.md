@@ -30,6 +30,8 @@ Use these walkthroughs when you want an outcome, not a command catalog. Each sce
 | [Inspect Receipts and Observed Behavior](receipts.md) | Exact-hash static/runtime correlation |
 | [Operate Sliver Sessions and Tasks](c2-tasks.md) | Session selection, task completion, proof resumption |
 | [Refresh and Complete a C2 Task](c2-task-refresh.md) | Persisted task refresh, chunk completion, and operation resume |
+| [Provision a Domain and Prove a Sliver Session](proxmox-domain-sliver.md) | Proxmox media, idempotent AD provisioning, disposable Sliver sessions, and honest teardown |
+| [Compare Runtimes and Explain Analysis v3](cross-runtime-analysis-v3.md) | Exact-object lab/Sliver comparison and interprocedural capability evidence |
 | [Use the Operator TUI](tui-workflow.md) | Interactive composition, arguments, runtime, and results |
 
 ## Exercise capabilities
@@ -38,6 +40,7 @@ Use these walkthroughs when you want an outcome, not a command catalog. Each sce
 | --- | --- |
 | [Run Public Host and Process Capabilities](public-capabilities.md) | Discovery, access, module exports, policy, and neighbors |
 | [Operate Standalone and Domain Topologies](topologies.md) | Explicit multi-host roles and target selection |
+| [Run Across an Explicit Target Set](topology-target-sets.md) | Ordered topology target sets, per-target receipts, resume, and reverse cleanup |
 | [Export for Native and C2 Runtimes](export-packages.md) | Raw, Sliver, and Cobalt Strike packages |
 | [Compose Native IPC Operations](composable-native-ipc.md) | Nested synchronization and mailslot lifecycles with transitive receipts and cleanup |
 | [Run Parallel Native IPC and RPC Workflows](parallel-native-ipc.md) | Concurrent named-pipe, redirected-process, RPC, COM, and discovery branches with deterministic receipts |

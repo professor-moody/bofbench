@@ -38,7 +38,7 @@ This says the object can inspect identity. It does not claim token duplication, 
 | Confidence | Meaning | Operator interpretation |
 | --- | --- | --- |
 | `confirmed primitive` | One operation is directly evidenced | The object contains the named API-level ability |
-| `strong chain` | Every required step occurs in one function | The related multi-step behavior is strongly supported |
+| `strong chain` | Every required step occurs in one function or a connected, resource-correlated call chain | The related multi-step behavior is strongly supported |
 | `possible` | Evidence is incomplete or spread ambiguously | Inspect source, strings, arguments, and runtime evidence before relying on it |
 
 ```mermaid
@@ -48,8 +48,9 @@ flowchart TD
     M[Pack, CNA, or extension metadata] --> A[Argument and expectation hints]
     F --> P{One required operation?}
     P -->|Yes| C[Confirmed primitive]
-    F --> Q{Every chain step in same function?}
-    Q -->|Yes| H[Strong chain]
+    F --> Q{Every chain step correlated?}
+    Q -->|Same function| H[Strong chain]
+    Q -->|Connected wrappers and resource flow| H
     Q -->|No| O[Possible or omitted]
     A --> H
     E[Exact-hash runtime receipt] --> V[Observed behavior]
@@ -88,6 +89,14 @@ bofbench analyze object.x64.o --format md
 bofbench analyze object.x64.o --format json
 bofbench analyze object.x64.o --loader-details
 ```
+
+Use a focused explanation when a report has several chains:
+
+```bash
+bofbench analyze object.x64.o --explain token-impersonation
+```
+
+Analysis v3 reports `evidence_functions`, `interprocedural`, and `resource_flows`. A cross-function chain is strong only when the functions are call-connected and the relevant produced/consumed resource is correlated; two unrelated functions with convenient imports are not combined.
 
 ## Observed evidence
 

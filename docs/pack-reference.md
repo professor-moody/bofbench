@@ -36,6 +36,26 @@ observable file, registry, inert Run-key persistence, and child-process state ch
 - Cleanup: `active-cleanup`
 - Analyzer signatures: `run_key_persistence`
 
+## `builtin/ad-site-inventory`
+
+Query bounded Active Directory site and subnet objects
+
+- Can do: Query bounded Active Directory site and subnet objects
+- Effects: reaches a domain controller; reads directory metadata
+- Needs: privilege=user; network=LDAP to an explicit or discovered domain controller; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `ldap_directory_inventory`
+- Live proofs: domain (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `server` | `string` | no | no | `` | exact LDAP server; empty discovers the current domain controller |
+| `base_dn` | `string` | no | no | `` | exact search base; empty uses the current domain naming context |
+| `filter` | `string` | no | no | `(|(objectClass=site)(objectClass=subnet))` | LDAP filter override |
+| `attributes` | `string` | no | no | `distinguishedName,name,location,siteObject` | comma-separated returned attributes |
+| `result_limit` | `int` | no | no | `50` | maximum directory objects (1-100) |
+
 ## `builtin/alpc-port-inventory`
 
 enumerate bounded ALPC and LPC port names from an Object Manager directory
@@ -432,6 +452,26 @@ Report the current account and its token elevation and integrity context
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
 
+## `builtin/kerberos-policy-inventory`
+
+Query bounded domain Kerberos ticket-age and clock-skew policy values
+
+- Can do: Query bounded domain Kerberos ticket-age and clock-skew policy values
+- Effects: reaches a domain controller; reads directory metadata
+- Needs: privilege=user; network=LDAP to an explicit or discovered domain controller; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `ldap_directory_inventory`
+- Live proofs: domain (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `server` | `string` | no | no | `` | exact LDAP server; empty discovers the current domain controller |
+| `base_dn` | `string` | no | no | `` | exact search base; empty uses the current domain naming context |
+| `filter` | `string` | no | no | `(objectClass=domainDNS)` | LDAP filter override |
+| `attributes` | `string` | no | no | `distinguishedName,maxTicketAge,maxRenewAge,maxServiceAge,maxClockSkew` | comma-separated returned attributes |
+| `result_limit` | `int` | no | no | `50` | maximum directory objects (1-100) |
+
 ## `builtin/lab-cleanup`
 
 remove only the known BOFBench temporary-file and registry lab markers
@@ -582,6 +622,46 @@ Enumerate bounded domain group identity, scope, and membership metadata
 | `filter` | `string` | no | no | `(objectCategory=group)` | bounded LDAP filter |
 | `attributes` | `string` | no | no | `sAMAccountName,groupType,member` | comma-separated attributes (maximum eight) |
 | `result_limit` | `int` | no | no | `25` | maximum directory entries (1-100) |
+
+## `builtin/ldap-managed-service-account-inventory`
+
+Query bounded managed service-account and group-managed service-account metadata
+
+- Can do: Query bounded managed service-account and group-managed service-account metadata
+- Effects: reaches a domain controller; reads directory metadata
+- Needs: privilege=user; network=LDAP to an explicit or discovered domain controller; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `ldap_directory_inventory`
+- Live proofs: domain (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `server` | `string` | no | no | `` | exact LDAP server; empty discovers the current domain controller |
+| `base_dn` | `string` | no | no | `` | exact search base; empty uses the current domain naming context |
+| `filter` | `string` | no | no | `(|(objectClass=msDS-ManagedServiceAccount)(objectClass=msDS-GroupManagedServiceAccount))` | LDAP filter override |
+| `attributes` | `string` | no | no | `distinguishedName,sAMAccountName,dNSHostName,servicePrincipalName` | comma-separated returned attributes |
+| `result_limit` | `int` | no | no | `50` | maximum directory objects (1-100) |
+
+## `builtin/ldap-ou-inventory`
+
+Query bounded organizational-unit identity and policy-link metadata
+
+- Can do: Query bounded organizational-unit identity and policy-link metadata
+- Effects: reaches a domain controller; reads directory metadata
+- Needs: privilege=user; network=LDAP to an explicit or discovered domain controller; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `ldap_directory_inventory`
+- Live proofs: domain (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `server` | `string` | no | no | `` | exact LDAP server; empty discovers the current domain controller |
+| `base_dn` | `string` | no | no | `` | exact search base; empty uses the current domain naming context |
+| `filter` | `string` | no | no | `(objectClass=organizationalUnit)` | LDAP filter override |
+| `attributes` | `string` | no | no | `distinguishedName,name,gPLink,gPOptions` | comma-separated returned attributes |
+| `result_limit` | `int` | no | no | `50` | maximum directory objects (1-100) |
 
 ## `builtin/ldap-query`
 
@@ -905,6 +985,23 @@ test requested process access rights against one selected PID
 | `target_pid` | `int` | yes | no | `` | exact process identifier |
 | `access_mask` | `int` | no | no | `0` | exact access mask; zero tests the standard operator rights |
 
+## `builtin/process-cfg-target-inventory`
+
+inspect Control Flow Guard policy and bounded executable regions for one exact process
+
+- Can do: Control Flow Guard policy and executable-region inventory for one exact process
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `process_cfg_target_inventory`
+- Live proofs: target (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` |  |
+| `result_limit` | `int` | no | no | `64` |  |
+
 ## `builtin/process-discovery`
 
 Enumerate a bounded local process snapshot
@@ -990,6 +1087,22 @@ enumerate bounded loaded images for one explicitly selected process
 | `target_pid` | `int` | yes | no | `` | process identifier |
 | `module_filter` | `string` | no | no | `` | case-insensitive module-name substring; empty matches all |
 | `result_limit` | `int` | no | no | `64` | maximum images (1-512) |
+
+## `builtin/process-instrumentation-callback-inventory`
+
+query the current process instrumentation callback for one exact process
+
+- Can do: exact-process instrumentation callback discovery
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `process_instrumentation_callback_inventory`
+- Live proofs: target (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_pid` | `int` | yes | no | `` |  |
 
 ## `builtin/process-job-inventory`
 
@@ -1136,6 +1249,42 @@ Read Windows product context from HKLM and report the current user.
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
 
+## `builtin/remote-event-log-query`
+
+query bounded structured Event Log metadata on one exact Windows host
+
+- Can do: bounded structured Event Log query on one exact host
+- Effects: reaches a supplied host; reads Event Log records
+- Needs: privilege=user; network=Event Log RPC to one exact host; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `remote_event_log_query`
+- Live proofs: target-system (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_host` | `wstring` | yes | no | `` | exact Windows host |
+| `channel` | `wstring` | no | no | `System` |  |
+| `xpath` | `wstring` | no | no | `*` |  |
+| `direction` | `string` | no | no | `reverse` |  |
+| `result_limit` | `int` | no | no | `32` |  |
+
+## `builtin/remote-firewall-profile-inventory`
+
+read domain, private, and public firewall policy state from one exact host
+
+- Can do: exact-host domain, private, and public firewall-policy inventory
+- Effects: reaches a supplied host; reads firewall policy state
+- Needs: privilege=user; network=Remote Registry to one exact host; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `remote_firewall_profile_inventory`
+- Live proofs: target-firewall (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_host` | `wstring` | yes | no | `` |  |
+
 ## `builtin/remote-host-info`
 
 report bounded workstation and server identity for one explicitly supplied Windows host
@@ -1170,6 +1319,24 @@ enumerate a bounded filtered service inventory from one explicitly supplied Wind
 | `name_filter` | `wstring` | no | no | `` | case-insensitive service name or display-name substring |
 | `state_filter` | `string` | no | no | `all` | all, running, or stopped |
 | `result_limit` | `int` | no | no | `32` | maximum service rows (1-256) |
+
+## `builtin/remote-share-permission-inventory`
+
+enumerate bounded share paths and security descriptors on one exact host
+
+- Can do: bounded exact-host SMB share and security-descriptor inventory
+- Effects: reaches a supplied host; reads share paths and permissions
+- Needs: privilege=user; network=SMB/RPC to one exact host; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `remote_share_permission_inventory`
+- Live proofs: target-shares (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `target_host` | `wstring` | yes | no | `` |  |
+| `share_filter` | `wstring` | no | no | `` |  |
+| `result_limit` | `int` | no | no | `32` |  |
 
 ## `builtin/remote-task-inventory`
 

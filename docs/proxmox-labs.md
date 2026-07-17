@@ -94,6 +94,45 @@ The clean image supports `build_mode=local` and therefore needs no compiler. Clo
 
 Windows Server and domain-member templates follow the same provider lifecycle, but they are accepted only when licensed Server media is present. A missing Server ISO is reported as unavailable topology coverage, not simulated success.
 
+List provider media and build only the exact BOFBench-owned VMID selected by the operator:
+
+```bash
+bofbench lab media list --provider proxmox \
+  --proxmox-prep ~/.config/bofbench/proxmox-lab.json
+bofbench lab template status --lab proxmox-domain-dc
+bofbench lab template build --lab proxmox-domain-dc \
+  --vmid 4102 --name bofbench-windows-server-template \
+  --iso local:iso/windows-server.iso --memory-mb 4096 --cores 4
+```
+
+`media list` is read-only. `template build` rejects VMIDs outside the preparation file's reserved range and does not overwrite an existing guest. After Windows installation and guest preparation, use `lab template convert` only on the selected stopped VM.
+
+## Runtime control planes
+
+Sliver and licensed Cobalt Strike infrastructure are modeled separately from Windows lab profiles. A runtime-control profile contains the provider preparation reference, exact VMID, template VMID, clone mode, and runtime type; it contains no operator credential, Team Server secret, listener, or implant material.
+
+```bash
+bofbench runtime control add sliver-lab \
+  --runtime sliver --provider proxmox \
+  --proxmox-prep ~/.config/bofbench/proxmox-lab.json \
+  --vmid 4120 --template-vmid 4104
+bofbench runtime control up sliver-lab
+bofbench runtime control status sliver-lab
+```
+
+The repository's `infra/proxmox/linux` assets pin the control-plane software and verify its server archive hash. They install a disabled-by-default service surface: operators and sessions are created outside the repository. No public listener is configured by BOFBench.
+
+Once the control plane and selected Windows profile are ready, create a disposable session and remove it after the proof lane:
+
+```bash
+bofbench sliver lab-session start \
+  --control sliver-lab --lab proxmox-dev --arch x64 --context user
+bofbench runtime status --lab proxmox-dev
+bofbench sliver lab-session stop --lab proxmox-dev --cleanup
+```
+
+The session receipt records control/profile identities, architecture, requested context, session/task identifiers, hashes, timestamps, and cleanup. Implant bytes and server credentials are not serialized.
+
 ## Register a profile
 
 ```bash
@@ -167,6 +206,34 @@ bofbench lab topology add proxmox-domain \
 bofbench lab topology up proxmox-domain
 bofbench lab topology snapshot proxmox-domain --snapshot clean-domain
 ```
+
+Provision the already registered DC and member roles with a transient password source:
+
+```bash
+bofbench lab topology provision proxmox-domain \
+  --domain bofbench.test --netbios BOFBENCH --credential @prompt
+bofbench lab topology verify proxmox-domain
+```
+
+Provisioning uses Windows AD DS deployment commands on the DC, follows required reboots, joins member roles, creates the disposable `OU=BOFBench` proof container, and writes role-specific receipts containing no password. Re-running it verifies the intended state and applies only missing steps.
+
+## Ordered target sets
+
+Topology version 2 adds explicitly named, ordered sets. Nothing discovered by a pack is automatically tasked:
+
+```bash
+bofbench lab topology target add proxmox-standalone \
+  --set windows-targets --lab proxmox-target-a
+bofbench lab topology target add proxmox-standalone \
+  --set windows-targets --lab proxmox-target-b
+bofbench lab topology target list proxmox-standalone
+
+bofbench operation run internal/multi-target-remote-triage \
+  --catalog ~/bofbench-packs-internal \
+  --via lab --topology proxmox-standalone --targets windows-targets
+```
+
+Operation schema v11 expands the selected set into finite per-target branches. Receipts retain ordered target resolution, actual computer identity, exact object hash, effects, errors, captures, and per-target cleanup. Resume skips completed targets; cleanup reverses only completed stateful branches.
 
 Startup order is domain controller, target, execution. Shutdown and cleanup reverse the order. Existing-provider roles are observed but never powered or destroyed by BOFBench.
 

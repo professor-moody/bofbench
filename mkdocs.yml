@@ -93,6 +93,9 @@ nav:
       - Resilient Network Transport and Retry: scenarios/network-transport-retry.md
       - Secure HTTP and BITS Control: scenarios/secure-http-bits.md
       - Fan-Out SMB and NTFS: scenarios/fanout-smb-ntfs.md
+      - Proxmox Domain and Sliver Proof: scenarios/proxmox-domain-sliver.md
+      - Topology Target Sets: scenarios/topology-target-sets.md
+      - Cross-Runtime Analysis v3: scenarios/cross-runtime-analysis-v3.md
       - Operator Playbooks: playbooks.md
       - Deep Capability Workflows: deep-capabilities.md
       - Native Process Depth: native-process-depth.md

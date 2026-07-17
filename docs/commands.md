@@ -99,6 +99,7 @@ bofbench analyze object.x64.o --format text
 bofbench analyze object.x64.o --format json
 bofbench analyze object.x64.o --format md
 bofbench analyze current.x64.o --compare previous.x64.o
+bofbench analyze third-party.x64.o --explain token-impersonation
 ```
 
 Default output leads with `Can do`, `Effects`, `Needs`, `Arguments`, and `Works with`.
@@ -183,6 +184,21 @@ bofbench lab snapshot clean --lab disposable
 bofbench lab restore clean --lab disposable
 ```
 
+Inspect provider media, build exact templates, provision a domain, and manage ordered target sets:
+
+```bash
+bofbench lab media list --provider proxmox \
+  --proxmox-prep ~/.config/bofbench/proxmox-lab.json
+bofbench lab template status --lab proxmox-domain-dc
+bofbench lab template build --lab proxmox-domain-dc \
+  --vmid 4102 --iso local:iso/windows-server.iso
+bofbench lab topology provision proxmox-domain \
+  --domain bofbench.test --netbios BOFBENCH --credential @prompt
+bofbench lab topology verify proxmox-domain
+bofbench lab topology target add proxmox-standalone \
+  --set windows-targets --lab proxmox-target
+```
+
 Manage the disposable LocalSystem process used for privileged capability proof:
 
 ```bash
@@ -209,7 +225,29 @@ bofbench arsenal search arsenal/team --arch x64 --confidence 'strong chain' --ha
 bofbench arsenal search arsenal/team --api RpcBinding --chain remote_registry --loader compatible
 bofbench arsenal matrix arsenal/team
 bofbench arsenal matrix arsenal/team --format json
+bofbench arsenal matrix arsenal/team --analysis-version 3
+bofbench arsenal graph arsenal/team --capability remote-execution
+bofbench arsenal graph arsenal/team --capability token --format mermaid
 bofbench arsenal compare old.x64.o new.x64.o
+```
+
+## Runtime control and comparison
+
+```bash
+bofbench runtime control add sliver-lab \
+  --runtime sliver --provider proxmox \
+  --proxmox-prep ~/.config/bofbench/proxmox-lab.json \
+  --vmid 4120 --template-vmid 4104
+bofbench runtime control up sliver-lab
+bofbench runtime control status sliver-lab
+bofbench sliver lab-session start \
+  --control sliver-lab --lab proxmox-dev --arch x64 --context user
+
+bofbench runtime compare bofs/portable-survey \
+  --via lab,sliver --lab proxmox-dev
+bofbench runtime compare operation internal/domain-remote-operation-matrix \
+  --via lab,sliver --topology proxmox-domain \
+  --catalog ~/bofbench-packs-internal
 ```
 
 ## Inspect, list, and fetch compatibility surfaces

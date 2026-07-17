@@ -634,6 +634,24 @@ bofbench operation prove internal/remote-service-lifecycle \
 
 Topologies contain profile names only. Authentication values continue to use `@prompt`, `@env:NAME`, or `@file:/path`.
 
+### Topology target-set fan-out
+
+Schema v11 can bind an operation's finite fan-out source to a topology-v2 target set:
+
+```bash
+bofbench lab topology target add proxmox-standalone \
+  --set windows-targets --lab proxmox-target-a
+bofbench lab topology target add proxmox-standalone \
+  --set windows-targets --lab proxmox-target-b
+
+bofbench operation run internal/cross-host-operation-matrix \
+  --catalog ~/bofbench-packs-internal \
+  --via lab --topology proxmox-standalone \
+  --targets windows-targets --parallelism 4
+```
+
+Target sets are ordered, explicitly configured profile names. BOFBench never turns discovery results into targets. Each expanded branch resolves the profile independently, confirms its computer identity, and retains its exact object/runtime receipt. Failure blocks new dependent scheduling but preserves completed target receipts; resume and cleanup operate per target, with reverse cleanup over completed effects only.
+
 ## TUI
 
 Open `bofbench tui` and select **Operations**. Choose a definition, runtime, lab, architecture, and typed inputs. Press `x` for static test or `p` for declared proof; execute ordinary runs with `enter`. The definition view shows completion dependencies, readiness dependencies, background lifecycles, routes, and child operations. The result view separates runtime, ready, terminal-contract, cancellation, and cleanup state.
