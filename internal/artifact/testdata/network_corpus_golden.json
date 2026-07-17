@@ -1,0 +1,17 @@
+[
+  {
+    "name": "nslookup",
+    "x64": {"loader": "compatible", "chains": ["dns_query"]},
+    "x86": {"loader": "compatible_runtime_lookup", "chains": ["dns_query"]}
+  },
+  {
+    "name": "listdns",
+    "x64": {"loader": "compatible", "chains": ["dns_cache_inventory"]},
+    "x86": {"loader": "compatible", "chains": ["dns_cache_inventory"]}
+  },
+  {
+    "name": "netstat",
+    "x64": {"loader": "compatible", "chains": ["socket_endpoint_inventory"]},
+    "x86": {"loader": "compatible", "chains": ["socket_endpoint_inventory"]}
+  }
+]

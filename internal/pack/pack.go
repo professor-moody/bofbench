@@ -1039,6 +1039,36 @@ func builtins() []Resolved {
 	etwProviders.AnalysisSignatures = []AnalysisSignature{{ID: "etw_provider_inventory", Name: "ETW provider inventory", Summary: "Enumerate registered Event Tracing for Windows providers and their schema sources.", Steps: []AnalysisStep{{Action: "enumerate ETW providers", APIs: []string{"TdhEnumerateProviders"}}}, RequiredStrings: []string{"[etw-provider-inventory]"}, Effects: []string{"reads ETW provider metadata"}, Requirements: []string{"local TDH provider enumeration access"}}}
 	etwProviders.ProofCases = []ProofCase{{ID: "bounded-providers", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"name_filter": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "etw-provider-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
 	byID["etw-provider-inventory"] = etwProviders
+	socketEndpoints := byID["socket-endpoint-inventory"]
+	socketEndpoints.Title = "Socket Endpoint Inventory"
+	socketEndpoints.Capabilities = []string{"bounded IPv4 and IPv6 TCP and UDP endpoint inventory"}
+	socketEndpoints.Network = "local"
+	socketEndpoints.Arguments = []Argument{{Name: "protocol", Type: "string", Default: "all", Description: "all, tcp, or udp"}, {Name: "family", Type: "string", Default: "all", Description: "all, ipv4, or ipv6"}, {Name: "pid", Type: "int", Default: "0", Description: "exact owning PID; zero matches all"}, {Name: "state", Type: "int", Default: "0", Description: "exact TCP state; zero matches all"}, {Name: "local_port", Type: "int", Default: "0", Description: "exact local port; zero matches all"}, {Name: "result_limit", Type: "int", Default: "64", Description: "maximum endpoints (1-512)"}}
+	socketEndpoints.ExpectedAnalysis = []string{"socket_endpoint_inventory"}
+	socketEndpoints.OutputFields = []string{"protocol", "family", "pid", "state", "local", "local_port", "remote", "remote_port", "status", "shown", "limit", "error"}
+	socketEndpoints.AnalysisSignatures = []AnalysisSignature{{ID: "socket_endpoint_inventory", Name: "Socket endpoint inventory", Summary: "Enumerate bounded IPv4 and IPv6 TCP and UDP endpoints with owning process and state metadata.", Steps: []AnalysisStep{{Action: "read TCP endpoint tables", APIs: []string{"GetExtendedTcpTable"}}, {Action: "read UDP endpoint tables", APIs: []string{"GetExtendedUdpTable"}}}, RequiredStrings: []string{"[socket-endpoint-inventory]"}, Effects: []string{"reads local socket endpoint metadata"}, Requirements: []string{"local IP Helper access"}}}
+	socketEndpoints.ProofCases = []ProofCase{{ID: "bounded-endpoints", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"protocol": "all", "family": "all", "pid": "0", "state": "0", "local_port": "0", "result_limit": "32"}, Expect: ProofExpectation{Tag: "socket-endpoint-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["socket-endpoint-inventory"] = socketEndpoints
+	dnsCache := byID["dns-cache-inventory"]
+	dnsCache.Title = "DNS Cache Inventory"
+	dnsCache.Capabilities = []string{"bounded local DNS resolver cache inventory"}
+	dnsCache.Network = "local"
+	dnsCache.Arguments = []Argument{{Name: "name_filter", Type: "wstring", Default: "", Description: "case-insensitive cached-name substring"}, {Name: "record_type", Type: "int", Default: "0", Description: "exact DNS record type; zero matches all"}, {Name: "result_limit", Type: "int", Default: "64", Description: "maximum cache rows (1-512)"}}
+	dnsCache.ExpectedAnalysis = []string{"dns_cache_inventory"}
+	dnsCache.OutputFields = []string{"name", "type", "ttl", "data_bytes", "flags", "status", "shown", "limit", "error"}
+	dnsCache.AnalysisSignatures = []AnalysisSignature{{ID: "dns_cache_inventory", Name: "DNS cache inventory", Summary: "Enumerate bounded cached DNS names and record metadata from the local resolver.", Steps: []AnalysisStep{{Action: "read the local resolver cache table", APIs: []string{"DnsGetCacheDataTable"}}}, RequiredStrings: []string{"[dns-cache-inventory]"}, Effects: []string{"reads local DNS cache metadata"}, Requirements: []string{"local DNS client access"}}}
+	dnsCache.ProofCases = []ProofCase{{ID: "bounded-cache", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"name_filter": "", "record_type": "0", "result_limit": "32"}, Expect: ProofExpectation{Tag: "dns-cache-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["dns-cache-inventory"] = dnsCache
+	networkProfiles := byID["network-profile-inventory"]
+	networkProfiles.Title = "Network Profile Inventory"
+	networkProfiles.Capabilities = []string{"Network List Manager connectivity and bounded network-profile inventory"}
+	networkProfiles.Network = "local"
+	networkProfiles.Arguments = []Argument{{Name: "result_limit", Type: "int", Default: "64", Description: "maximum profiles (1-512)"}}
+	networkProfiles.ExpectedAnalysis = []string{"network_profile_inventory"}
+	networkProfiles.OutputFields = []string{"connection", "connected", "internet", "connectivity", "domain", "domain_state", "network_id", "name", "category", "status", "shown", "limit", "error"}
+	networkProfiles.AnalysisSignatures = []AnalysisSignature{{ID: "network_profile_inventory", Name: "Network profile inventory", Summary: "Read Network List Manager connectivity and bounded profile category, identifier, and domain context.", Steps: []AnalysisStep{{Action: "open Network List Manager", APIs: []string{"CoCreateInstance"}}, {Action: "read network profile registration", APIs: []string{"RegEnumKeyExW", "RegQueryValueExW"}}, {Action: "read join context", APIs: []string{"NetGetJoinInformation"}}}, RequiredStrings: []string{"[network-profile-inventory]"}, Effects: []string{"reads local network profile metadata"}, Requirements: []string{"COM and local registry query access"}}}
+	networkProfiles.ProofCases = []ProofCase{{ID: "bounded-profiles", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"result_limit": "16"}, Expect: ProofExpectation{Tag: "network-profile-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["network-profile-inventory"] = networkProfiles
 	pipeInventory := byID["named-pipe-inventory"]
 	pipeInventory.Title = "Named Pipe Inventory"
 	pipeInventory.Capabilities = []string{"bounded named-pipe discovery"}
@@ -1372,6 +1402,9 @@ func validate(document Document, root string) error {
 		"$TARGET_WATCH_DIRECTORY": true, "$TARGET_WATCH_SERVICE": true, "$TARGET_EXIT_PID": true,
 		"$TARGET_EVENTLOG_CHANNEL": true, "$TARGET_EVENTLOG_PROVIDER": true,
 		"$TARGET_ETW_PROVIDER_GUID": true, "$TARGET_ETW_SESSION_NAME": true,
+		"$TARGET_TCP_HOST": true, "$TARGET_TCP_PORT": true, "$TARGET_UDP_HOST": true, "$TARGET_UDP_PORT": true,
+		"$TARGET_HTTP_URL": true, "$TARGET_HTTP_BLOB_URL": true, "$TARGET_HTTP_TRANSIENT_URL": true, "$TARGET_WEBSOCKET_URL": true,
+		"$TARGET_DNS_NAME": true, "$TARGET_NETWORK_PAYLOAD_SHA256": true,
 		"$TARGET_ARCH": true, "$TARGET_MODULE_BASE": true, "$TARGET_MODULE_PATH": true, "$EXECUTION_ADDRESS": true,
 		"$X86_TARGET_PID": true, "$X86_TARGET_TID": true, "$X86_TARGET_MODULE_BASE": true, "$X86_TARGET_MODULE_PATH": true,
 		"$MEMORY_ADDRESS": true, "$MEMORY_SIZE": true, "$MEMORY_SHA256": true, "$CANARY_PATH": true, "$CANARY_SHA256": true,
@@ -1492,6 +1525,8 @@ func validate(document Document, root string) error {
 			"named_pipe": {"name"}, "named_pipe_queue": {"holder_pid", "handle", "sha256"}, "named_pipe_mode": {"holder_pid", "handle", "mode"},
 			"alpc_exchange": {"sha256"}, "window_message": {"message_id", "wparam", "lparam"},
 			"window_copydata": {"sha256", "data_id"}, "window_text": {"window_handle", "text"},
+			"network_listener": {"protocol", "port"}, "network_observation": {"transport", "request_sha256", "response_sha256"},
+			"bits_job":             {"job_id"},
 			"process":              {"pid", "image", "marker"},
 			"process_command_line": {"pid", "value"},
 			"service_config":       {"name", "field", "value"},

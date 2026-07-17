@@ -156,6 +156,42 @@ func TestDeclarativeSignaturesRequireEveryStepInOneFunction(t *testing.T) {
 	}
 }
 
+func TestNetworkTransportChainsRequireTaggedFunctionLocalEvidence(t *testing.T) {
+	tests := []struct {
+		id      string
+		tag     string
+		symbols []string
+	}{
+		{"tcp_client_exchange", "[tcp-client-exchange]", []string{"WS2_32$getaddrinfo", "WS2_32$connect", "WS2_32$send", "WS2_32$recv"}},
+		{"tcp_listener_exchange", "[tcp-listener-exchange]", []string{"WS2_32$bind", "WS2_32$listen", "WS2_32$accept", "WS2_32$recv", "WS2_32$send"}},
+		{"udp_client_exchange", "[udp-client-exchange]", []string{"WS2_32$getaddrinfo", "WS2_32$sendto", "WS2_32$recvfrom"}},
+		{"udp_listener_exchange", "[udp-listener-exchange]", []string{"WS2_32$bind", "WS2_32$recvfrom", "WS2_32$sendto"}},
+		{"winhttp_request", "[winhttp-request]", []string{"WINHTTP$WinHttpOpenRequest", "WINHTTP$WinHttpSendRequest", "WINHTTP$WinHttpReceiveResponse", "WINHTTP$WinHttpReadData"}},
+		{"winhttp_download", "[winhttp-download]", []string{"WINHTTP$WinHttpOpenRequest", "WINHTTP$WinHttpReceiveResponse", "WINHTTP$WinHttpReadData", "KERNEL32$CreateFileW", "KERNEL32$WriteFile"}},
+		{"websocket_client_exchange", "[websocket-client-exchange]", []string{"WINHTTP$WinHttpWebSocketCompleteUpgrade", "WINHTTP$WinHttpWebSocketSend", "WINHTTP$WinHttpWebSocketReceive"}},
+		{"bits_transfer_cleanup", "[bits-transfer-cleanup]", []string{"OLE32$CoCreateInstance", "OLE32$CLSIDFromString"}},
+	}
+	for _, test := range tests {
+		t.Run(test.id, func(t *testing.T) {
+			var positive []Relocation
+			for _, symbol := range test.symbols {
+				positive = append(positive, Relocation{Function: "go", Symbol: symbol})
+			}
+			requireBehavior(t, inferBehaviorChains(positive, []String{{Value: test.tag}}), test.id)
+
+			var split []Relocation
+			for index, symbol := range test.symbols {
+				split = append(split, Relocation{Function: fmt.Sprintf("f%d", index), Symbol: symbol})
+			}
+			for _, chain := range inferBehaviorChains(split, []String{{Value: test.tag}}) {
+				if chain.ID == test.id {
+					t.Fatalf("split API evidence produced %s: %+v", test.id, chain)
+				}
+			}
+		})
+	}
+}
+
 func TestGenericProcessMemoryReadDoesNotClaimCredentialAccess(t *testing.T) {
 	root := t.TempDir()
 	object := filepath.Join(root, "memory-read.x64.o")
@@ -544,6 +580,55 @@ func TestTrustedSecRemoteCorpusMatchesX64X86Golden(t *testing.T) {
 				}
 				if loader != expected.Loader || !slices.Equal(capabilities, expected.Capabilities) || !slices.Equal(chains, expected.Chains) {
 					t.Fatalf("%s analysis loader=%s capabilities=%v chains=%v; expected %+v", arch, loader, capabilities, chains, expected)
+				}
+			}
+		})
+	}
+}
+
+func TestTrustedSecNetworkCorpusMatchesX64X86Golden(t *testing.T) {
+	type expectedAnalysis struct {
+		Loader string   `json:"loader"`
+		Chains []string `json:"chains"`
+	}
+	type goldenCase struct {
+		Name string           `json:"name"`
+		X64  expectedAnalysis `json:"x64"`
+		X86  expectedAnalysis `json:"x86"`
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", "network_corpus_golden.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []goldenCase
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	corpus := filepath.Join("..", "..", "arsenal", "trustedsec-sa", "SA")
+	if _, err := os.Stat(corpus); os.IsNotExist(err) {
+		t.Skip("local TrustedSec network corpus is not installed")
+	}
+	for _, test := range cases {
+		t.Run(test.Name, func(t *testing.T) {
+			for arch, expected := range map[string]expectedAnalysis{"x64": test.X64, "x86": test.X86} {
+				analysis, err := Analyze(filepath.Join(corpus, test.Name, test.Name+"."+arch+".o"), "go")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var chains []string
+				seen := map[string]bool{}
+				for _, chain := range analysis.BehaviorChains {
+					if !seen[chain.ID] {
+						seen[chain.ID] = true
+						chains = append(chains, chain.ID)
+					}
+				}
+				loader := ""
+				if analysis.LoaderCompatibility != nil {
+					loader = analysis.LoaderCompatibility.Status
+				}
+				if loader != expected.Loader || !slices.Equal(chains, expected.Chains) {
+					t.Fatalf("%s analysis loader=%s chains=%v; expected %+v", arch, loader, chains, expected)
 				}
 			}
 		})

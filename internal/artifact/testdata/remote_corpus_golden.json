@@ -16,8 +16,8 @@
   },
   {
     "name": "get-netsession2",
-    "x64": {"loader": "compatible", "capabilities": ["domain_context", "dynamic_loading", "network_tcp"], "chains": ["remote_session_inventory"]},
-    "x86": {"loader": "compatible_runtime_lookup", "capabilities": ["domain_context", "dynamic_loading", "network_tcp"], "chains": ["remote_session_inventory"]}
+    "x64": {"loader": "compatible", "capabilities": ["domain_context", "dynamic_loading", "network_tcp"], "chains": ["dns_query", "remote_session_inventory"]},
+    "x86": {"loader": "compatible_runtime_lookup", "capabilities": ["domain_context", "dynamic_loading", "network_tcp"], "chains": ["dns_query", "remote_session_inventory"]}
   },
   {
     "name": "wmi_query",

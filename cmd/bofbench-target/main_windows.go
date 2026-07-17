@@ -109,6 +109,16 @@ type targetState struct {
 	EventLogProvider      string `json:"event_log_provider,omitempty"`
 	ETWProviderGUID       string `json:"etw_provider_guid,omitempty"`
 	ETWSessionName        string `json:"etw_session_name,omitempty"`
+	TCPHost               string `json:"tcp_host,omitempty"`
+	TCPPort               int    `json:"tcp_port,omitempty"`
+	UDPHost               string `json:"udp_host,omitempty"`
+	UDPPort               int    `json:"udp_port,omitempty"`
+	HTTPURL               string `json:"http_url,omitempty"`
+	HTTPBlobURL           string `json:"http_blob_url,omitempty"`
+	HTTPTransientURL      string `json:"http_transient_url,omitempty"`
+	WebSocketURL          string `json:"websocket_url,omitempty"`
+	DNSName               string `json:"dns_name,omitempty"`
+	NetworkPayloadSHA256  string `json:"network_payload_sha256,omitempty"`
 	User                  string `json:"user"`
 	CanaryFile            string `json:"canary_file"`
 	CanaryFileSHA256      string `json:"canary_file_sha256"`
@@ -187,7 +197,7 @@ func (service helperHandler) Execute(_ []string, requests <-chan svc.ChangeReque
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
-	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 9, Service: service.name, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 10, Service: service.name, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if module, _, _ := procModuleHandle.Call(0); module != 0 {
 		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
 	}
@@ -362,6 +372,11 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
+	networkState, networkErr := startNetworkFixtures(stop, service.root)
+	if networkErr != nil {
+		close(stop)
+		return true, 22
+	}
 	pipeReady := make(chan namedPipeResult, 1)
 	go namedPipeFixture(stop, pipeReady)
 	go maintainMailslot(stop, mailslotHandle, mailslotName, mailslotMessage)
@@ -439,7 +454,7 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		}
 	}
 	state := targetState{
-		Schema: "bofbench.target", SchemaVersion: 9, Service: service.name,
+		Schema: "bofbench.target", SchemaVersion: 10, Service: service.name,
 		PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, NamedPipe: pipe.Name, User: `NT AUTHORITY\SYSTEM`,
 		NamedPipeHandle: fmt.Sprintf("0x%X", uintptr(heldPipe.Server)), NamedPipeClientHandle: fmt.Sprintf("0x%X", uintptr(heldPipe.Client)), NamedPipeSHA256: hashBytes(heldPipe.Response),
 		ProcessPipePID: pipeChild.Process.Pid, ProcessStdinHandle: fmt.Sprintf("0x%X", pipeStdin.(*os.File).Fd()), ProcessStdoutHandle: fmt.Sprintf("0x%X", pipeStdout.(*os.File).Fd()), ProcessPipeSHA256: hashBytes(pipeMessage),
@@ -453,6 +468,9 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		WatchDirectory: `C:\bofbench\proof`, WatchService: service.name, ExitPID: pipeChild.Process.Pid,
 		EventLogChannel: "Application", EventLogProvider: "BOFBenchTarget",
 		ETWProviderGUID: etwProviderGUID, ETWSessionName: "BOFBench-ETW",
+		TCPHost: networkState.TCPHost, TCPPort: networkState.TCPPort, UDPHost: networkState.UDPHost, UDPPort: networkState.UDPPort,
+		HTTPURL: networkState.HTTPURL, HTTPBlobURL: networkState.HTTPBlobURL, HTTPTransientURL: networkState.HTTPTransientURL,
+		WebSocketURL: networkState.WebSocketURL, DNSName: networkState.DNSName, NetworkPayloadSHA256: networkState.NetworkPayloadSHA256,
 		CanaryFile: canaryPath, CanaryFileSHA256: hashBytes(fileCanary),
 		MemoryCanaryAddress: fmt.Sprintf("0x%X", uintptr(unsafe.Pointer(&memoryCanary[0]))),
 		MemoryCanarySize:    len(canary), MemoryCanarySHA256: hashBytes(canary),
@@ -1164,7 +1182,7 @@ func runArchitectureHelper(root string) error {
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
-	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 9, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 10, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if module, _, _ := procModuleHandle.Call(0); module != 0 {
 		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
 	}
@@ -1185,7 +1203,7 @@ func runWindowHelper(root string) error {
 		return err
 	}
 	state := targetState{
-		Schema: "bofbench.target-window-helper", SchemaVersion: 9, PID: os.Getpid(), Architecture: runtime.GOARCH,
+		Schema: "bofbench.target-window-helper", SchemaVersion: 10, PID: os.Getpid(), Architecture: runtime.GOARCH,
 		WindowHandle: fmt.Sprintf("0x%X", uintptr(window.Handle)), WindowTextHandle: fmt.Sprintf("0x%X", uintptr(window.TextHandle)),
 		WindowStation: `BOFBenchTargetStation\BOFBenchTargetDesktop`, WindowClass: window.Class,
 		WindowMessage: window.MessageID, WindowPostMessage: window.PostMessage,

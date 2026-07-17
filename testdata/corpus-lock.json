@@ -31,7 +31,13 @@
         {"path": "SA/get_session_info/get_session_info.x64.o", "sha256": "665f6464cbb9e6398b60ec4da8689deeeedcfbf53a03a4cbfea6515fd4e0b2f1"},
         {"path": "SA/get_session_info/get_session_info.x86.o", "sha256": "4587e416ea24f2cae67a3d9d24b0ea296b039723d033b97f6431c9d883e62faf"},
         {"path": "SA/netloggedon2/netloggedon2.x64.o", "sha256": "285b757a8c777be07859de88cf47374380aa4e8823eda0e358814202bf390c07"},
-        {"path": "SA/netloggedon2/netloggedon2.x86.o", "sha256": "c75535aaa895e86328b15ba67a00fb7e004b60fbb5abfe5c9365c08d913c83ce"}
+        {"path": "SA/netloggedon2/netloggedon2.x86.o", "sha256": "c75535aaa895e86328b15ba67a00fb7e004b60fbb5abfe5c9365c08d913c83ce"},
+        {"path": "SA/nslookup/nslookup.x64.o", "sha256": "8bb7b66350bf4c83de673330925a8f65d5657283ef8500b92ab124908eae8c9a"},
+        {"path": "SA/nslookup/nslookup.x86.o", "sha256": "91c5fa699899b18f5de349aab5cacbf4546214d81bcf74318548957cd6baa002"},
+        {"path": "SA/listdns/listdns.x64.o", "sha256": "83ba901003adb5546343477f806de754e768f81ae597c9e5ba434da6470de4d1"},
+        {"path": "SA/listdns/listdns.x86.o", "sha256": "3920cfb5f47ce4ab63d77ec71aa45ee4f808211b8e9c127168571aaec7648ea0"},
+        {"path": "SA/netstat/netstat.x64.o", "sha256": "093d483cce679580e893b270134aae5f7b6d3ec92189b92df12f2ea08eae8d39"},
+        {"path": "SA/netstat/netstat.x86.o", "sha256": "4582da0abbccca9f749a6d4c8f76bcfbcfc9e58698033f5e98a19e6897449233"}
       ]
     }
   ]
