@@ -116,6 +116,11 @@ type targetState struct {
 	HTTPURL               string `json:"http_url,omitempty"`
 	HTTPBlobURL           string `json:"http_blob_url,omitempty"`
 	HTTPTransientURL      string `json:"http_transient_url,omitempty"`
+	HTTPSURL              string `json:"https_url,omitempty"`
+	HTTPSBlobURL          string `json:"https_blob_url,omitempty"`
+	HTTPSAuthURL          string `json:"https_auth_url,omitempty"`
+	HTTPAuthUser          string `json:"http_auth_user,omitempty"`
+	TLSCertificateSHA256  string `json:"tls_certificate_sha256,omitempty"`
 	WebSocketURL          string `json:"websocket_url,omitempty"`
 	DNSName               string `json:"dns_name,omitempty"`
 	NetworkPayloadSHA256  string `json:"network_payload_sha256,omitempty"`
@@ -197,7 +202,7 @@ func (service helperHandler) Execute(_ []string, requests <-chan svc.ChangeReque
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
-	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 10, Service: service.name, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 11, Service: service.name, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if module, _, _ := procModuleHandle.Call(0); module != 0 {
 		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
 	}
@@ -454,7 +459,7 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		}
 	}
 	state := targetState{
-		Schema: "bofbench.target", SchemaVersion: 10, Service: service.name,
+		Schema: "bofbench.target", SchemaVersion: 11, Service: service.name,
 		PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, NamedPipe: pipe.Name, User: `NT AUTHORITY\SYSTEM`,
 		NamedPipeHandle: fmt.Sprintf("0x%X", uintptr(heldPipe.Server)), NamedPipeClientHandle: fmt.Sprintf("0x%X", uintptr(heldPipe.Client)), NamedPipeSHA256: hashBytes(heldPipe.Response),
 		ProcessPipePID: pipeChild.Process.Pid, ProcessStdinHandle: fmt.Sprintf("0x%X", pipeStdin.(*os.File).Fd()), ProcessStdoutHandle: fmt.Sprintf("0x%X", pipeStdout.(*os.File).Fd()), ProcessPipeSHA256: hashBytes(pipeMessage),
@@ -470,6 +475,8 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		ETWProviderGUID: etwProviderGUID, ETWSessionName: "BOFBench-ETW",
 		TCPHost: networkState.TCPHost, TCPPort: networkState.TCPPort, UDPHost: networkState.UDPHost, UDPPort: networkState.UDPPort,
 		HTTPURL: networkState.HTTPURL, HTTPBlobURL: networkState.HTTPBlobURL, HTTPTransientURL: networkState.HTTPTransientURL,
+		HTTPSURL: networkState.HTTPSURL, HTTPSBlobURL: networkState.HTTPSBlobURL, HTTPSAuthURL: networkState.HTTPSAuthURL,
+		HTTPAuthUser: networkState.HTTPAuthUser, TLSCertificateSHA256: networkState.TLSCertificateSHA256,
 		WebSocketURL: networkState.WebSocketURL, DNSName: networkState.DNSName, NetworkPayloadSHA256: networkState.NetworkPayloadSHA256,
 		CanaryFile: canaryPath, CanaryFileSHA256: hashBytes(fileCanary),
 		MemoryCanaryAddress: fmt.Sprintf("0x%X", uintptr(unsafe.Pointer(&memoryCanary[0]))),
@@ -1182,7 +1189,7 @@ func runArchitectureHelper(root string) error {
 	stop := make(chan struct{})
 	threadID := make(chan uint32, 1)
 	go alertableThread(stop, threadID)
-	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 10, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	state := targetState{Schema: "bofbench.target-helper", SchemaVersion: 11, PID: os.Getpid(), Architecture: runtime.GOARCH, AlertableTID: <-threadID, StartedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if module, _, _ := procModuleHandle.Call(0); module != 0 {
 		state.KnownModuleBase = fmt.Sprintf("0x%X", module)
 	}
@@ -1203,7 +1210,7 @@ func runWindowHelper(root string) error {
 		return err
 	}
 	state := targetState{
-		Schema: "bofbench.target-window-helper", SchemaVersion: 10, PID: os.Getpid(), Architecture: runtime.GOARCH,
+		Schema: "bofbench.target-window-helper", SchemaVersion: 11, PID: os.Getpid(), Architecture: runtime.GOARCH,
 		WindowHandle: fmt.Sprintf("0x%X", uintptr(window.Handle)), WindowTextHandle: fmt.Sprintf("0x%X", uintptr(window.TextHandle)),
 		WindowStation: `BOFBenchTargetStation\BOFBenchTargetDesktop`, WindowClass: window.Class,
 		WindowMessage: window.MessageID, WindowPostMessage: window.PostMessage,

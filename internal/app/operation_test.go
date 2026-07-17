@@ -122,9 +122,12 @@ func TestPinnedOperationPacksIncludeCleanup(t *testing.T) {
 
 func TestOperationInputSensitivityFlowsToPackArgument(t *testing.T) {
 	document := operationsvc.Document{Inputs: []operationsvc.Input{{Name: "payload", Type: "file", Sensitive: true}, {Name: "pid", Type: "int"}}}
-	got := operationArgumentSensitivity(document, map[string]string{"content": "$input.payload", "target_pid": "$input.pid", "literal": "value"})
+	got := operationArgumentSensitivity(document, map[string]string{"content": "$input.payload", "endpoint": "https://${input.payload}@example.invalid/", "target_pid": "$input.pid", "literal": "value"})
 	if !got["content"] || got["target_pid"] || got["literal"] {
 		t.Fatalf("unexpected sensitivity mapping: %#v", got)
+	}
+	if !got["endpoint"] {
+		t.Fatalf("templated sensitive input did not mark argument sensitive: %#v", got)
 	}
 }
 

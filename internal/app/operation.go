@@ -1712,6 +1712,24 @@ func operationArgumentSensitivity(document operationsvc.Document, arguments map[
 	for name, value := range arguments {
 		if strings.HasPrefix(value, "$input.") && inputs[strings.TrimPrefix(value, "$input.")] {
 			result[name] = true
+			continue
+		}
+		remaining := value
+		for {
+			start := strings.Index(remaining, "${input.")
+			if start < 0 {
+				break
+			}
+			tail := remaining[start+len("${input."):]
+			end := strings.IndexByte(tail, '}')
+			if end < 0 {
+				break
+			}
+			if inputs[tail[:end]] {
+				result[name] = true
+				break
+			}
+			remaining = tail[end+1:]
 		}
 	}
 	return result

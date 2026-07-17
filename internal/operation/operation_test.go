@@ -96,6 +96,44 @@ func TestResolveValueSupportsInputCaptureStepAndTopology(t *testing.T) {
 	}
 }
 
+func TestSchemaVersionNineRendersTypedReferencesInsideTemplates(t *testing.T) {
+	inputs := map[string]string{"scheme": "https", "path": "status"}
+	captures := map[string]string{"port": "8443"}
+	topology := map[string]string{"target.computer_name": "DEVBOX"}
+	got, err := ResolveValue("${input.scheme}://${topology.target.computer_name}:${capture.port}/${input.path}", inputs, captures, topology)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "https://DEVBOX:8443/status" {
+		t.Fatalf("rendered template = %q", got)
+	}
+	if _, err := ResolveValue("http://${capture.missing}/", inputs, captures, topology); err == nil || !strings.Contains(err.Error(), "missing operation capture") {
+		t.Fatalf("missing reference was not rejected: %v", err)
+	}
+	if _, err := ResolveValue("http://${capture.port", inputs, captures, topology); err == nil || !strings.Contains(err.Error(), "unterminated") {
+		t.Fatalf("unterminated template was not rejected: %v", err)
+	}
+}
+
+func TestSchemaVersionNineTemplateValidationAndCompatibility(t *testing.T) {
+	document := Document{Schema: Schema, SchemaVersion: 9, Execution: "dag", ID: "templated", Version: "1.0.0", Title: "Templated", Summary: "Render values from operation state", Tier: "internal", Inputs: []Input{{Name: "host", Type: "string", Required: true}}, Steps: []Step{
+		{ID: "listen", Pack: "host-discovery", Expect: &packsvc.ProofExpectation{Tag: "listen", Fields: map[string]string{"status": "complete"}}, Captures: map[string]Capture{"port": {Tag: "listen", Field: "port"}}},
+		{ID: "request", Pack: "host-discovery", DependsOn: []string{"listen"}, Arguments: map[string]string{"url": "http://${input.host}:${step.listen.port}/echo"}, Expect: &packsvc.ProofExpectation{Tag: "request", Fields: map[string]string{"endpoint": "${input.host}:${capture.port}"}}},
+	}}
+	if err := validate(document); err != nil {
+		t.Fatalf("valid v9 template rejected: %v", err)
+	}
+	document.SchemaVersion = 8
+	if err := validate(document); err == nil || !strings.Contains(err.Error(), "schema version 9") {
+		t.Fatalf("v8 template was not rejected: %v", err)
+	}
+	document.SchemaVersion = 9
+	document.Steps[1].DependsOn = nil
+	if err := validate(document); err == nil || (!strings.Contains(err.Error(), "transitive") && !strings.Contains(err.Error(), "forward capture") && !strings.Contains(err.Error(), "forward step capture")) {
+		t.Fatalf("templated sibling capture was not rejected: %v", err)
+	}
+}
+
 func TestTopologyRolesRequireResolvedComputers(t *testing.T) {
 	if err := ValidateTopologyRoles([]string{"execution", "target"}, map[string]string{"execution.computer_name": "DEVBOX"}); err == nil || !strings.Contains(err.Error(), "target") {
 		t.Fatalf("expected missing target role, got %v", err)

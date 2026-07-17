@@ -4,11 +4,20 @@ package main
 
 import (
 	"bufio"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -25,6 +34,11 @@ type networkFixtureState struct {
 	HTTPURL              string
 	HTTPBlobURL          string
 	HTTPTransientURL     string
+	HTTPSURL             string
+	HTTPSBlobURL         string
+	HTTPSAuthURL         string
+	HTTPAuthUser         string
+	TLSCertificateSHA256 string
 	WebSocketURL         string
 	DNSName              string
 	NetworkPayloadSHA256 string
@@ -36,6 +50,7 @@ type networkObservation struct {
 	TCPRequests        uint32     `json:"tcp_requests"`
 	UDPRequests        uint32     `json:"udp_requests"`
 	HTTPRequests       uint32     `json:"http_requests"`
+	HTTPAuthRequests   uint32     `json:"http_auth_requests"`
 	WebSocketRequests  uint32     `json:"websocket_requests"`
 	TransientAttempts  uint32     `json:"transient_attempts"`
 	LastTransport      string     `json:"last_transport,omitempty"`
@@ -53,6 +68,8 @@ func (state *networkObservation) record(transport string, request, response []by
 		state.UDPRequests++
 	case "http":
 		state.HTTPRequests++
+	case "http-auth":
+		state.HTTPAuthRequests++
 	case "websocket":
 		state.WebSocketRequests++
 	}
@@ -82,12 +99,28 @@ func startNetworkFixtures(stop <-chan struct{}, root string) (networkFixtureStat
 		_ = udpConnection.Close()
 		return networkFixtureState{}, err
 	}
+	httpsListener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		_ = tcpListener.Close()
+		_ = udpConnection.Close()
+		_ = httpListener.Close()
+		return networkFixtureState{}, err
+	}
+	certificate, certificateHash, err := fixtureTLSCertificate()
+	if err != nil {
+		_ = tcpListener.Close()
+		_ = udpConnection.Close()
+		_ = httpListener.Close()
+		_ = httpsListener.Close()
+		return networkFixtureState{}, err
+	}
 
 	go func() {
 		<-stop
 		_ = tcpListener.Close()
 		_ = udpConnection.Close()
 		_ = httpListener.Close()
+		_ = httpsListener.Close()
 	}()
 	observation := &networkObservation{path: filepath.Join(root, "network-state.json")}
 	_ = writeJSON(observation.path, observation)
@@ -126,21 +159,71 @@ func startNetworkFixtures(stop <-chan struct{}, root string) (networkFixtureStat
 		}
 		_, _ = writer.Write(body)
 	})
+	mux.HandleFunc("/auth", func(writer http.ResponseWriter, request *http.Request) {
+		username, password, ok := request.BasicAuth()
+		if !ok || username != "bofbench" || password == "" {
+			writer.Header().Set("WWW-Authenticate", `Basic realm="BOFBenchTarget"`)
+			writer.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		body, _ := io.ReadAll(io.LimitReader(request.Body, 1<<20))
+		observation.record("http-auth", body, body, 0)
+		writer.Header().Set("X-BOFBench-Authenticated-User", username)
+		writer.Header().Set("X-BOFBench-Request-SHA256", hashBytes(body))
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(body)
+	})
 	mux.HandleFunc("/ws", func(writer http.ResponseWriter, request *http.Request) { websocketEcho(writer, request, observation) })
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = server.Serve(httpListener) }()
+	tlsListener := tls.NewListener(httpsListener, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12})
+	go func() { _ = server.Serve(tlsListener) }()
 
 	tcpAddress := tcpListener.Addr().(*net.TCPAddr)
 	udpAddress := udpConnection.LocalAddr().(*net.UDPAddr)
 	httpAddress := httpListener.Addr().(*net.TCPAddr)
+	httpsAddress := httpsListener.Addr().(*net.TCPAddr)
 	base := fmt.Sprintf("http://127.0.0.1:%d", httpAddress.Port)
+	secureBase := fmt.Sprintf("https://127.0.0.1:%d", httpsAddress.Port)
 	return networkFixtureState{
 		TCPHost: "127.0.0.1", TCPPort: tcpAddress.Port,
 		UDPHost: "127.0.0.1", UDPPort: udpAddress.Port,
 		HTTPURL: base + "/echo", HTTPBlobURL: base + "/blob", HTTPTransientURL: base + "/transient",
+		HTTPSURL: secureBase + "/echo", HTTPSBlobURL: secureBase + "/blob", HTTPSAuthURL: secureBase + "/auth",
+		HTTPAuthUser: "bofbench", TLSCertificateSHA256: certificateHash,
 		WebSocketURL: fmt.Sprintf("ws://127.0.0.1:%d/ws", httpAddress.Port),
 		DNSName:      "localhost", NetworkPayloadSHA256: hashBytes(payload),
 	}, nil
+}
+
+func fixtureTLSCertificate() (tls.Certificate, string, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, "", err
+	}
+	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serial, err := rand.Int(rand.Reader, serialLimit)
+	if err != nil {
+		return tls.Certificate{}, "", err
+	}
+	now := time.Now().UTC()
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "BOFBenchTarget"},
+		Issuer:       pkix.Name{CommonName: "BOFBenchTarget"},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:     []string{"localhost"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return tls.Certificate{}, "", err
+	}
+	digest := sha256.Sum256(der)
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, hex.EncodeToString(digest[:]), nil
 }
 
 func serveTCPEcho(listener net.Listener, observation *networkObservation) {

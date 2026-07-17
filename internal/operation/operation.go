@@ -20,10 +20,10 @@ import (
 
 const (
 	Schema                = "bofbench.operation"
-	SchemaVersion         = 8
+	SchemaVersion         = 9
 	MinimumSchemaVersion  = 1
 	ReceiptSchema         = "bofbench.operation-receipt"
-	ReceiptSchemaVersion  = 8
+	ReceiptSchemaVersion  = 9
 	MinimumReceiptVersion = 1
 )
 
@@ -719,6 +719,9 @@ func validate(document Document) error {
 	if document.SchemaVersion < 6 && document.Execution != "" {
 		return fmt.Errorf("operation execution mode requires schema version 6")
 	}
+	if document.SchemaVersion < 9 && documentUsesTemplates(document) {
+		return fmt.Errorf("operation string templates require schema version 9")
+	}
 	if document.Execution == "" {
 		document.Execution = "linear"
 	}
@@ -1020,8 +1023,8 @@ func validate(document Document) error {
 }
 
 func validateDAG(document Document, inputs map[string]Input, stepIndexes map[string]int) (map[string]string, error) {
-	if document.SchemaVersion < 6 || document.SchemaVersion > 8 {
-		return nil, fmt.Errorf("dag execution requires operation schema version 6, 7, or 8")
+	if document.SchemaVersion < 6 || document.SchemaVersion > SchemaVersion {
+		return nil, fmt.Errorf("dag execution requires operation schema version 6 through %d", SchemaVersion)
 	}
 	captureOwners := map[string]string{}
 	for _, step := range document.Steps {
@@ -1148,8 +1151,15 @@ func validateDAG(document Document, inputs map[string]Input, stepIndexes map[str
 			if err := validateReference(value, inputs, available, allSteps); err != nil {
 				return fmt.Errorf("dag step %s %s: %w", step.ID, label, err)
 			}
-			if strings.HasPrefix(value, "$step.") {
-				parts := strings.Split(strings.TrimPrefix(value, "$step."), ".")
+			references, err := operationReferences(value)
+			if err != nil {
+				return fmt.Errorf("dag step %s %s: %w", step.ID, label, err)
+			}
+			for _, reference := range references {
+				if !strings.HasPrefix(reference, "$step.") {
+					continue
+				}
+				parts := strings.Split(strings.TrimPrefix(reference, "$step."), ".")
 				if len(parts) == 2 && !ancestors[step.ID][parts[0]] {
 					return fmt.Errorf("dag step %s may consume captures only from transitive dependencies", step.ID)
 				}
@@ -1201,12 +1211,18 @@ func validateDAGExpectation(label string, expectation packsvc.ProofExpectation, 
 		values = append(values, expectation.Payload.SHA256)
 	}
 	for _, value := range values {
-		if !strings.HasPrefix(value, "$step.") {
-			continue
+		references, err := operationReferences(value)
+		if err != nil {
+			return err
 		}
-		parts := strings.Split(strings.TrimPrefix(value, "$step."), ".")
-		if len(parts) == 2 && !ancestors[parts[0]] {
-			return fmt.Errorf("dag step %s expectation may consume captures only from transitive dependencies", label)
+		for _, reference := range references {
+			if !strings.HasPrefix(reference, "$step.") {
+				continue
+			}
+			parts := strings.Split(strings.TrimPrefix(reference, "$step."), ".")
+			if len(parts) == 2 && !ancestors[parts[0]] {
+				return fmt.Errorf("dag step %s expectation may consume captures only from transitive dependencies", label)
+			}
 		}
 	}
 	return nil
@@ -1399,6 +1415,19 @@ func validateExpectation(label string, expectation packsvc.ProofExpectation, inp
 }
 
 func validateReference(value string, inputs map[string]Input, captures map[string]string, steps map[string]bool) error {
+	references, err := operationReferences(value)
+	if err != nil {
+		return err
+	}
+	for _, reference := range references {
+		if err := validateExactReference(reference, inputs, captures, steps); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateExactReference(value string, inputs map[string]Input, captures map[string]string, steps map[string]bool) error {
 	if !strings.HasPrefix(value, "$") {
 		return nil
 	}
@@ -1429,6 +1458,83 @@ func validateReference(value string, inputs map[string]Input, captures map[strin
 	return nil
 }
 
+func operationReferences(value string) ([]string, error) {
+	if !strings.Contains(value, "${") {
+		if strings.HasPrefix(value, "$") {
+			return []string{value}, nil
+		}
+		return nil, nil
+	}
+	var references []string
+	remaining := value
+	for {
+		start := strings.Index(remaining, "${")
+		if start < 0 {
+			break
+		}
+		tail := remaining[start+2:]
+		end := strings.IndexByte(tail, '}')
+		if end < 0 {
+			return nil, fmt.Errorf("unterminated operation template in %q", value)
+		}
+		name := tail[:end]
+		if name == "" || strings.ContainsAny(name, "${}") {
+			return nil, fmt.Errorf("invalid operation template reference in %q", value)
+		}
+		references = append(references, "$"+name)
+		remaining = tail[end+1:]
+	}
+	return references, nil
+}
+
+func documentUsesTemplates(document Document) bool {
+	uses := func(value string) bool { return strings.Contains(value, "${") }
+	expectationUses := func(expectation *packsvc.ProofExpectation) bool {
+		if expectation == nil {
+			return false
+		}
+		for _, value := range expectation.Fields {
+			if uses(value) {
+				return true
+			}
+		}
+		return expectation.Payload != nil && uses(expectation.Payload.SHA256)
+	}
+	mapUses := func(values map[string]string) bool {
+		for _, value := range values {
+			if uses(value) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, step := range document.Steps {
+		if mapUses(step.Arguments) || expectationUses(step.Expect) || expectationUses(step.Ready) || (step.Cleanup != nil && mapUses(step.Cleanup.Arguments)) {
+			return true
+		}
+		for _, outcome := range step.Outcomes {
+			if expectationUses(&outcome.Expect) {
+				return true
+			}
+		}
+		if step.Retry != nil {
+			for _, condition := range step.Retry.When {
+				if expectationUses(&condition.Expect) {
+					return true
+				}
+			}
+		}
+		if step.Parallel != nil {
+			for _, branch := range step.Parallel.Branches {
+				if mapUses(branch.Arguments) || expectationUses(branch.Expect) || (branch.Cleanup != nil && mapUses(branch.Cleanup.Arguments)) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func validType(value string) bool {
 	switch strings.ToLower(value) {
 	case "string", "wstring", "int", "short", "bytes", "file":
@@ -1454,6 +1560,34 @@ func emptyDefault(value, fallback string) string {
 func IsDAG(document Document) bool { return ExecutionMode(document) == "dag" }
 
 func ResolveValue(value string, inputs, captures, topology map[string]string) (string, error) {
+	if strings.Contains(value, "${") {
+		var rendered strings.Builder
+		remaining := value
+		for {
+			start := strings.Index(remaining, "${")
+			if start < 0 {
+				rendered.WriteString(remaining)
+				return rendered.String(), nil
+			}
+			rendered.WriteString(remaining[:start])
+			tail := remaining[start+2:]
+			end := strings.IndexByte(tail, '}')
+			if end < 0 {
+				return "", fmt.Errorf("unterminated operation template in %q", value)
+			}
+			reference := "$" + tail[:end]
+			resolved, err := resolveExactValue(reference, inputs, captures, topology)
+			if err != nil {
+				return "", err
+			}
+			rendered.WriteString(resolved)
+			remaining = tail[end+1:]
+		}
+	}
+	return resolveExactValue(value, inputs, captures, topology)
+}
+
+func resolveExactValue(value string, inputs, captures, topology map[string]string) (string, error) {
 	if !strings.HasPrefix(value, "$") {
 		return value, nil
 	}
@@ -2471,7 +2605,18 @@ func builtins() []Resolved {
 		},
 		ProofCases: []ProofCase{{ID: "local-connectivity", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Inputs: map[string]string{"protocol": "all", "family": "all", "result_limit": "32"}, ExpectWaves: [][]string{{"profiles", "sockets", "dns-cache"}}, ExpectSteps: map[string]string{"profiles": "completed", "sockets": "completed", "dns-cache": "completed"}}},
 	}
-	documents := []Document{triage, network, waitTriage, coordination, ipc, ipcActivation, eventing, networkConnectivity}
+	secureNetwork := Document{
+		Schema: Schema, SchemaVersion: 9, Execution: "dag", ID: "secure-network-posture", Version: "1.0.0",
+		Title: "Secure Network Posture", Summary: "Inspect one HTTPS endpoint certificate and response metadata while inventorying current-user BITS jobs", Tier: "public",
+		Inputs: []Input{{Name: "https_url", Type: "wstring", Required: true}, {Name: "allow_invalid", Type: "int", Default: "0"}, {Name: "bits_filter", Type: "wstring", Default: ""}, {Name: "result_limit", Type: "int", Default: "16"}},
+		Steps: []Step{
+			{ID: "certificate", Pack: "tls-certificate-inventory", Arguments: map[string]string{"url": "$input.https_url", "allow_invalid": "$input.allow_invalid", "timeout_ms": "10000"}, Expect: &packsvc.ProofExpectation{Tag: "tls-certificate-inventory", Fields: map[string]string{"status": "complete", "sha256": "*"}}},
+			{ID: "response", Pack: "http-response-metadata", Arguments: map[string]string{"url": "$input.https_url", "method": "HEAD", "follow_redirects": "0", "allow_invalid": "$input.allow_invalid", "timeout_ms": "10000"}, Expect: &packsvc.ProofExpectation{Tag: "http-response-metadata", Fields: map[string]string{"status": "complete", "http_status": "200"}}},
+			{ID: "bits", Pack: "bits-job-inventory", Arguments: map[string]string{"name_filter": "$input.bits_filter", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "bits-job-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+		},
+		ProofCases: []ProofCase{{ID: "fixture-https", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Inputs: map[string]string{"https_url": "$TARGET_HTTPS_BLOB_URL", "allow_invalid": "1", "bits_filter": "BOFBench", "result_limit": "16"}, ExpectWaves: [][]string{{"certificate", "response", "bits"}}, ExpectSteps: map[string]string{"certificate": "completed", "response": "completed", "bits": "completed"}}},
+	}
+	documents := []Document{triage, network, waitTriage, coordination, ipc, ipcActivation, eventing, networkConnectivity, secureNetwork}
 	items := make([]Resolved, 0, len(documents))
 	for _, document := range documents {
 		item := Resolved{Document: document, Catalog: "builtin", Qualified: "builtin/" + document.ID}

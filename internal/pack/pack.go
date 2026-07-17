@@ -1069,6 +1069,36 @@ func builtins() []Resolved {
 	networkProfiles.AnalysisSignatures = []AnalysisSignature{{ID: "network_profile_inventory", Name: "Network profile inventory", Summary: "Read Network List Manager connectivity and bounded profile category, identifier, and domain context.", Steps: []AnalysisStep{{Action: "open Network List Manager", APIs: []string{"CoCreateInstance"}}, {Action: "read network profile registration", APIs: []string{"RegEnumKeyExW", "RegQueryValueExW"}}, {Action: "read join context", APIs: []string{"NetGetJoinInformation"}}}, RequiredStrings: []string{"[network-profile-inventory]"}, Effects: []string{"reads local network profile metadata"}, Requirements: []string{"COM and local registry query access"}}}
 	networkProfiles.ProofCases = []ProofCase{{ID: "bounded-profiles", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"result_limit": "16"}, Expect: ProofExpectation{Tag: "network-profile-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
 	byID["network-profile-inventory"] = networkProfiles
+	tlsCertificates := byID["tls-certificate-inventory"]
+	tlsCertificates.Title = "TLS Certificate Inventory"
+	tlsCertificates.Capabilities = []string{"exact HTTPS server-certificate identity, validity, and SHA-256 inspection"}
+	tlsCertificates.Network = "operator-selected HTTPS endpoint"
+	tlsCertificates.Arguments = []Argument{{Name: "url", Type: "wstring", Required: true, Description: "exact HTTPS URL"}, {Name: "allow_invalid", Type: "int", Default: "0", Description: "allow invalid certificates while still reporting their identity"}, {Name: "timeout_ms", Type: "int", Default: "10000", Description: "bounded connection and response timeout"}}
+	tlsCertificates.ExpectedAnalysis = []string{"tls_certificate_inventory"}
+	tlsCertificates.OutputFields = []string{"status", "host", "subject", "issuer", "sha256", "not_before", "not_after", "bytes", "error"}
+	tlsCertificates.SensitiveOutputFields = []string{"subject", "issuer"}
+	tlsCertificates.AnalysisSignatures = []AnalysisSignature{{ID: "tls_certificate_inventory", Name: "TLS server certificate inventory", Summary: "Connect to one exact HTTPS endpoint and inspect the presented server certificate.", Steps: []AnalysisStep{{Action: "open an exact HTTPS request", APIs: []string{"WinHttpOpenRequest"}}, {Action: "read the server certificate", APIs: []string{"WinHttpQueryOption"}}, {Action: "hash the encoded certificate", APIs: []string{"CryptHashCertificate"}}}, RequiredStrings: []string{"[tls-certificate-inventory]"}, Effects: []string{"reaches an HTTPS endpoint", "reads the presented TLS certificate"}, Requirements: []string{"an exact HTTPS URL"}}}
+	tlsCertificates.ProofCases = []ProofCase{{ID: "fixture-certificate", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"url": "$TARGET_HTTPS_URL", "allow_invalid": "1", "timeout_ms": "10000"}, Expect: ProofExpectation{Tag: "tls-certificate-inventory", Fields: map[string]string{"status": "complete", "sha256": "$TARGET_TLS_CERTIFICATE_SHA256"}}}}
+	byID["tls-certificate-inventory"] = tlsCertificates
+	httpMetadata := byID["http-response-metadata"]
+	httpMetadata.Title = "HTTP Response Metadata"
+	httpMetadata.Capabilities = []string{"exact URL response status, header hash, content type, and length inspection"}
+	httpMetadata.Network = "operator-selected HTTP or HTTPS endpoint"
+	httpMetadata.Arguments = []Argument{{Name: "url", Type: "wstring", Required: true}, {Name: "method", Type: "wstring", Default: "HEAD"}, {Name: "follow_redirects", Type: "int", Default: "0"}, {Name: "allow_invalid", Type: "int", Default: "0"}, {Name: "timeout_ms", Type: "int", Default: "10000"}}
+	httpMetadata.ExpectedAnalysis = []string{"http_response_metadata"}
+	httpMetadata.OutputFields = []string{"status", "host", "http_status", "content_length", "content_type", "header_bytes", "header_sha256", "error"}
+	httpMetadata.AnalysisSignatures = []AnalysisSignature{{ID: "http_response_metadata", Name: "HTTP response metadata", Summary: "Issue a metadata-only request to an exact URL and read bounded response headers.", Steps: []AnalysisStep{{Action: "open an exact HTTP request", APIs: []string{"WinHttpOpenRequest"}}, {Action: "receive the response", APIs: []string{"WinHttpReceiveResponse"}}, {Action: "read response headers", APIs: []string{"WinHttpQueryHeaders"}}}, RequiredStrings: []string{"[http-response-metadata]"}, Effects: []string{"reaches an HTTP endpoint", "reads response metadata"}, Requirements: []string{"an exact URL"}}}
+	httpMetadata.ProofCases = []ProofCase{{ID: "fixture-https", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"url": "$TARGET_HTTPS_BLOB_URL", "method": "HEAD", "follow_redirects": "0", "allow_invalid": "1", "timeout_ms": "10000"}, Expect: ProofExpectation{Tag: "http-response-metadata", Fields: map[string]string{"status": "complete", "http_status": "200"}}}}
+	byID["http-response-metadata"] = httpMetadata
+	bitsJobs := byID["bits-job-inventory"]
+	bitsJobs.Title = "BITS Job Inventory"
+	bitsJobs.Capabilities = []string{"bounded current-user Background Intelligent Transfer Service job inventory"}
+	bitsJobs.Arguments = []Argument{{Name: "name_filter", Type: "wstring", Default: "", Description: "case-insensitive display-name substring"}, {Name: "result_limit", Type: "int", Default: "64", Description: "maximum jobs (1-512)"}}
+	bitsJobs.ExpectedAnalysis = []string{"bits_job_inventory"}
+	bitsJobs.OutputFields = []string{"status", "job_id", "name", "state", "priority", "bytes_total", "bytes_transferred", "files_total", "files_transferred", "shown", "limit", "hresult"}
+	bitsJobs.AnalysisSignatures = []AnalysisSignature{{ID: "bits_job_inventory", Name: "BITS job inventory", Summary: "Enumerate bounded current-user BITS job identity, state, priority, and progress metadata.", Steps: []AnalysisStep{{Action: "activate the BITS manager used for job enumeration", APIs: []string{"CoCreateInstance"}}}, RequiredStrings: []string{"[bits-job-inventory]"}, Effects: []string{"reads BITS job metadata"}, Requirements: []string{"BITS service availability"}}}
+	bitsJobs.ProofCases = []ProofCase{{ID: "bounded-jobs", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"name_filter": "BOFBench", "result_limit": "16"}, Expect: ProofExpectation{Tag: "bits-job-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["bits-job-inventory"] = bitsJobs
 	pipeInventory := byID["named-pipe-inventory"]
 	pipeInventory.Title = "Named Pipe Inventory"
 	pipeInventory.Capabilities = []string{"bounded named-pipe discovery"}
@@ -1404,6 +1434,7 @@ func validate(document Document, root string) error {
 		"$TARGET_ETW_PROVIDER_GUID": true, "$TARGET_ETW_SESSION_NAME": true,
 		"$TARGET_TCP_HOST": true, "$TARGET_TCP_PORT": true, "$TARGET_UDP_HOST": true, "$TARGET_UDP_PORT": true,
 		"$TARGET_HTTP_URL": true, "$TARGET_HTTP_BLOB_URL": true, "$TARGET_HTTP_TRANSIENT_URL": true, "$TARGET_WEBSOCKET_URL": true,
+		"$TARGET_HTTPS_URL": true, "$TARGET_HTTPS_BLOB_URL": true, "$TARGET_HTTPS_AUTH_URL": true, "$TARGET_HTTP_AUTH_USER": true, "$TARGET_TLS_CERTIFICATE_SHA256": true,
 		"$TARGET_DNS_NAME": true, "$TARGET_NETWORK_PAYLOAD_SHA256": true,
 		"$TARGET_ARCH": true, "$TARGET_MODULE_BASE": true, "$TARGET_MODULE_PATH": true, "$EXECUTION_ADDRESS": true,
 		"$X86_TARGET_PID": true, "$X86_TARGET_TID": true, "$X86_TARGET_MODULE_BASE": true, "$X86_TARGET_MODULE_PATH": true,
