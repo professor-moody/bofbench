@@ -27,12 +27,12 @@ import (
 )
 
 type operationOptions struct {
-	project, via, lab, topology, arch, compiler string
-	catalogs, arguments                         []string
-	cleanup, cleanupOnFailure                   bool
-	profiles                                    string
-	parallelism                                 int
-	parallelSem                                 chan struct{}
+	project, via, lab, topology, targets, arch, compiler string
+	catalogs, arguments                                  []string
+	cleanup, cleanupOnFailure                            bool
+	profiles                                             string
+	parallelism                                          int
+	parallelSem                                          chan struct{}
 }
 
 func operationCommand(stdout io.Writer) *cobra.Command {
@@ -499,6 +499,7 @@ func bindOperationRunFlags(cmd *cobra.Command, opts *operationOptions, includeRu
 	cmd.Flags().StringVar(&opts.via, "via", "native", "runtime: native, lab, sliver, or cobaltstrike")
 	cmd.Flags().StringVar(&opts.lab, "lab", "", "named lab profile")
 	cmd.Flags().StringVar(&opts.topology, "topology", "", "named multi-host topology")
+	cmd.Flags().StringVar(&opts.targets, "targets", "", "named target set from the selected topology")
 	cmd.Flags().StringVar(&opts.arch, "arch", "x64", "build architecture: x64 or x86")
 	cmd.Flags().StringVar(&opts.compiler, "compiler", "auto", "compiler: auto, mingw, or msvc")
 	cmd.Flags().StringVar(&opts.profiles, "profiles", lab.ProfilesPath(), "global lab profiles file")
@@ -620,6 +621,29 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 	if topologyValues == nil {
 		topologyValues = map[string]string{}
 	}
+	if opts.targets != "" {
+		if opts.topology == "" {
+			return fmt.Errorf("--targets requires --topology")
+		}
+		value := topologyValues["target_sets."+opts.targets+".computer_names"]
+		if value == "" {
+			return fmt.Errorf("topology %s has no resolved target set %q", opts.topology, opts.targets)
+		}
+		found := false
+		for _, input := range item.Document.Inputs {
+			if input.Name == "targets" {
+				if input.Sensitive {
+					return fmt.Errorf("operation targets input cannot be sensitive")
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("operation %s has no targets input for --targets", item.Document.ID)
+		}
+		inputs["targets"] = value
+	}
 	if err := operationsvc.ValidateTopologyRoles(item.Document.Roles, topologyValues); err != nil {
 		return err
 	}
@@ -631,7 +655,7 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 			return fmt.Errorf("operation input %s requires %s, but the selected topology does not provide it", input.Name, input.TopologyValue)
 		}
 	}
-	expandedDocument, err := operationsvc.ExpandFanOutDocument(item.Document, inputs)
+	expandedDocument, err := operationsvc.ExpandFanOutDocumentWithTopology(item.Document, inputs, topologyValues)
 	if err != nil {
 		return err
 	}

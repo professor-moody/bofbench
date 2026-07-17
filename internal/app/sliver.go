@@ -61,7 +61,7 @@ func sliverCommand(stdout io.Writer) *cobra.Command {
 	cmd.PersistentFlags().StringVar(&opts.SessionFilter, "session", "", "live session selector; defaults to the selected lab profile")
 	cmd.PersistentFlags().StringVar(&opts.Lab, "lab", "", "named lab profile")
 	cmd.PersistentFlags().StringVar(&opts.Profiles, "profiles", opts.Profiles, "global lab profiles file")
-	cmd.AddCommand(sliverSetupCommand(stdout, &opts), sliverSessionsCommand(stdout, &opts), sliverRunCommand(stdout, &opts))
+	cmd.AddCommand(sliverSetupCommand(stdout, &opts), sliverSessionsCommand(stdout, &opts), sliverRunCommand(stdout, &opts), sliverLabSessionCommand(stdout, &opts))
 	return cmd
 }
 

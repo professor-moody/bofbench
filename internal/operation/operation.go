@@ -20,10 +20,10 @@ import (
 
 const (
 	Schema                = "bofbench.operation"
-	SchemaVersion         = 10
+	SchemaVersion         = 11
 	MinimumSchemaVersion  = 1
 	ReceiptSchema         = "bofbench.operation-receipt"
-	ReceiptSchemaVersion  = 10
+	ReceiptSchemaVersion  = 11
 	MinimumReceiptVersion = 1
 )
 
@@ -819,8 +819,10 @@ func validate(document Document) error {
 			if separator != "," && separator != ";" && separator != "\\n" {
 				return fmt.Errorf("step %s fan_out separator must be comma, semicolon, or \\n", step.ID)
 			}
-			if !strings.HasPrefix(step.FanOut.Source, "$input.") || strings.Contains(step.FanOut.Source, "${") {
-				return fmt.Errorf("step %s fan_out source must be an exact $input reference", step.ID)
+			inputSource := strings.HasPrefix(step.FanOut.Source, "$input.")
+			topologySource := document.SchemaVersion >= 11 && strings.HasPrefix(step.FanOut.Source, "$topology.target_sets.")
+			if (!inputSource && !topologySource) || strings.Contains(step.FanOut.Source, "${") {
+				return fmt.Errorf("step %s fan_out source must be an exact $input reference or schema-v11 topology target-set reference", step.ID)
 			}
 			if index != len(document.Steps)-1 || len(step.Outcomes) > 0 {
 				return fmt.Errorf("step %s fan_out must be the terminal linear step and cannot declare outcomes", step.ID)
@@ -861,7 +863,7 @@ func validate(document Document) error {
 		}
 		if input.TopologyValue != "" {
 			parts := strings.Split(input.TopologyValue, ".")
-			if len(parts) < 2 || (parts[0] != "execution" && parts[0] != "target" && parts[0] != "domain_controller" && parts[0] != "domain") {
+			if len(parts) < 2 || (parts[0] != "execution" && parts[0] != "target" && parts[0] != "domain_controller" && parts[0] != "domain" && parts[0] != "target_sets") {
 				return fmt.Errorf("input %s has invalid topology value %q", input.Name, input.TopologyValue)
 			}
 		}
@@ -877,12 +879,16 @@ func validate(document Document) error {
 		for stepIndex, step := range document.Steps {
 			steps[step.ID] = true
 			if step.FanOut != nil {
-				if err := validateReference(step.FanOut.Source, inputs, captures, steps); err != nil {
-					return fmt.Errorf("step %s fan_out: %w", step.ID, err)
-				}
-				inputName := strings.TrimPrefix(step.FanOut.Source, "$input.")
-				if inputs[inputName].Sensitive {
-					return fmt.Errorf("step %s fan_out source input cannot be sensitive because target items are recorded in the receipt", step.ID)
+				if strings.HasPrefix(step.FanOut.Source, "$input.") {
+					if err := validateReference(step.FanOut.Source, inputs, captures, steps); err != nil {
+						return fmt.Errorf("step %s fan_out: %w", step.ID, err)
+					}
+					inputName := strings.TrimPrefix(step.FanOut.Source, "$input.")
+					if inputs[inputName].Sensitive {
+						return fmt.Errorf("step %s fan_out source input cannot be sensitive because target items are recorded in the receipt", step.ID)
+					}
+				} else if !regexp.MustCompile(`^\$topology\.target_sets\.[A-Za-z0-9._-]+\.computer_names$`).MatchString(step.FanOut.Source) {
+					return fmt.Errorf("step %s fan_out has invalid topology target-set source %q", step.ID, step.FanOut.Source)
 				}
 			}
 			if step.Parallel != nil {
@@ -1354,10 +1360,16 @@ func expandFanOutMap(values map[string]string, item string) map[string]string {
 	return result
 }
 
-// ExpandFanOutDocument converts bounded schema-v10 fan-out declarations into
+// ExpandFanOutDocument converts bounded fan-out declarations into
 // explicit parallel branches. The original definition hash remains pinned;
-// the concrete items and branch states are pinned in the v10 receipt.
+// the concrete items and branch states are pinned in the receipt.
 func ExpandFanOutDocument(document Document, inputs map[string]string) (Document, error) {
+	return ExpandFanOutDocumentWithTopology(document, inputs, nil)
+}
+
+// ExpandFanOutDocumentWithTopology resolves schema-v11 target-set sources from
+// the caller's already inspected topology values. It never discovers targets.
+func ExpandFanOutDocumentWithTopology(document Document, inputs, topologyValues map[string]string) (Document, error) {
 	result := document
 	result.Steps = append([]Step(nil), document.Steps...)
 	for index := range result.Steps {
@@ -1365,7 +1377,17 @@ func ExpandFanOutDocument(document Document, inputs map[string]string) (Document
 		if step.FanOut == nil {
 			continue
 		}
-		source, err := ResolveValue(step.FanOut.Source, inputs, nil, nil)
+		var source string
+		var err error
+		if strings.HasPrefix(step.FanOut.Source, "$topology.") {
+			key := strings.TrimPrefix(step.FanOut.Source, "$topology.")
+			source = topologyValues[key]
+			if source == "" {
+				err = fmt.Errorf("topology value %s is unavailable", key)
+			}
+		} else {
+			source, err = ResolveValue(step.FanOut.Source, inputs, nil, nil)
+		}
 		if err != nil {
 			return Document{}, fmt.Errorf("expand fan-out step %s: %w", step.ID, err)
 		}
@@ -2824,7 +2846,39 @@ func builtins() []Resolved {
 		},
 		ProofCases: []ProofCase{{ID: "canary-filesystem", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Inputs: map[string]string{"path": "$CANARY_PATH", "stream_filter": "", "remote_filter": "", "result_limit": "16"}, ExpectWaves: [][]string{{"streams", "reparse", "smb"}}, ExpectSteps: map[string]string{"streams": "completed", "reparse": "completed", "smb": "completed"}}},
 	}
-	documents := []Document{triage, network, waitTriage, coordination, ipc, ipcActivation, eventing, networkConnectivity, secureNetwork, filesystemSMB}
+	domainIdentity := Document{
+		Schema: Schema, SchemaVersion: 11, Execution: "dag", ID: "domain-identity-posture", Version: "1.0.0", Title: "Domain Identity Posture", Summary: "Inventory Active Directory sites, organizational units, managed service accounts, and Kerberos policy as concurrent domain queries", Tier: "public", Roles: []string{"execution", "domain_controller"},
+		Inputs: []Input{{Name: "server", Type: "string", TopologyValue: "domain_controller.computer_name"}, {Name: "base_dn", Type: "string", Default: ""}, {Name: "result_limit", Type: "int", Default: "50"}},
+		Steps: []Step{
+			{ID: "sites", Pack: "ad-site-inventory", Arguments: map[string]string{"server": "$input.server", "base_dn": "$input.base_dn", "filter": "(|(objectClass=site)(objectClass=subnet))", "attributes": "distinguishedName,name,location,siteObject", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "ldap-query", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+			{ID: "ous", Pack: "ldap-ou-inventory", Arguments: map[string]string{"server": "$input.server", "base_dn": "$input.base_dn", "filter": "(objectClass=organizationalUnit)", "attributes": "distinguishedName,name,gPLink,gPOptions", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "ldap-query", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+			{ID: "service-accounts", Pack: "ldap-managed-service-account-inventory", Arguments: map[string]string{"server": "$input.server", "base_dn": "$input.base_dn", "filter": "(|(objectClass=msDS-ManagedServiceAccount)(objectClass=msDS-GroupManagedServiceAccount))", "attributes": "distinguishedName,sAMAccountName,dNSHostName,servicePrincipalName", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "ldap-query", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+			{ID: "kerberos-policy", Pack: "kerberos-policy-inventory", Arguments: map[string]string{"server": "$input.server", "base_dn": "$input.base_dn", "filter": "(objectClass=domainDNS)", "attributes": "distinguishedName,maxTicketAge,maxRenewAge,maxServiceAge,maxClockSkew", "result_limit": "4"}, Expect: &packsvc.ProofExpectation{Tag: "ldap-query", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+		},
+		ProofCases: []ProofCase{{ID: "domain", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Roles: []string{"execution", "domain_controller"}, Inputs: map[string]string{"server": "$LAB_HOST", "base_dn": "", "result_limit": "25"}, ExpectWaves: [][]string{{"sites", "ous", "service-accounts", "kerberos-policy"}}, ExpectSteps: map[string]string{"sites": "completed", "ous": "completed", "service-accounts": "completed", "kerberos-policy": "completed"}}},
+	}
+	remotePosture := Document{
+		Schema: Schema, SchemaVersion: 11, Execution: "dag", ID: "remote-host-posture", Version: "1.0.0", Title: "Remote Host Posture", Summary: "Inspect exact-host identity, Event Log, share permissions, and firewall policy as one bounded remote operation", Tier: "public", Roles: []string{"execution", "target"},
+		Inputs: []Input{{Name: "target_host", Type: "wstring", TopologyValue: "target.computer_name"}, {Name: "result_limit", Type: "int", Default: "16"}},
+		Steps: []Step{
+			{ID: "identity", Pack: "remote-host-info", Arguments: map[string]string{"target_host": "$input.target_host"}, Expect: &packsvc.ProofExpectation{Tag: "remote-host-info", Fields: map[string]string{"status": "complete", "target": "$input.target_host"}}},
+			{ID: "events", Pack: "remote-event-log-query", Arguments: map[string]string{"target_host": "$input.target_host", "channel": "System", "xpath": "*", "direction": "reverse", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "remote-event-log-query", Fields: map[string]string{"status": "complete", "target": "$input.target_host"}}},
+			{ID: "shares", Pack: "remote-share-permission-inventory", Arguments: map[string]string{"target_host": "$input.target_host", "share_filter": "", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "remote-share-permission-inventory", Fields: map[string]string{"status": "complete", "target": "$input.target_host"}}},
+			{ID: "firewall", Pack: "remote-firewall-profile-inventory", Arguments: map[string]string{"target_host": "$input.target_host"}, Expect: &packsvc.ProofExpectation{Tag: "remote-firewall-profile-inventory", Fields: map[string]string{"status": "complete", "target": "$input.target_host"}}},
+		},
+		ProofCases: []ProofCase{{ID: "target", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Roles: []string{"execution", "target"}, Inputs: map[string]string{"target_host": "$LAB_HOST", "result_limit": "8"}, ExpectWaves: [][]string{{"identity", "events", "shares", "firewall"}}, ExpectSteps: map[string]string{"identity": "completed", "events": "completed", "shares": "completed", "firewall": "completed"}}},
+	}
+	executionSurface := Document{
+		Schema: Schema, SchemaVersion: 11, Execution: "dag", ID: "process-execution-surface", Version: "1.0.0", Title: "Process Execution Surface", Summary: "Inspect mitigation policy, CFG executable regions, and instrumentation callback state for one exact process", Tier: "public",
+		Inputs: []Input{{Name: "target_pid", Type: "int", Required: true}, {Name: "result_limit", Type: "int", Default: "32"}},
+		Steps: []Step{
+			{ID: "mitigations", Pack: "process-mitigation-inventory", Arguments: map[string]string{"target_pid": "$input.target_pid"}, Expect: &packsvc.ProofExpectation{Tag: "process-mitigation-inventory", Fields: map[string]string{"status": "complete", "target_pid": "$input.target_pid"}}},
+			{ID: "cfg", Pack: "process-cfg-target-inventory", Arguments: map[string]string{"target_pid": "$input.target_pid", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "process-cfg-target-inventory", Fields: map[string]string{"status": "complete", "target_pid": "$input.target_pid"}}},
+			{ID: "instrumentation", Pack: "process-instrumentation-callback-inventory", Arguments: map[string]string{"target_pid": "$input.target_pid"}, Expect: &packsvc.ProofExpectation{Tag: "process-instrumentation-callback-inventory", Fields: map[string]string{"status": "complete", "target_pid": "$input.target_pid"}}},
+		},
+		ProofCases: []ProofCase{{ID: "target", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Inputs: map[string]string{"target_pid": "$TARGET_PID", "result_limit": "16"}, ExpectWaves: [][]string{{"mitigations", "cfg", "instrumentation"}}, ExpectSteps: map[string]string{"mitigations": "completed", "cfg": "completed", "instrumentation": "completed"}}},
+	}
+	documents := []Document{triage, network, waitTriage, coordination, ipc, ipcActivation, eventing, networkConnectivity, secureNetwork, filesystemSMB, domainIdentity, remotePosture, executionSurface}
 	items := make([]Resolved, 0, len(documents))
 	for _, document := range documents {
 		item := Resolved{Document: document, Catalog: "builtin", Qualified: "builtin/" + document.ID}

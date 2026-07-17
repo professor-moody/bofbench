@@ -23,7 +23,7 @@ import (
 
 const (
 	Schema               = "bofbench.pack"
-	SchemaVersion        = 5
+	SchemaVersion        = 6
 	MinimumSchemaVersion = 1
 	LockSchema           = "bofbench.pack-lock"
 	LockSchemaVersion    = 1
@@ -102,6 +102,22 @@ type OperationProof struct {
 	Inputs    map[string]string `json:"inputs,omitempty"`
 }
 
+// ComparisonField describes how one structured-output field is compared when
+// the exact same object is executed through multiple runtime adapters.
+type ComparisonField struct {
+	Name       string `json:"name"`
+	Behavior   string `json:"behavior"`
+	Normalizer string `json:"normalizer,omitempty"`
+}
+
+// ComparisonContract is deliberately output-oriented. It does not trigger a
+// second execution or cleanup; it only explains which completed structured
+// result fields are stable enough to compare across runtimes.
+type ComparisonContract struct {
+	Tag    string            `json:"tag"`
+	Fields []ComparisonField `json:"fields"`
+}
+
 type ProofCase struct {
 	ID             string                  `json:"id"`
 	Via            []string                `json:"via"`
@@ -116,30 +132,31 @@ type ProofCase struct {
 }
 
 type Document struct {
-	Schema                string              `json:"schema"`
-	SchemaVersion         int                 `json:"schema_version"`
-	ID                    string              `json:"id"`
-	Version               string              `json:"version"`
-	Title                 string              `json:"title"`
-	Summary               string              `json:"summary"`
-	Tier                  string              `json:"tier"`
-	Capabilities          []string            `json:"capabilities"`
-	Effects               []string            `json:"effects"`
-	Platforms             []string            `json:"platforms"`
-	Architecture          []string            `json:"architecture"`
-	Privilege             string              `json:"privilege"`
-	Network               string              `json:"network"`
-	Arguments             []Argument          `json:"arguments,omitempty"`
-	Dependencies          []string            `json:"dependencies,omitempty"`
-	Source                Source              `json:"source"`
-	ExpectedAnalysis      []string            `json:"expected_analysis,omitempty"`
-	AnalysisSignatures    []AnalysisSignature `json:"analysis_signatures,omitempty"`
-	ProofCases            []ProofCase         `json:"proof_cases,omitempty"`
-	OutputFields          []string            `json:"output_fields,omitempty"`
-	SensitiveOutputFields []string            `json:"sensitive_output_fields,omitempty"`
-	CleanupPack           string              `json:"cleanup_pack,omitempty"`
-	CleanupArguments      map[string]string   `json:"cleanup_arguments,omitempty"`
-	TargetSupport         []string            `json:"target_support"`
+	Schema                string               `json:"schema"`
+	SchemaVersion         int                  `json:"schema_version"`
+	ID                    string               `json:"id"`
+	Version               string               `json:"version"`
+	Title                 string               `json:"title"`
+	Summary               string               `json:"summary"`
+	Tier                  string               `json:"tier"`
+	Capabilities          []string             `json:"capabilities"`
+	Effects               []string             `json:"effects"`
+	Platforms             []string             `json:"platforms"`
+	Architecture          []string             `json:"architecture"`
+	Privilege             string               `json:"privilege"`
+	Network               string               `json:"network"`
+	Arguments             []Argument           `json:"arguments,omitempty"`
+	Dependencies          []string             `json:"dependencies,omitempty"`
+	Source                Source               `json:"source"`
+	ExpectedAnalysis      []string             `json:"expected_analysis,omitempty"`
+	AnalysisSignatures    []AnalysisSignature  `json:"analysis_signatures,omitempty"`
+	ProofCases            []ProofCase          `json:"proof_cases,omitempty"`
+	OutputFields          []string             `json:"output_fields,omitempty"`
+	SensitiveOutputFields []string             `json:"sensitive_output_fields,omitempty"`
+	CleanupPack           string               `json:"cleanup_pack,omitempty"`
+	CleanupArguments      map[string]string    `json:"cleanup_arguments,omitempty"`
+	TargetSupport         []string             `json:"target_support"`
+	ComparisonContracts   []ComparisonContract `json:"comparison_contracts,omitempty"`
 }
 
 type Resolved struct {
@@ -1231,6 +1248,82 @@ func builtins() []Resolved {
 	smbConnections.AnalysisSignatures = []AnalysisSignature{{ID: "smb_connection_inventory", Name: "SMB connection inventory", Summary: "Enumerate bounded local SMB network-use connections and their state.", Steps: []AnalysisStep{{Action: "enumerate network uses", APIs: []string{"NetUseEnum"}}}, RequiredStrings: []string{"[smb-connection-inventory]"}, Effects: []string{"reads SMB connection metadata"}, Requirements: []string{"local NetAPI access"}}}
 	smbConnections.ProofCases = []ProofCase{{ID: "bounded-connections", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"remote_filter": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "smb-connection-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
 	byID["smb-connection-inventory"] = smbConnections
+	ldapAliases := []struct {
+		ID, Title, Summary, Filter, Attributes string
+	}{
+		{"ad-site-inventory", "Active Directory Site Inventory", "Query bounded Active Directory site and subnet objects", "(|(objectClass=site)(objectClass=subnet))", "distinguishedName,name,location,siteObject"},
+		{"ldap-ou-inventory", "LDAP Organizational Unit Inventory", "Query bounded organizational-unit identity and policy-link metadata", "(objectClass=organizationalUnit)", "distinguishedName,name,gPLink,gPOptions"},
+		{"ldap-managed-service-account-inventory", "LDAP Managed Service Account Inventory", "Query bounded managed service-account and group-managed service-account metadata", "(|(objectClass=msDS-ManagedServiceAccount)(objectClass=msDS-GroupManagedServiceAccount))", "distinguishedName,sAMAccountName,dNSHostName,servicePrincipalName"},
+		{"kerberos-policy-inventory", "Kerberos Policy Inventory", "Query bounded domain Kerberos ticket-age and clock-skew policy values", "(objectClass=domainDNS)", "distinguishedName,maxTicketAge,maxRenewAge,maxServiceAge,maxClockSkew"},
+	}
+	for _, alias := range ldapAliases {
+		document := baseBuiltin(alias.ID, alias.Title, alias.Summary, []string{"ldap-query"}, []string{"reaches a domain controller", "reads directory metadata"})
+		document.Network = "LDAP to an explicit or discovered domain controller"
+		document.Arguments = []Argument{{Name: "server", Type: "string", Description: "exact LDAP server; empty discovers the current domain controller", Default: ""}, {Name: "base_dn", Type: "string", Description: "exact search base; empty uses the current domain naming context", Default: ""}, {Name: "filter", Type: "string", Description: "LDAP filter override", Default: alias.Filter}, {Name: "attributes", Type: "string", Description: "comma-separated returned attributes", Default: alias.Attributes}, {Name: "result_limit", Type: "int", Description: "maximum directory objects (1-100)", Default: "50"}}
+		document.Capabilities = []string{alias.Summary}
+		document.ExpectedAnalysis = []string{"ldap_directory_inventory"}
+		document.OutputFields = []string{"row", "dn", "attribute", "value", "status", "shown", "limit", "server", "base", "filter"}
+		document.AnalysisSignatures = []AnalysisSignature{{ID: "ldap_directory_inventory", Name: alias.Title, Summary: alias.Summary, Steps: []AnalysisStep{{Action: "connect and negotiate LDAP authentication", APIs: []string{"ldap_initA", "ldap_connect", "ldap_bind_sA"}}, {Action: "run bounded directory search", APIs: []string{"ldap_search_sA", "ldap_first_entry"}}}, RequiredStrings: []string{"[ldap-query]"}, Effects: []string{"reaches a domain controller", "reads directory metadata"}, Requirements: []string{"domain connectivity and directory read access"}}}
+		document.ProofCases = []ProofCase{{ID: "domain", Via: []string{"lab", "sliver"}, Roles: []string{"execution", "domain_controller"}, Arguments: map[string]string{"server": "", "base_dn": "", "filter": alias.Filter, "attributes": alias.Attributes, "result_limit": "25"}, Expect: ProofExpectation{Tag: "ldap-query", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+		document.ComparisonContracts = []ComparisonContract{{Tag: "ldap-query", Fields: []ComparisonField{{Name: "status", Behavior: "exact"}, {Name: "shown", Behavior: "presence"}, {Name: "server", Behavior: "normalized", Normalizer: "hostname"}}}}
+		byID[alias.ID] = document
+	}
+	remoteEvent := byID["remote-event-log-query"]
+	remoteEvent.Title = "Remote Event Log Query"
+	remoteEvent.Capabilities = []string{"bounded structured Event Log query on one exact host"}
+	remoteEvent.Effects = []string{"reaches a supplied host", "reads Event Log records"}
+	remoteEvent.Network = "Event Log RPC to one exact host"
+	remoteEvent.Arguments = []Argument{{Name: "target_host", Type: "wstring", Required: true, Description: "exact Windows host"}, {Name: "channel", Type: "wstring", Default: "System"}, {Name: "xpath", Type: "wstring", Default: "*"}, {Name: "direction", Type: "string", Default: "reverse"}, {Name: "result_limit", Type: "int", Default: "32"}}
+	remoteEvent.ExpectedAnalysis = []string{"remote_event_log_query"}
+	remoteEvent.OutputFields = []string{"status", "target", "provider", "event_id", "level", "record_id", "computer", "shown", "limit", "error"}
+	remoteEvent.AnalysisSignatures = []AnalysisSignature{{ID: "remote_event_log_query", Name: "Remote Event Log query", Summary: "Open an Event Log RPC session to one host, query an exact channel/XPath, and render bounded records.", Steps: []AnalysisStep{{Action: "open remote Event Log session", APIs: []string{"EvtOpenSession"}}, {Action: "query and render records", APIs: []string{"EvtQuery", "EvtNext", "EvtRender"}}}, RequiredStrings: []string{"[remote-event-log-query]"}, Effects: remoteEvent.Effects, Requirements: []string{"Event Log RPC access to the exact host"}}}
+	remoteEvent.ProofCases = []ProofCase{{ID: "target-system", Via: []string{"lab", "sliver"}, Roles: []string{"execution", "target"}, Arguments: map[string]string{"target_host": "$LAB_HOST", "channel": "System", "xpath": "*", "direction": "reverse", "result_limit": "8"}, Expect: ProofExpectation{Tag: "remote-event-log-query", Fields: map[string]string{"status": "complete", "target": "*"}}}}
+	remoteEvent.ComparisonContracts = []ComparisonContract{{Tag: "remote-event-log-query", Fields: []ComparisonField{{Name: "status", Behavior: "exact"}, {Name: "target", Behavior: "normalized", Normalizer: "hostname"}, {Name: "shown", Behavior: "presence"}, {Name: "record_id", Behavior: "ignore"}}}}
+	byID["remote-event-log-query"] = remoteEvent
+	remoteShares := byID["remote-share-permission-inventory"]
+	remoteShares.Title = "Remote Share Permission Inventory"
+	remoteShares.Capabilities = []string{"bounded exact-host SMB share and security-descriptor inventory"}
+	remoteShares.Effects = []string{"reaches a supplied host", "reads share paths and permissions"}
+	remoteShares.Network = "SMB/RPC to one exact host"
+	remoteShares.Arguments = []Argument{{Name: "target_host", Type: "wstring", Required: true}, {Name: "share_filter", Type: "wstring", Default: ""}, {Name: "result_limit", Type: "int", Default: "32"}}
+	remoteShares.ExpectedAnalysis = []string{"remote_share_permission_inventory"}
+	remoteShares.OutputFields = []string{"status", "target", "share", "path", "type", "permissions", "max_uses", "sddl", "shown", "limit", "total", "error"}
+	remoteShares.AnalysisSignatures = []AnalysisSignature{{ID: "remote_share_permission_inventory", Name: "Remote share permission inventory", Summary: "Enumerate level-502 share records and render their security descriptors.", Steps: []AnalysisStep{{Action: "enumerate exact-host shares", APIs: []string{"NetShareEnum"}}, {Action: "render share security descriptor", APIs: []string{"ConvertSecurityDescriptorToStringSecurityDescriptorW"}}}, RequiredStrings: []string{"[remote-share-permission-inventory]"}, Effects: remoteShares.Effects, Requirements: []string{"share-enumeration access to the exact host"}}}
+	remoteShares.ProofCases = []ProofCase{{ID: "target-shares", Via: []string{"lab", "sliver"}, Roles: []string{"execution", "target"}, Arguments: map[string]string{"target_host": "$LAB_HOST", "share_filter": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "remote-share-permission-inventory", Fields: map[string]string{"status": "complete", "target": "*"}}}}
+	remoteShares.ComparisonContracts = []ComparisonContract{{Tag: "remote-share-permission-inventory", Fields: []ComparisonField{{Name: "status", Behavior: "exact"}, {Name: "target", Behavior: "normalized", Normalizer: "hostname"}, {Name: "shown", Behavior: "presence"}}}}
+	byID["remote-share-permission-inventory"] = remoteShares
+	remoteFirewall := byID["remote-firewall-profile-inventory"]
+	remoteFirewall.Title = "Remote Firewall Profile Inventory"
+	remoteFirewall.Capabilities = []string{"exact-host domain, private, and public firewall-policy inventory"}
+	remoteFirewall.Effects = []string{"reaches a supplied host", "reads firewall policy state"}
+	remoteFirewall.Network = "Remote Registry to one exact host"
+	remoteFirewall.Arguments = []Argument{{Name: "target_host", Type: "wstring", Required: true}}
+	remoteFirewall.ExpectedAnalysis = []string{"remote_firewall_profile_inventory"}
+	remoteFirewall.OutputFields = []string{"status", "target", "profile", "enabled", "inbound", "outbound", "disable_notifications", "shown", "error"}
+	remoteFirewall.AnalysisSignatures = []AnalysisSignature{{ID: "remote_firewall_profile_inventory", Name: "Remote firewall profile inventory", Summary: "Connect to one host registry and read each Windows Firewall profile policy.", Steps: []AnalysisStep{{Action: "connect to exact host registry", APIs: []string{"RegConnectRegistryW"}}, {Action: "read firewall profile values", APIs: []string{"RegOpenKeyExW", "RegQueryValueExW"}}}, RequiredStrings: []string{"[remote-firewall-profile-inventory]"}, Effects: remoteFirewall.Effects, Requirements: []string{"Remote Registry and registry query access"}}}
+	remoteFirewall.ProofCases = []ProofCase{{ID: "target-firewall", Via: []string{"lab", "sliver"}, Roles: []string{"execution", "target"}, Arguments: map[string]string{"target_host": "$LAB_HOST"}, Expect: ProofExpectation{Tag: "remote-firewall-profile-inventory", Fields: map[string]string{"status": "complete", "shown": "3"}}}}
+	remoteFirewall.ComparisonContracts = []ComparisonContract{{Tag: "remote-firewall-profile-inventory", Fields: []ComparisonField{{Name: "status", Behavior: "exact"}, {Name: "target", Behavior: "normalized", Normalizer: "hostname"}, {Name: "shown", Behavior: "exact"}}}}
+	byID["remote-firewall-profile-inventory"] = remoteFirewall
+	cfgTargets := byID["process-cfg-target-inventory"]
+	cfgTargets.Title = "Process CFG Target Inventory"
+	cfgTargets.Capabilities = []string{"Control Flow Guard policy and executable-region inventory for one exact process"}
+	cfgTargets.Arguments = []Argument{{Name: "target_pid", Type: "int", Required: true}, {Name: "result_limit", Type: "int", Default: "64"}}
+	cfgTargets.ExpectedAnalysis = []string{"process_cfg_target_inventory"}
+	cfgTargets.OutputFields = []string{"status", "target_pid", "cfg_enabled", "export_suppression", "strict_mode", "base", "size", "protect", "type", "shown", "limit", "error"}
+	cfgTargets.AnalysisSignatures = []AnalysisSignature{{ID: "process_cfg_target_inventory", Name: "Process CFG execution surface", Summary: "Open one process, inspect CFG mitigation policy, and enumerate executable regions.", Steps: []AnalysisStep{{Action: "open selected process", APIs: []string{"OpenProcess"}}, {Action: "query CFG mitigation policy", APIs: []string{"GetProcessMitigationPolicy"}}, {Action: "enumerate executable memory", APIs: []string{"VirtualQueryEx"}}}, RequiredStrings: []string{"[process-cfg-target-inventory]"}, Effects: []string{"reads process security and memory metadata"}, Requirements: []string{"process query and VM-read access"}}}
+	cfgTargets.ProofCases = []ProofCase{{ID: "target", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID", "result_limit": "16"}, Expect: ProofExpectation{Tag: "process-cfg-target-inventory", Fields: map[string]string{"status": "complete", "target_pid": "*"}}}}
+	cfgTargets.ComparisonContracts = []ComparisonContract{{Tag: "process-cfg-target-inventory", Fields: []ComparisonField{{Name: "status", Behavior: "exact"}, {Name: "cfg_enabled", Behavior: "exact"}, {Name: "shown", Behavior: "presence"}, {Name: "target_pid", Behavior: "ignore"}}}}
+	byID["process-cfg-target-inventory"] = cfgTargets
+	instrumentation := byID["process-instrumentation-callback-inventory"]
+	instrumentation.Title = "Process Instrumentation Callback Inventory"
+	instrumentation.Capabilities = []string{"exact-process instrumentation callback discovery"}
+	instrumentation.Arguments = []Argument{{Name: "target_pid", Type: "int", Required: true}}
+	instrumentation.ExpectedAnalysis = []string{"process_instrumentation_callback_inventory"}
+	instrumentation.OutputFields = []string{"status", "target_pid", "supported", "callback", "configured", "version", "returned", "ntstatus", "error"}
+	instrumentation.AnalysisSignatures = []AnalysisSignature{{ID: "process_instrumentation_callback_inventory", Name: "Process instrumentation callback inventory", Summary: "Query the configured process instrumentation callback pointer for one exact process.", Steps: []AnalysisStep{{Action: "open selected process", APIs: []string{"OpenProcess"}}, {Action: "query instrumentation callback", APIs: []string{"NtQueryInformationProcess"}}}, RequiredStrings: []string{"[process-instrumentation-callback-inventory]"}, Effects: []string{"reads process execution metadata"}, Requirements: []string{"process query access"}}}
+	instrumentation.ProofCases = []ProofCase{{ID: "target", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_pid": "$TARGET_PID"}, Expect: ProofExpectation{Tag: "process-instrumentation-callback-inventory", Fields: map[string]string{"status": "complete", "target_pid": "*"}}}}
+	instrumentation.ComparisonContracts = []ComparisonContract{{Tag: "process-instrumentation-callback-inventory", Fields: []ComparisonField{{Name: "status", Behavior: "exact"}, {Name: "supported", Behavior: "exact"}, {Name: "configured", Behavior: "exact"}, {Name: "callback", Behavior: "normalized", Normalizer: "hex"}, {Name: "target_pid", Behavior: "ignore"}}}}
+	byID["process-instrumentation-callback-inventory"] = instrumentation
 	for id, document := range byID {
 		for _, feature := range document.Source.Features {
 			if signature, ok := builtinContextSignature(feature); ok && !hasAnalysisSignature(document.AnalysisSignatures, signature.ID) {
@@ -1350,6 +1443,7 @@ func validate(document Document, root string) error {
 	usesV3 := len(document.SensitiveOutputFields) > 0 || len(document.CleanupArguments) > 0
 	usesV4 := false
 	usesV5 := false
+	usesV6 := len(document.ComparisonContracts) > 0
 	for _, argument := range document.Arguments {
 		usesV3 = usesV3 || argument.Sensitive
 		usesV4 = usesV4 || argument.TopologyValue != ""
@@ -1370,6 +1464,9 @@ func validate(document Document, root string) error {
 	}
 	if document.SchemaVersion < 5 && usesV5 {
 		problems = append(problems, "delegated operation proofs require schema version 5")
+	}
+	if document.SchemaVersion < 6 && usesV6 {
+		problems = append(problems, "runtime comparison contracts require schema version 6")
 	}
 	if !idPattern.MatchString(document.ID) {
 		problems = append(problems, "id must contain lowercase letters, numbers, dot, underscore, or hyphen")
@@ -1416,6 +1513,28 @@ func validate(document Document, root string) error {
 	for _, field := range document.SensitiveOutputFields {
 		if !outputFields[field] {
 			problems = append(problems, fmt.Sprintf("sensitive output field %q is not declared in output_fields", field))
+		}
+	}
+	for contractIndex, contract := range document.ComparisonContracts {
+		if strings.TrimSpace(contract.Tag) == "" || len(contract.Fields) == 0 {
+			problems = append(problems, fmt.Sprintf("comparison contract %d requires tag and fields", contractIndex+1))
+			continue
+		}
+		seenComparisonFields := map[string]bool{}
+		for _, field := range contract.Fields {
+			if !idPattern.MatchString(field.Name) {
+				problems = append(problems, fmt.Sprintf("comparison contract %s has invalid field %q", contract.Tag, field.Name))
+			}
+			if seenComparisonFields[field.Name] {
+				problems = append(problems, fmt.Sprintf("comparison contract %s repeats field %q", contract.Tag, field.Name))
+			}
+			seenComparisonFields[field.Name] = true
+			if !contains([]string{"exact", "presence", "normalized", "payload_hash", "ignore"}, field.Behavior) {
+				problems = append(problems, fmt.Sprintf("comparison contract %s field %s has unsupported behavior %q", contract.Tag, field.Name, field.Behavior))
+			}
+			if field.Behavior == "normalized" && !contains([]string{"lowercase", "trim", "path", "hostname", "integer", "hex"}, field.Normalizer) {
+				problems = append(problems, fmt.Sprintf("comparison contract %s field %s requires a supported normalizer", contract.Tag, field.Name))
+			}
 		}
 	}
 	if len(document.CleanupArguments) > 0 && document.CleanupPack == "" {

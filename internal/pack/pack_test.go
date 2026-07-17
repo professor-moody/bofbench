@@ -203,6 +203,29 @@ func TestPackSchemaV5DelegatedOperationProof(t *testing.T) {
 	}
 }
 
+func TestPackSchemaV6RuntimeComparisonContracts(t *testing.T) {
+	document := Document{
+		Schema: Schema, SchemaVersion: 6, ID: "runtime-comparison", Version: "1.0.0",
+		Title: "Runtime comparison", Summary: "Compare stable fields", Tier: "public",
+		Capabilities: []string{"reports a host"}, Effects: []string{"reads data"}, Platforms: []string{"windows"},
+		Architecture: []string{"x64"}, Privilege: "user", Network: "none", Source: Source{Features: []string{"host"}},
+		OutputFields: []string{"status", "host", "pid"}, TargetSupport: []string{"native", "sliver"},
+		ComparisonContracts: []ComparisonContract{{Tag: "host", Fields: []ComparisonField{{Name: "status", Behavior: "exact"}, {Name: "host", Behavior: "normalized", Normalizer: "hostname"}, {Name: "pid", Behavior: "presence"}}}},
+	}
+	if err := validate(document, ""); err != nil {
+		t.Fatalf("schema v6 contract should validate: %v", err)
+	}
+	document.SchemaVersion = 5
+	if err := validate(document, ""); err == nil || !strings.Contains(err.Error(), "schema version 6") {
+		t.Fatalf("schema v5 accepted comparison contract: %v", err)
+	}
+	document.SchemaVersion = 6
+	document.ComparisonContracts[0].Fields[1].Normalizer = "unknown"
+	if err := validate(document, ""); err == nil || !strings.Contains(err.Error(), "supported normalizer") {
+		t.Fatalf("invalid normalizer accepted: %v", err)
+	}
+}
+
 func TestConfiguredCatalogLifecycle(t *testing.T) {
 	configRoot := t.TempDir()
 	t.Setenv("BOFBENCH_CONFIG_HOME", configRoot)

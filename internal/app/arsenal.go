@@ -16,7 +16,7 @@ import (
 
 func arsenalCommand(stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{Use: "arsenal", Short: "Acquire, search, compare, and run external BOFs"}
-	cmd.AddCommand(arsenalAcquireCommand(stdout), arsenalListCommand(stdout), arsenalInventoryCommand(stdout), arsenalSearchCommand(stdout), arsenalMatrixCommand(stdout), arsenalCompareCommand(stdout), arsenalLockCommand(stdout), arsenalVerifyCommand(stdout), arsenalDiffCommand(stdout), arsenalRegressionCommand(stdout))
+	cmd.AddCommand(arsenalAcquireCommand(stdout), arsenalListCommand(stdout), arsenalInventoryCommand(stdout), arsenalSearchCommand(stdout), arsenalMatrixCommand(stdout), arsenalGraphCommand(stdout), arsenalCompareCommand(stdout), arsenalLockCommand(stdout), arsenalVerifyCommand(stdout), arsenalDiffCommand(stdout), arsenalRegressionCommand(stdout))
 	return cmd
 }
 
@@ -145,11 +145,15 @@ func arsenalSearchCommand(stdout io.Writer) *cobra.Command {
 
 func arsenalMatrixCommand(stdout io.Writer) *cobra.Command {
 	var format string
+	var analysisVersion int
 	cmd := &cobra.Command{
 		Use: "matrix <root>", Short: "Compare every x64 and x86 object independently", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "text" && format != "json" {
 				return fmt.Errorf("arsenal matrix format must be text or json")
+			}
+			if analysisVersion != 3 {
+				return fmt.Errorf("arsenal matrix supports analysis version 3; got %d", analysisVersion)
 			}
 			registry, err := packsvc.Load(packsvc.LoadOptions{Project: args[0]})
 			if err != nil {
@@ -167,6 +171,40 @@ func arsenalMatrixCommand(stdout io.Writer) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	cmd.Flags().IntVar(&analysisVersion, "analysis-version", 3, "analysis schema version used for cache and matrix results")
+	return cmd
+}
+
+func arsenalGraphCommand(stdout io.Writer) *cobra.Command {
+	var capability, format string
+	cmd := &cobra.Command{Use: "graph <root>", Short: "Graph objects and their inferred operator capabilities", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		registry, err := packsvc.Load(packsvc.LoadOptions{Project: args[0]})
+		if err != nil {
+			return err
+		}
+		inventory, err := arsenal.BuildInventoryWithSignatures(args[0], arsenal.InventoryFilters{Can: capability}, declarativeSignatures(registry.List()))
+		if err != nil {
+			return err
+		}
+		report := arsenal.BuildCapabilityGraph(inventory, capability)
+		switch format {
+		case "text":
+			fmt.Fprint(stdout, arsenal.CapabilityGraphText(report))
+		case "mermaid":
+			fmt.Fprint(stdout, arsenal.CapabilityGraphMermaid(report))
+		case "json":
+			data, encodeErr := arsenal.CapabilityGraphJSON(report)
+			if encodeErr != nil {
+				return encodeErr
+			}
+			fmt.Fprintln(stdout, string(data))
+		default:
+			return fmt.Errorf("arsenal graph format must be text, mermaid, or json")
+		}
+		return nil
+	}}
+	cmd.Flags().StringVar(&capability, "capability", "", "capability or behavior fragment")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text, mermaid, or json")
 	return cmd
 }
 

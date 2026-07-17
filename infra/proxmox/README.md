@@ -24,6 +24,7 @@ directory.
 - `windows/provision.ps1` installs the QEMU agent, OpenSSH, WinRM, and the portable template marker.
 - `windows/dev-tools.ps1` installs MSVC/SDK, Go, WinDbg tooling, and MinGW x64/x86 into a development clone.
 - `windows/domain-controller.ps1` and `windows/domain-member.ps1` prepare the two domain roles after licensed Server/workstation media and credentials are supplied.
+- `linux/` pins and installs the isolated Sliver control-plane binary without creating listeners, operators, or implants in the template.
 
 ## Shared-cluster invariant
 
@@ -40,6 +41,7 @@ The intended template plan is:
 | 4101 | Windows 11 development, MSVC + MinGW x64/x86 + Go + debugger |
 | 4102 | Windows Server base, created only when licensed Server media exists |
 | 4103 | Windows member base, created only when the workstation image and domain bootstrap are ready |
+| 4104 | Linux Sliver control base, pinned binary and service definition only |
 
 Operational clones use the remaining reserved VMIDs. Profiles—not project
 files—select those clones.

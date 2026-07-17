@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -18,13 +19,112 @@ func labTopologyCommand(stdout io.Writer) *cobra.Command {
 		labTopologyListCommand(stdout),
 		labTopologyShowCommand(stdout),
 		labTopologyStatusCommand(stdout),
+		labTopologyProvisionCommand(stdout),
+		labTopologyVerifyCommand(stdout),
 		labTopologyLifecycleCommand(stdout, "up"),
 		labTopologyLifecycleCommand(stdout, "down"),
 		labTopologyLifecycleCommand(stdout, "snapshot"),
 		labTopologyLifecycleCommand(stdout, "restore"),
+		labTopologyTargetCommand(stdout),
 		labTopologyUseCommand(stdout),
 		labTopologyRemoveCommand(stdout),
 	)
+	return cmd
+}
+
+func labTopologyTargetCommand(stdout io.Writer) *cobra.Command {
+	cmd := &cobra.Command{Use: "target", Short: "Manage ordered named target sets in a topology"}
+	cmd.AddCommand(labTopologyTargetAddCommand(stdout), labTopologyTargetListCommand(stdout), labTopologyTargetRemoveCommand(stdout))
+	return cmd
+}
+
+func labTopologyTargetAddCommand(stdout io.Writer) *cobra.Command {
+	var profilesPath, setName, profileName string
+	cmd := &cobra.Command{Use: "add <topology>", Short: "Append one exact lab profile to a named target set", Args: cobra.ExactArgs(1)}
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		config, err := lab.LoadProfiles(profilesPath)
+		if err != nil {
+			return err
+		}
+		if err := lab.AddTopologyTarget(&config, args[0], setName, profileName); err != nil {
+			return err
+		}
+		if err := lab.SaveProfiles(profilesPath, config); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Topology %q target set %q now includes %q\n", args[0], setName, profileName)
+		return nil
+	}
+	cmd.Flags().StringVar(&profilesPath, "profiles", lab.ProfilesPath(), "global lab profiles file")
+	cmd.Flags().StringVar(&setName, "set", "", "target set name")
+	cmd.Flags().StringVar(&profileName, "lab", "", "exact lab profile to append")
+	_ = cmd.MarkFlagRequired("set")
+	_ = cmd.MarkFlagRequired("lab")
+	return cmd
+}
+
+func labTopologyTargetListCommand(stdout io.Writer) *cobra.Command {
+	var profilesPath, format string
+	cmd := &cobra.Command{Use: "list <topology>", Short: "List ordered target sets for one topology", Args: cobra.ExactArgs(1)}
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		config, err := lab.LoadProfiles(profilesPath)
+		if err != nil {
+			return err
+		}
+		topology, ok := config.Topologies[args[0]]
+		if !ok {
+			return fmt.Errorf("topology %q does not exist", args[0])
+		}
+		if format == "json" {
+			return printJSON(stdout, map[string]any{"topology": args[0], "target_sets": topology.TargetSets})
+		}
+		if format != "text" {
+			return fmt.Errorf("lab topology target list format must be text or json")
+		}
+		if len(topology.TargetSets) == 0 {
+			fmt.Fprintf(stdout, "Topology %q has no named target sets.\n", args[0])
+			return nil
+		}
+		names := make([]string, 0, len(topology.TargetSets))
+		for name := range topology.TargetSets {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		fmt.Fprintln(stdout, "SET                  POSITION  PROFILE")
+		for _, name := range names {
+			for index, profile := range topology.TargetSets[name] {
+				fmt.Fprintf(stdout, "%-20s %-9d %s\n", name, index+1, profile)
+			}
+		}
+		return nil
+	}
+	cmd.Flags().StringVar(&profilesPath, "profiles", lab.ProfilesPath(), "global lab profiles file")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	return cmd
+}
+
+func labTopologyTargetRemoveCommand(stdout io.Writer) *cobra.Command {
+	var profilesPath, setName, profileName string
+	cmd := &cobra.Command{Use: "remove <topology>", Short: "Remove one profile from a named target set", Args: cobra.ExactArgs(1)}
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		config, err := lab.LoadProfiles(profilesPath)
+		if err != nil {
+			return err
+		}
+		if err := lab.RemoveTopologyTarget(&config, args[0], setName, profileName); err != nil {
+			return err
+		}
+		if err := lab.SaveProfiles(profilesPath, config); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Topology %q target set %q no longer includes %q\n", args[0], setName, profileName)
+		return nil
+	}
+	cmd.Flags().StringVar(&profilesPath, "profiles", lab.ProfilesPath(), "global lab profiles file")
+	cmd.Flags().StringVar(&setName, "set", "", "target set name")
+	cmd.Flags().StringVar(&profileName, "lab", "", "exact lab profile to remove")
+	_ = cmd.MarkFlagRequired("set")
+	_ = cmd.MarkFlagRequired("lab")
 	return cmd
 }
 
@@ -46,9 +146,6 @@ func labTopologyLifecycleCommand(stdout io.Writer, action string) *cobra.Command
 		"restore":  "Restore every provider-controlled topology role to one snapshot",
 	}[action]
 	cmd := &cobra.Command{Use: use, Short: short, Args: cobra.ExactArgs(1)}
-	if action == "up" {
-		cmd.Aliases = []string{"provision"}
-	}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		resolved, err := lab.ResolveTopology(args[0], profilesPath)
 		if err != nil {

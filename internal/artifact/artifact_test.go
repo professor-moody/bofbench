@@ -25,7 +25,7 @@ func TestAnalyzeCOFF(t *testing.T) {
 	if a.Kind != KindCOFF || a.Arch != "x64" || !a.EntrypointOK || !a.EntrypointExecutable {
 		t.Fatalf("unexpected analysis: %+v", a)
 	}
-	if a.Schema != evidence.SchemaAnalysis || a.SchemaVersion != 2 || a.Tool.Name != "bofbench" || a.Host.OS == "" {
+	if a.Schema != evidence.SchemaAnalysis || a.SchemaVersion != 3 || a.Tool.Name != "bofbench" || a.Host.OS == "" {
 		t.Fatalf("analysis evidence header = %+v", a.Header)
 	}
 	if len(a.Unresolved) == 0 {

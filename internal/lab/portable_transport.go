@@ -72,6 +72,17 @@ func ExecutePowerShell(ctx context.Context, opts RemoteOptions, script string) (
 	return remoteExecute(ctx, normalized, script)
 }
 
+// UploadFile copies one local artifact to an exact path through the selected
+// SSH or WinRM transport. It is intentionally low level: callers own process
+// launch, lifecycle, and cleanup semantics.
+func UploadFile(ctx context.Context, opts RemoteOptions, localPath, remotePath string) ([]byte, []byte, error) {
+	normalized, err := normalizeRemoteOptions(opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	return remoteUploadFile(ctx, normalized, localPath, remotePath)
+}
+
 func remoteExecute(ctx context.Context, opts RemoteOptions, script string) ([]byte, []byte, error) {
 	if opts.Transport == "winrm" {
 		return executeWinRMTransport(ctx, opts, script, "")

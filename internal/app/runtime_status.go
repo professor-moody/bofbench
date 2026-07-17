@@ -21,7 +21,7 @@ type runtimeStatusItem struct {
 
 func runtimeCommand(stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{Use: "runtime", Short: "Inspect native, lab, Sliver, and Cobalt Strike runtime readiness"}
-	cmd.AddCommand(runtimeStatusCommand(stdout), runtimeSessionsCommand(stdout), runtimeWaitCommand(stdout), runtimeTasksCommand(stdout), runtimeTaskCommand(stdout), runtimeWatchCommand(stdout))
+	cmd.AddCommand(runtimeStatusCommand(stdout), runtimeSessionsCommand(stdout), runtimeWaitCommand(stdout), runtimeTasksCommand(stdout), runtimeTaskCommand(stdout), runtimeWatchCommand(stdout), runtimeControlCommand(stdout), runtimeCompareCommand(stdout))
 	return cmd
 }
 

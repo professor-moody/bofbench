@@ -54,6 +54,7 @@ type Analysis struct {
 	Strings              []String                  `json:"strings,omitempty"`
 	Capabilities         []Capability              `json:"capabilities,omitempty"`
 	BehaviorChains       []BehaviorChain           `json:"behavior_chains,omitempty"`
+	ResourceFlows        []ResourceFlow            `json:"resource_flows,omitempty"`
 	Effects              []string                  `json:"effects,omitempty"`
 	Requirements         Requirements              `json:"requirements,omitempty"`
 	Arguments            []ArgumentHint            `json:"arguments,omitempty"`
@@ -214,7 +215,7 @@ func AnalyzeWithOptions(path string, opts AnalysisOptions) (Analysis, error) {
 		Size:        info.Size(),
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	a.SchemaVersion = 2
+	a.SchemaVersion = 3
 	if sum, err := sha256File(path); err == nil {
 		a.SHA256 = sum
 	}
@@ -254,7 +255,7 @@ func AnalyzeAndPersistWithOptions(path string, opts AnalysisOptions) (Persisted,
 		return Persisted{}, err
 	}
 	a.Header = evidence.New(evidence.SchemaAnalysis, runlog.ID(runDir), "")
-	a.SchemaVersion = 2
+	a.SchemaVersion = 3
 	jsonPath := filepath.Join(runDir, "analysis.json")
 	mdPath := filepath.Join(runDir, "analysis.md")
 	if err := writeJSON(jsonPath, a); err != nil {
@@ -296,14 +297,26 @@ func Markdown(a Analysis) string {
 	}
 	if len(a.BehaviorChains) > 0 {
 		b.WriteString("## Behavior Chains\n\n")
-		b.WriteString("_Function-local relocation evidence connects these primitives into stronger behavioral inferences._\n\n")
+		b.WriteString("_Function-local and call-connected relocation evidence connects these primitives into stronger behavioral inferences._\n\n")
 		for _, chain := range a.BehaviorChains {
-			fmt.Fprintf(&b, "### %s\n\n- Confidence: `%s`\n- Function: `%s`\n- Effects: `%s`\n- Needs: %s\n\n%s\n\n", chain.Name, chain.Confidence, chain.Function, strings.Join(chain.Effects, ", "), escapeTable(strings.Join(chain.Needs, "; ")), chain.Summary)
+			fmt.Fprintf(&b, "### %s\n\n- Confidence: `%s`\n- Function: `%s`\n", chain.Name, chain.Confidence, chain.Function)
+			if chain.Interprocedural {
+				fmt.Fprintf(&b, "- Interprocedural: `true`\n- Evidence functions: `%s`\n", strings.Join(chain.EvidenceFunctions, ", "))
+			}
+			fmt.Fprintf(&b, "- Effects: `%s`\n- Needs: %s\n\n%s\n\n", strings.Join(chain.Effects, ", "), escapeTable(strings.Join(chain.Needs, "; ")), chain.Summary)
 			for _, step := range chain.Steps {
 				fmt.Fprintf(&b, "1. %s — `%s` (`%s`)\n", step.Action, step.API, escapeTable(step.Evidence))
 			}
 			b.WriteString("\n")
 		}
+	}
+	if len(a.ResourceFlows) > 0 {
+		b.WriteString("## Cross-function Resource Flow\n\n")
+		b.WriteString("| Resource | Producer | Consumers | Confidence | Evidence |\n| --- | --- | --- | --- | --- |\n")
+		for _, flow := range a.ResourceFlows {
+			fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%s` | `%s` |\n", escapeTable(flow.Resource), escapeTable(flow.ProducerFunction), escapeTable(strings.Join(flow.ConsumerFunctions, ", ")), escapeTable(flow.Confidence), escapeTable(strings.Join(flow.Evidence, "; ")))
+		}
+		b.WriteString("\n")
 	}
 	if len(a.Observed) > 0 {
 		b.WriteString("## Observed at Runtime\n\n")

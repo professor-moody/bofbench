@@ -708,3 +708,21 @@ func TestParallelCleanupDetectsCompletedStatefulBranches(t *testing.T) {
 		t.Fatalf("completed parallel cleanup was selected again: %#v", indexes)
 	}
 }
+
+func TestSchemaVersionElevenExpandsTopologyTargetSet(t *testing.T) {
+	document := Document{Schema: Schema, SchemaVersion: 11, Execution: "linear", ID: "topology-targets", Version: "1", Title: "Topology targets", Summary: "Topology fan out", Tier: "internal", Steps: []Step{{ID: "run", Pack: "host-discovery", Arguments: map[string]string{"target": "$item"}, Expect: &packsvc.ProofExpectation{Tag: "host", Fields: map[string]string{"target": "$item"}}, FanOut: &FanOut{Source: "$topology.target_sets.windows.computer_names", MaxItems: 4}}}}
+	if err := validate(document); err != nil {
+		t.Fatal(err)
+	}
+	expanded, err := ExpandFanOutDocumentWithTopology(document, nil, map[string]string{"target_sets.windows.computer_names": "HOST-A,HOST-B,HOST-A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := expanded.Steps[0]
+	if step.Parallel == nil || len(step.Parallel.Branches) != 2 || step.FanOut.ResolvedItems[1] != "HOST-B" {
+		t.Fatalf("unexpected expansion: %#v", step)
+	}
+	if _, err := ExpandFanOutDocumentWithTopology(document, nil, nil); err == nil {
+		t.Fatal("expected unavailable topology value rejection")
+	}
+}

@@ -620,6 +620,7 @@ func analyzeCommand(stdout io.Writer) *cobra.Command {
 	var comparePath string
 	var suppressions []string
 	var compiler string
+	var explain string
 	cmd := &cobra.Command{
 		Use:   "analyze <project|source.c|artifact>",
 		Short: "Analyze BOF source or a compiled artifact and write reports",
@@ -630,6 +631,9 @@ func analyzeCommand(stdout io.Writer) *cobra.Command {
 			}
 			if baselinePath != "" && comparePath != "" {
 				return fmt.Errorf("use either --baseline or --compare, not both")
+			}
+			if explain != "" && (baselinePath != "" || comparePath != "") {
+				return fmt.Errorf("--explain cannot be combined with --baseline or --compare")
 			}
 			analysisInput := args[0]
 			projectInput := ""
@@ -724,6 +728,26 @@ func analyzeCommand(stdout io.Writer) *cobra.Command {
 			if err := os.WriteFile(persisted.MDPath, []byte(artifact.Markdown(persisted.Analysis)), 0o644); err != nil {
 				return err
 			}
+			if explain != "" {
+				explanation, explainErr := artifact.Explain(persisted.Analysis, explain)
+				if explainErr != nil {
+					return explainErr
+				}
+				switch format {
+				case "json":
+					return printJSON(stdout, struct {
+						Explanation artifact.Explanation `json:"explanation"`
+						JSONPath    string               `json:"json_path"`
+						MDPath      string               `json:"md_path"`
+					}{explanation, persisted.JSONPath, persisted.MDPath})
+				case "md", "markdown":
+					fmt.Fprint(stdout, artifact.ExplanationMarkdown(explanation))
+				default:
+					fmt.Fprint(stdout, artifact.ExplanationText(explanation))
+				}
+				fmt.Fprintf(stdout, "reports: %s %s\n", persisted.JSONPath, persisted.MDPath)
+				return nil
+			}
 			var diff *artifact.DiffReport
 			var diffJSONPath string
 			var diffMDPath string
@@ -785,6 +809,7 @@ func analyzeCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&comparePath, "compare", "", "other compiled object to compare capabilities against")
 	cmd.Flags().StringSliceVar(&suppressions, "suppress", nil, "mark finding category or category=evidence-glob as suppressed; repeatable")
 	cmd.Flags().StringVar(&compiler, "compiler", "auto", "compiler profile for project input: auto, mingw, or msvc")
+	cmd.Flags().StringVar(&explain, "explain", "", "focus terminal output on one inferred capability or behavior-chain ID")
 	return cmd
 }
 
@@ -1402,6 +1427,8 @@ func labCommand(stdout, stderr io.Writer) *cobra.Command {
 		labRemoveCommand(stdout),
 		labImportCommand(stdout),
 		labSetupScriptCommand(stdout),
+		labMediaCommand(stdout),
+		labTemplateCommand(stdout),
 		labTopologyCommand(stdout),
 		labTargetCommand(stdout),
 		labInitCommand(stdout),
@@ -1413,7 +1440,6 @@ func labCommand(stdout, stderr io.Writer) *cobra.Command {
 		labProviderCommand(stdout, "snapshot"),
 		labProviderCommand(stdout, "restore"),
 		labProviderCommand(stdout, "clone"),
-		labProviderCommand(stdout, "template"),
 		labProviderCommand(stdout, "destroy"),
 		labRemoteStatusCommand(stdout),
 		labRemoteSyncCommand(stdout),

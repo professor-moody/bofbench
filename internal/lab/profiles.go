@@ -16,8 +16,8 @@ import (
 
 const (
 	ProfilesSchema                = "bofbench.labs"
-	ProfilesSchemaVersion         = 4
-	PreviousProfilesSchemaVersion = 3
+	ProfilesSchemaVersion         = 5
+	PreviousProfilesSchemaVersion = 4
 	SelectionSchema               = "bofbench.lab-selection"
 	SelectionVersion              = 1
 )
@@ -134,17 +134,19 @@ type ProfilesConfig struct {
 // ProfileTopology gives multi-host proofs stable role names without copying
 // host or authentication details out of the referenced profiles.
 type ProfileTopology struct {
-	Execution        string `json:"execution"`
-	Target           string `json:"target,omitempty"`
-	DomainController string `json:"domain_controller,omitempty"`
+	Execution        string              `json:"execution"`
+	Target           string              `json:"target,omitempty"`
+	DomainController string              `json:"domain_controller,omitempty"`
+	TargetSets       map[string][]string `json:"target_sets,omitempty"`
 }
 
 type ResolvedTopology struct {
-	Name             string           `json:"name"`
-	Source           string           `json:"source"`
-	Execution        ResolvedProfile  `json:"execution"`
-	Target           *ResolvedProfile `json:"target,omitempty"`
-	DomainController *ResolvedProfile `json:"domain_controller,omitempty"`
+	Name             string                       `json:"name"`
+	Source           string                       `json:"source"`
+	Execution        ResolvedProfile              `json:"execution"`
+	Target           *ResolvedProfile             `json:"target,omitempty"`
+	DomainController *ResolvedProfile             `json:"domain_controller,omitempty"`
+	TargetSets       map[string][]ResolvedProfile `json:"target_sets,omitempty"`
 }
 
 type ProjectSelection struct {
@@ -224,7 +226,7 @@ func LoadProfiles(path string) (ProfilesConfig, error) {
 		return ProfilesConfig{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	migratedFrom := 0
-	if config.Schema == ProfilesSchema && (config.SchemaVersion == 2 || config.SchemaVersion == PreviousProfilesSchemaVersion) {
+	if config.Schema == ProfilesSchema && (config.SchemaVersion == 2 || config.SchemaVersion == 3 || config.SchemaVersion == PreviousProfilesSchemaVersion) {
 		migratedFrom = config.SchemaVersion
 		config.SchemaVersion = ProfilesSchemaVersion
 		if config.Topologies == nil {
@@ -299,6 +301,24 @@ func ValidateProfiles(config ProfilesConfig) error {
 			}
 			if _, ok := config.Profiles[profileName]; !ok {
 				return fmt.Errorf("topology %q role %s references missing profile %q", name, role, profileName)
+			}
+		}
+		for setName, profiles := range topology.TargetSets {
+			if err := ValidateProfileName(setName); err != nil {
+				return fmt.Errorf("topology %q target set: %w", name, err)
+			}
+			if len(profiles) == 0 || len(profiles) > 64 {
+				return fmt.Errorf("topology %q target set %q must contain 1-64 profiles", name, setName)
+			}
+			seen := map[string]bool{}
+			for _, profileName := range profiles {
+				if seen[profileName] {
+					return fmt.Errorf("topology %q target set %q repeats profile %q", name, setName, profileName)
+				}
+				seen[profileName] = true
+				if _, ok := config.Profiles[profileName]; !ok {
+					return fmt.Errorf("topology %q target set %q references missing profile %q", name, setName, profileName)
+				}
 			}
 		}
 	}
@@ -513,6 +533,13 @@ func RemoveProfile(config *ProfilesConfig, name string) error {
 		if topology.Execution == name || topology.Target == name || topology.DomainController == name {
 			return fmt.Errorf("profile %q is used by topology %q; remove or update the topology first", name, topologyName)
 		}
+		for setName, profiles := range topology.TargetSets {
+			for _, profileName := range profiles {
+				if profileName == name {
+					return fmt.Errorf("profile %q is used by topology %q target set %q; remove it from the set first", name, topologyName, setName)
+				}
+			}
+		}
 	}
 	delete(config.Profiles, name)
 	if config.Active == name {
@@ -578,6 +605,69 @@ func AddTopology(config *ProfilesConfig, name string, topology ProfileTopology, 
 	if config.ActiveTopology == "" && len(config.Topologies) == 1 {
 		config.ActiveTopology = name
 	}
+	return nil
+}
+
+func AddTopologyTarget(config *ProfilesConfig, topologyName, setName, profileName string) error {
+	if config == nil {
+		return fmt.Errorf("profiles config is nil")
+	}
+	if err := ValidateProfileName(setName); err != nil {
+		return fmt.Errorf("target set: %w", err)
+	}
+	if _, ok := config.Profiles[profileName]; !ok {
+		return fmt.Errorf("profile %q does not exist; available: %s", profileName, strings.Join(ProfileNames(*config), ", "))
+	}
+	topology, ok := config.Topologies[topologyName]
+	if !ok {
+		return fmt.Errorf("topology %q does not exist; available: %s", topologyName, strings.Join(TopologyNames(*config), ", "))
+	}
+	if topology.TargetSets == nil {
+		topology.TargetSets = map[string][]string{}
+	}
+	for _, existing := range topology.TargetSets[setName] {
+		if existing == profileName {
+			return fmt.Errorf("profile %q is already in topology %q target set %q", profileName, topologyName, setName)
+		}
+	}
+	if len(topology.TargetSets[setName]) >= 64 {
+		return fmt.Errorf("topology %q target set %q already has the maximum 64 profiles", topologyName, setName)
+	}
+	topology.TargetSets[setName] = append(topology.TargetSets[setName], profileName)
+	config.Topologies[topologyName] = topology
+	return nil
+}
+
+func RemoveTopologyTarget(config *ProfilesConfig, topologyName, setName, profileName string) error {
+	if config == nil {
+		return fmt.Errorf("profiles config is nil")
+	}
+	topology, ok := config.Topologies[topologyName]
+	if !ok {
+		return fmt.Errorf("topology %q does not exist", topologyName)
+	}
+	profiles, ok := topology.TargetSets[setName]
+	if !ok {
+		return fmt.Errorf("topology %q target set %q does not exist", topologyName, setName)
+	}
+	remaining := profiles[:0]
+	removed := false
+	for _, candidate := range profiles {
+		if candidate == profileName {
+			removed = true
+			continue
+		}
+		remaining = append(remaining, candidate)
+	}
+	if !removed {
+		return fmt.Errorf("profile %q is not in topology %q target set %q", profileName, topologyName, setName)
+	}
+	if len(remaining) == 0 {
+		delete(topology.TargetSets, setName)
+	} else {
+		topology.TargetSets[setName] = append([]string(nil), remaining...)
+	}
+	config.Topologies[topologyName] = topology
 	return nil
 }
 
@@ -659,7 +749,17 @@ func ResolveTopology(explicit, profilesPath string) (ResolvedTopology, error) {
 	if err != nil {
 		return ResolvedTopology{}, err
 	}
-	return ResolvedTopology{Name: selected, Source: source, Execution: *execution, Target: target, DomainController: dc}, nil
+	targetSets := map[string][]ResolvedProfile{}
+	for setName, profileNames := range topology.TargetSets {
+		for _, profileName := range profileNames {
+			resolved, resolveErr := resolveRole(profileName, "target_set:"+setName)
+			if resolveErr != nil {
+				return ResolvedTopology{}, resolveErr
+			}
+			targetSets[setName] = append(targetSets[setName], *resolved)
+		}
+	}
+	return ResolvedTopology{Name: selected, Source: source, Execution: *execution, Target: target, DomainController: dc, TargetSets: targetSets}, nil
 }
 
 func SaveProjectSelection(path, profile string) error {

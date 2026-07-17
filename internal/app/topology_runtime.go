@@ -60,6 +60,28 @@ func resolveTopologyRuntimeValues(ctx context.Context, name, profilesPath string
 			values["domain.base_dn"] = domainBaseDN(domain.Name)
 		}
 	}
+	for setName, profiles := range resolved.TargetSets {
+		computerNames := make([]string, 0, len(profiles))
+		profileNames := make([]string, 0, len(profiles))
+		for _, profile := range profiles {
+			remote, err := lab.ResolveRemoteOptions(ctx, profile.Name, profile.Profile)
+			if err != nil {
+				return resolvedTopologyValues{}, fmt.Errorf("resolve topology %s target set %s profile %s: %w", resolved.Name, setName, profile.Name, err)
+			}
+			status, err := lab.RemoteStatus(ctx, remote)
+			if err != nil {
+				return resolvedTopologyValues{}, fmt.Errorf("inspect topology %s target set %s profile %s: %w", resolved.Name, setName, profile.Name, err)
+			}
+			if strings.TrimSpace(status.ComputerName) == "" {
+				return resolvedTopologyValues{}, fmt.Errorf("topology %s target set %s profile %s returned no Windows computer name", resolved.Name, setName, profile.Name)
+			}
+			computerNames = append(computerNames, status.ComputerName)
+			profileNames = append(profileNames, profile.Name)
+			values["target_sets."+setName+"."+profile.Name+".computer_name"] = status.ComputerName
+		}
+		values["target_sets."+setName+".computer_names"] = strings.Join(computerNames, ",")
+		values["target_sets."+setName+".profiles"] = strings.Join(profileNames, ",")
+	}
 	return resolvedTopologyValues{Topology: resolved, Values: values}, nil
 }
 

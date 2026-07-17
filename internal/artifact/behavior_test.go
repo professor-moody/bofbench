@@ -120,7 +120,7 @@ func TestBehaviorChainsRequireCoLocatedRelocationEvidence(t *testing.T) {
 	if !containsString(analysis.Effects, "writes process memory") || !containsString(analysis.WorksWith, "sliver") || !containsString(analysis.WorksWith, "native") {
 		t.Fatalf("effects=%v works=%v", analysis.Effects, analysis.WorksWith)
 	}
-	if analysis.SchemaVersion != 2 || analysis.SourceAndVersion.ObjectSHA256 == "" {
+	if analysis.SchemaVersion != 3 || analysis.SourceAndVersion.ObjectSHA256 == "" {
 		t.Fatalf("analysis v2 fields = %+v", analysis)
 	}
 
@@ -134,6 +134,39 @@ func TestBehaviorChainsRequireCoLocatedRelocationEvidence(t *testing.T) {
 	}
 	if len(negative.BehaviorChains) != 0 {
 		t.Fatalf("imports without function-local relocation evidence produced chains: %+v", negative.BehaviorChains)
+	}
+}
+
+func TestAnalysisV3CorrelatesCallConnectedBehaviorAcrossFunctions(t *testing.T) {
+	relocations := []Relocation{
+		{Function: "go", Symbol: "open_target"},
+		{Function: "open_target", Symbol: "KERNEL32$OpenProcess"},
+		{Function: "open_target", Symbol: "write_target"},
+		{Function: "write_target", Symbol: "KERNEL32$VirtualAllocEx"},
+		{Function: "write_target", Symbol: "KERNEL32$WriteProcessMemory"},
+		{Function: "write_target", Symbol: "start_target"},
+		{Function: "start_target", Symbol: "KERNEL32$CreateRemoteThread"},
+	}
+	chains, flows := inferInterproceduralBehaviorChains(relocations, nil, nil)
+	chain := requireBehavior(t, chains, "process_injection_remote_thread")
+	if !chain.Interprocedural || len(chain.EvidenceFunctions) < 3 {
+		t.Fatalf("interprocedural chain = %+v", chain)
+	}
+	if len(flows) == 0 || flows[0].Confidence != "call-connected static evidence" {
+		t.Fatalf("resource flows = %+v", flows)
+	}
+
+	// The same APIs in unrelated functions are not a chain: the call graph is
+	// the correlation boundary, not global import presence.
+	split := []Relocation{
+		{Function: "one", Symbol: "KERNEL32$OpenProcess"},
+		{Function: "two", Symbol: "KERNEL32$VirtualAllocEx"},
+		{Function: "three", Symbol: "KERNEL32$WriteProcessMemory"},
+		{Function: "four", Symbol: "KERNEL32$CreateRemoteThread"},
+	}
+	chains, _ = inferInterproceduralBehaviorChains(split, nil, nil)
+	if len(chains) != 0 {
+		t.Fatalf("unrelated functions produced interprocedural chains: %+v", chains)
 	}
 }
 

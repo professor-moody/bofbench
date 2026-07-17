@@ -22,7 +22,7 @@ const LockFileName = "arsenal.lock.json"
 const (
 	arsenalIndexSchema        = "bofbench.arsenal-index"
 	arsenalIndexSchemaVersion = 2
-	analyzerCacheVersion      = "behavior-v2"
+	analyzerCacheVersion      = "behavior-v3-interprocedural"
 )
 
 type Inventory struct {
@@ -139,14 +139,15 @@ type arsenalAnalysisIndexItem struct {
 }
 
 type ArchitectureMatrix struct {
-	Schema        string                    `json:"schema"`
-	SchemaVersion int                       `json:"schema_version"`
-	Root          string                    `json:"root"`
-	GeneratedAt   string                    `json:"generated_at"`
-	IndexPath     string                    `json:"index_path"`
-	SignatureSet  string                    `json:"analyzer_signature_set"`
-	Summary       ArchitectureMatrixSummary `json:"summary"`
-	Entries       []ArchitectureMatrixEntry `json:"entries"`
+	Schema          string                    `json:"schema"`
+	SchemaVersion   int                       `json:"schema_version"`
+	Root            string                    `json:"root"`
+	GeneratedAt     string                    `json:"generated_at"`
+	IndexPath       string                    `json:"index_path"`
+	SignatureSet    string                    `json:"analyzer_signature_set"`
+	AnalysisVersion int                       `json:"analysis_version"`
+	Summary         ArchitectureMatrixSummary `json:"summary"`
+	Entries         []ArchitectureMatrixEntry `json:"entries"`
 }
 
 type ArchitectureMatrixSummary struct {
@@ -310,7 +311,7 @@ func BuildArchitectureMatrix(root string, signatures []artifact.DeclarativeSigna
 	}
 	report := ArchitectureMatrix{
 		Schema: "bofbench.arsenal-matrix", SchemaVersion: 1, Root: root,
-		GeneratedAt: time.Now().UTC().Format(time.RFC3339), IndexPath: inventory.IndexPath, SignatureSet: inventory.SignatureSet,
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339), IndexPath: inventory.IndexPath, SignatureSet: inventory.SignatureSet, AnalysisVersion: 3,
 	}
 	for _, inventoryEntry := range inventory.Entries {
 		entry := ArchitectureMatrixEntry{Name: inventoryEntry.Name, Path: inventoryEntry.Path, SourceFiles: append([]string(nil), inventoryEntry.SourceFiles...)}

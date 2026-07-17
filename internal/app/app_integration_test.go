@@ -434,7 +434,7 @@ func TestCLIAnalyzeBaselineWritesDiff(t *testing.T) {
 	if err := json.Unmarshal([]byte(runOK(t, tmp, bin, "analyze", obj, "--format", "json")), &first); err != nil {
 		t.Fatal(err)
 	}
-	if first.JSONPath == "" || first.Analysis.Schema != "bofbench.analysis" || first.Analysis.SchemaVersion != 2 || first.Analysis.RunID == "" {
+	if first.JSONPath == "" || first.Analysis.Schema != "bofbench.analysis" || first.Analysis.SchemaVersion != 3 || first.Analysis.RunID == "" {
 		t.Fatalf("missing versioned baseline analysis evidence: %+v", first)
 	}
 	var second struct {

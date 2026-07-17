@@ -207,7 +207,7 @@ func TestTopologyLifecycleResolutionAndProfileProtection(t *testing.T) {
 	}
 }
 
-func TestProfilesV3MigratesToV4AndRetainsBackup(t *testing.T) {
+func TestProfilesV3MigratesToV5AndRetainsBackup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "labs.json")
 	data := []byte(`{"schema":"bofbench.labs","schema_version":3,"active":"devbox","profiles":{"devbox":{"provider":"existing","topology":"standalone","transport":"ssh","host":"devbox","port":22,"remote_root":"C:\\bofbench","build_mode":"auto"}},"topologies":{}}`)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
@@ -217,7 +217,7 @@ func TestProfilesV3MigratesToV4AndRetainsBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.SchemaVersion != 4 || config.Profiles["devbox"].Host != "devbox" {
+	if config.SchemaVersion != 5 || config.Profiles["devbox"].Host != "devbox" {
 		t.Fatalf("config=%+v", config)
 	}
 	if _, err := os.Stat(path + ".v3.bak"); err != nil {
@@ -227,8 +227,40 @@ func TestProfilesV3MigratesToV4AndRetainsBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(persisted), `"schema_version": 4`) {
+	if !strings.Contains(string(persisted), `"schema_version": 5`) {
 		t.Fatalf("migration was not persisted: %s", persisted)
+	}
+}
+
+func TestTopologyTargetSetsPreserveOrderAndRejectDuplicates(t *testing.T) {
+	config := NewProfilesConfig()
+	for _, name := range []string{"execution", "target-a", "target-b"} {
+		if err := AddProfile(&config, name, Profile{Provider: "existing", Transport: "ssh", Host: name, RemoteRoot: `C:\bofbench`, BuildMode: "local"}, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := AddTopology(&config, "standalone", ProfileTopology{Execution: "execution", Target: "target-a"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddTopologyTarget(&config, "standalone", "windows", "target-b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddTopologyTarget(&config, "standalone", "windows", "target-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddTopologyTarget(&config, "standalone", "windows", "target-a"); err == nil {
+		t.Fatal("expected duplicate target rejection")
+	}
+	path := filepath.Join(t.TempDir(), "labs.json")
+	if err := SaveProfiles(path, config); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := ResolveTopology("standalone", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.TargetSets["windows"]; len(got) != 2 || got[0].Name != "target-b" || got[1].Name != "target-a" {
+		t.Fatalf("unexpected ordered targets: %#v", got)
 	}
 }
 
