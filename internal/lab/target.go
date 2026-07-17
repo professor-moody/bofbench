@@ -88,6 +88,8 @@ type TargetState struct {
 	User                  string `json:"user"`
 	CanaryFile            string `json:"canary_file"`
 	CanaryFileSHA256      string `json:"canary_file_sha256,omitempty"`
+	MoveCanaryFile        string `json:"move_canary_file,omitempty"`
+	MoveCanarySHA256      string `json:"move_canary_sha256,omitempty"`
 	MemoryCanaryAddress   string `json:"memory_canary_address,omitempty"`
 	MemoryCanarySize      int    `json:"memory_canary_size,omitempty"`
 	MemoryCanarySHA256    string `json:"memory_canary_sha256,omitempty"`
@@ -103,38 +105,40 @@ type TargetState struct {
 }
 
 type TargetFixtureState struct {
-	Schema                string `json:"schema"`
-	SchemaVersion         int    `json:"schema_version"`
-	User                  string `json:"user"`
-	CredentialTarget      string `json:"credential_target"`
-	CredentialSHA256      string `json:"credential_sha256"`
-	CredentialSize        int    `json:"credential_size"`
-	DPAPIUserPath         string `json:"dpapi_user_path"`
-	DPAPIUserSHA256       string `json:"dpapi_user_sha256"`
-	DPAPIMachinePath      string `json:"dpapi_machine_path"`
-	DPAPIMachineSHA256    string `json:"dpapi_machine_sha256"`
-	WMIMarkerPath         string `json:"wmi_marker_path"`
-	VaultGUID             string `json:"vault_guid,omitempty"`
-	VaultResource         string `json:"vault_resource,omitempty"`
-	VaultIdentity         string `json:"vault_identity,omitempty"`
-	VaultSHA256           string `json:"vault_sha256,omitempty"`
-	VaultSize             int    `json:"vault_size,omitempty"`
-	CertificateStore      string `json:"certificate_store,omitempty"`
-	CertificateSubject    string `json:"certificate_subject,omitempty"`
-	CertificateThumbprint string `json:"certificate_thumbprint,omitempty"`
-	RemoteRegistryHive    string `json:"remote_registry_hive,omitempty"`
-	RemoteRegistryPath    string `json:"remote_registry_path,omitempty"`
-	RemoteRegistryName    string `json:"remote_registry_name,omitempty"`
-	RemoteRegistrySHA256  string `json:"remote_registry_sha256,omitempty"`
-	RemoteRegistrySize    int    `json:"remote_registry_size,omitempty"`
-	RemoteRegistryStatus  string `json:"remote_registry_previous_status,omitempty"`
-	RemoteRegistryStart   string `json:"remote_registry_previous_start_type,omitempty"`
-	RemoteRegistryKeyMade bool   `json:"remote_registry_key_created,omitempty"`
-	RemoteComputerName    string `json:"remote_computer_name,omitempty"`
-	RemoteStageShare      string `json:"remote_stage_share,omitempty"`
-	RemoteStageRelative   string `json:"remote_stage_relative_root,omitempty"`
-	RemoteStageLocal      string `json:"remote_stage_local_root,omitempty"`
-	CreatedAt             string `json:"created_at"`
+	Schema                 string `json:"schema"`
+	SchemaVersion          int    `json:"schema_version"`
+	User                   string `json:"user"`
+	CredentialTarget       string `json:"credential_target"`
+	CredentialSHA256       string `json:"credential_sha256"`
+	CredentialSize         int    `json:"credential_size"`
+	DPAPIUserPath          string `json:"dpapi_user_path"`
+	DPAPIUserSHA256        string `json:"dpapi_user_sha256"`
+	DPAPIUserFileSHA256    string `json:"dpapi_user_file_sha256,omitempty"`
+	DPAPIMachinePath       string `json:"dpapi_machine_path"`
+	DPAPIMachineSHA256     string `json:"dpapi_machine_sha256"`
+	DPAPIMachineFileSHA256 string `json:"dpapi_machine_file_sha256,omitempty"`
+	WMIMarkerPath          string `json:"wmi_marker_path"`
+	VaultGUID              string `json:"vault_guid,omitempty"`
+	VaultResource          string `json:"vault_resource,omitempty"`
+	VaultIdentity          string `json:"vault_identity,omitempty"`
+	VaultSHA256            string `json:"vault_sha256,omitempty"`
+	VaultSize              int    `json:"vault_size,omitempty"`
+	CertificateStore       string `json:"certificate_store,omitempty"`
+	CertificateSubject     string `json:"certificate_subject,omitempty"`
+	CertificateThumbprint  string `json:"certificate_thumbprint,omitempty"`
+	RemoteRegistryHive     string `json:"remote_registry_hive,omitempty"`
+	RemoteRegistryPath     string `json:"remote_registry_path,omitempty"`
+	RemoteRegistryName     string `json:"remote_registry_name,omitempty"`
+	RemoteRegistrySHA256   string `json:"remote_registry_sha256,omitempty"`
+	RemoteRegistrySize     int    `json:"remote_registry_size,omitempty"`
+	RemoteRegistryStatus   string `json:"remote_registry_previous_status,omitempty"`
+	RemoteRegistryStart    string `json:"remote_registry_previous_start_type,omitempty"`
+	RemoteRegistryKeyMade  bool   `json:"remote_registry_key_created,omitempty"`
+	RemoteComputerName     string `json:"remote_computer_name,omitempty"`
+	RemoteStageShare       string `json:"remote_stage_share,omitempty"`
+	RemoteStageRelative    string `json:"remote_stage_relative_root,omitempty"`
+	RemoteStageLocal       string `json:"remote_stage_local_root,omitempty"`
+	CreatedAt              string `json:"created_at"`
 }
 
 type TargetReport struct {

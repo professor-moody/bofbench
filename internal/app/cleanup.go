@@ -92,6 +92,16 @@ func cleanupNamedArguments(sourceProject, cleanupProject string, values []string
 	mapped := map[string]string{}
 	if sourceLock, _, lockErr := packsvc.LoadLock(sourceProject); lockErr == nil {
 		for _, record := range sourceLock.Packs {
+			// Cleanup mappings are part of the action pack contract. Preserve
+			// action defaults when the operator did not spell them out so a
+			// mapping such as force=$arg.cleanup_force behaves the same during
+			// action execution and later cleanup execution.
+			for _, argument := range record.Arguments {
+				name := strings.ToLower(argument.Name)
+				if _, explicit := provided[name]; !explicit && argument.Default != "" {
+					provided[name] = argument.Default
+				}
+			}
 			for target, expression := range record.CleanupArguments {
 				source := strings.ToLower(strings.TrimPrefix(expression, "$arg."))
 				if raw, ok := provided[source]; ok && allowed[strings.ToLower(target)] {

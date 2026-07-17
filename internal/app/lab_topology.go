@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -17,10 +18,128 @@ func labTopologyCommand(stdout io.Writer) *cobra.Command {
 		labTopologyListCommand(stdout),
 		labTopologyShowCommand(stdout),
 		labTopologyStatusCommand(stdout),
+		labTopologyLifecycleCommand(stdout, "up"),
+		labTopologyLifecycleCommand(stdout, "down"),
+		labTopologyLifecycleCommand(stdout, "snapshot"),
+		labTopologyLifecycleCommand(stdout, "restore"),
 		labTopologyUseCommand(stdout),
 		labTopologyRemoveCommand(stdout),
 	)
 	return cmd
+}
+
+type topologyProviderResult struct {
+	Role     string                `json:"role"`
+	Profile  string                `json:"profile"`
+	Action   string                `json:"action"`
+	Receipts []lab.ProviderReceipt `json:"receipts"`
+}
+
+func labTopologyLifecycleCommand(stdout io.Writer, action string) *cobra.Command {
+	var profilesPath, snapshot, format string
+	var force bool
+	use := action + " <name>"
+	short := map[string]string{
+		"up":       "Provision missing provider guests and start every controllable topology role",
+		"down":     "Gracefully stop every controllable topology role in reverse order",
+		"snapshot": "Snapshot every provider-controlled topology role",
+		"restore":  "Restore every provider-controlled topology role to one snapshot",
+	}[action]
+	cmd := &cobra.Command{Use: use, Short: short, Args: cobra.ExactArgs(1)}
+	if action == "up" {
+		cmd.Aliases = []string{"provision"}
+	}
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		resolved, err := lab.ResolveTopology(args[0], profilesPath)
+		if err != nil {
+			return err
+		}
+		roles := orderedTopologyProviderRoles(resolved, action == "down")
+		results := make([]topologyProviderResult, 0, len(roles))
+		for _, role := range roles {
+			result, runErr := runTopologyProviderRole(cmd.Context(), role.role, role.profile, action, snapshot, force)
+			results = append(results, result)
+			if runErr != nil {
+				if format == "json" {
+					_ = printJSON(stdout, map[string]any{"topology": resolved.Name, "action": action, "roles": results, "status": "failed"})
+				}
+				return fmt.Errorf("topology %s role %s: %w", resolved.Name, role.role, runErr)
+			}
+		}
+		if format == "json" {
+			return printJSON(stdout, map[string]any{"topology": resolved.Name, "action": action, "roles": results, "status": "complete"})
+		}
+		if format != "text" {
+			return fmt.Errorf("lab topology %s format must be text or json", action)
+		}
+		fmt.Fprintf(stdout, "Lab topology %s %s complete\n", resolved.Name, action)
+		for _, result := range results {
+			if len(result.Receipts) == 0 {
+				fmt.Fprintf(stdout, "%-18s %-18s external (not lifecycle-managed)\n", strings.ReplaceAll(result.Role, "_", " "), result.Profile)
+				continue
+			}
+			last := result.Receipts[len(result.Receipts)-1]
+			fmt.Fprintf(stdout, "%-18s %-18s %-10s vmid=%d receipt=%s\n", strings.ReplaceAll(result.Role, "_", " "), result.Profile, last.Resource.State, last.Resource.VMID, last.EvidencePath)
+		}
+		return nil
+	}
+	cmd.Flags().StringVar(&profilesPath, "profiles", lab.ProfilesPath(), "global lab profiles file")
+	cmd.Flags().StringVar(&snapshot, "snapshot", "", "snapshot name for snapshot or restore")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	cmd.Flags().BoolVar(&force, "force", false, "permit force-capable provider behavior")
+	if action == "snapshot" || action == "restore" {
+		_ = cmd.MarkFlagRequired("snapshot")
+	}
+	return cmd
+}
+
+type topologyProviderRole struct {
+	role    string
+	profile lab.ResolvedProfile
+}
+
+func orderedTopologyProviderRoles(resolved lab.ResolvedTopology, reverse bool) []topologyProviderRole {
+	var roles []topologyProviderRole
+	if resolved.DomainController != nil {
+		roles = append(roles, topologyProviderRole{"domain_controller", *resolved.DomainController})
+	}
+	if resolved.Target != nil {
+		roles = append(roles, topologyProviderRole{"target", *resolved.Target})
+	}
+	roles = append(roles, topologyProviderRole{"execution", resolved.Execution})
+	if reverse {
+		for left, right := 0, len(roles)-1; left < right; left, right = left+1, right-1 {
+			roles[left], roles[right] = roles[right], roles[left]
+		}
+	}
+	return roles
+}
+
+func runTopologyProviderRole(ctx context.Context, role string, resolved lab.ResolvedProfile, action, snapshot string, force bool) (topologyProviderResult, error) {
+	result := topologyProviderResult{Role: role, Profile: resolved.Name, Action: action}
+	providerName := strings.ToLower(strings.TrimSpace(resolved.Profile.Provider))
+	if providerName == "existing" {
+		// Existing systems are intentionally never started, stopped, snapshotted,
+		// or restored by BOFBench. Their status remains part of topology status.
+		return result, nil
+	}
+	if action == "up" && providerName == "proxmox" {
+		status, err := lab.RunProviderAction(ctx, resolved.Name, resolved.Profile, "status", lab.ProviderActionOptions{})
+		result.Receipts = append(result.Receipts, status)
+		if err != nil {
+			return result, err
+		}
+		if status.Resource.State == "absent" {
+			clone, cloneErr := lab.RunProviderAction(ctx, resolved.Name, resolved.Profile, "clone", lab.ProviderActionOptions{Name: resolved.Name})
+			result.Receipts = append(result.Receipts, clone)
+			if cloneErr != nil {
+				return result, cloneErr
+			}
+		}
+	}
+	receipt, err := lab.RunProviderAction(ctx, resolved.Name, resolved.Profile, action, lab.ProviderActionOptions{Snapshot: snapshot, Force: force})
+	result.Receipts = append(result.Receipts, receipt)
+	return result, err
 }
 
 func labTopologyAddCommand(stdout io.Writer) *cobra.Command {

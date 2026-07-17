@@ -1,0 +1,15 @@
+[Unit]
+Description=BOFBench isolated vmbr290 DHCP and DNS
+After=network-online.target
+Wants=network-online.target
+Requires=bofbench-vmbr290-nat.service
+ConditionPathExists=/etc/dnsmasq.d/bofbench-vmbr290.conf
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/dnsmasq.d/bofbench-vmbr290.conf
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

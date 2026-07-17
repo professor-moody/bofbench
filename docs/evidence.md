@@ -27,6 +27,8 @@ Operation receipt version 8 retains the complete version-7 asynchronous DAG reco
 
 Operation receipt version 9 preserves all version-8 fields and records the pinned definition used to resolve safe argument templates. Template source remains in the operation definition; receipts store only resolved non-sensitive arguments and the names of redacted sensitive values. Resolution supports typed operation inputs, topology fields, and completed ancestor captures—never shell expansion, expressions, or forward references.
 
+Operation receipt version 10 adds the bounded fan-out source contract, resolved item count, branch-to-item association, observed concurrency, per-branch contract/runtime state, and reverse cleanup results. It retains the complete v9 definition and transitive hash pinning. Sensitive inputs cannot be fan-out sources and are never copied into branch metadata.
+
 Runtime receipt version 6 adds asynchronous worker identity, progress timestamps, cancellation support/request/completion state, and terminal cancellation reasons to version-5 refresh and chunk metadata. Version-4 and version-5 runtime receipts remain readable and are normalized in memory.
 
 ## Quiet automation

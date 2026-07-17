@@ -303,6 +303,40 @@ query bounded structured event metadata from one exact channel or exported log
 | `direction` | `string` | no | no | `reverse` | forward or reverse |
 | `result_limit` | `int` | no | no | `32` | maximum events (1-512) |
 
+## `builtin/file-reparse-point-inventory`
+
+inspect the reparse-point tag and bounded metadata for one exact path
+
+- Can do: exact-path reparse-point tag and metadata inspection
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `file_reparse_point_inventory`
+- Live proofs: canary-path (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `path` | `wstring` | yes | no | `` | exact file or directory path |
+
+## `builtin/file-stream-inventory`
+
+enumerate bounded NTFS alternate data streams for one exact path
+
+- Can do: bounded alternate-data-stream inventory for one exact file or directory
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `file_stream_inventory`
+- Live proofs: canary-streams (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `path` | `wstring` | yes | no | `` | exact file or directory path |
+| `stream_filter` | `wstring` | no | no | `` | case-insensitive stream-name substring |
+| `result_limit` | `int` | no | no | `64` | maximum stream rows (1-512) |
+
 ## `builtin/filesystem`
 
 report the current Windows temporary directory
@@ -1210,6 +1244,24 @@ enumerate a bounded set of local Windows services
 - Needs: privilege=user; network=none; platform=windows/x64,x86
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
+
+## `builtin/smb-connection-inventory`
+
+enumerate bounded active SMB network-use connections
+
+- Can do: bounded active SMB network-use connection inventory
+- Effects: reads data
+- Needs: privilege=user; network=local SMB connection table; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Stored-output redaction: `username`, `domain`
+- Analyzer signatures: `smb_connection_inventory`
+- Live proofs: bounded-connections (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `remote_filter` | `wstring` | no | no | `` | case-insensitive remote UNC substring |
+| `result_limit` | `int` | no | no | `64` | maximum connections (1-512) |
 
 ## `builtin/socket-endpoint-inventory`
 

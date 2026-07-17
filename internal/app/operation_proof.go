@@ -51,6 +51,7 @@ type operationProofResult struct {
 	StateChecks    int                          `json:"state_checks,omitempty"`
 	CleanupState   string                       `json:"cleanup_state,omitempty"`
 	Parallel       map[string]map[string]string `json:"parallel,omitempty"`
+	FanOut         map[string]int               `json:"fan_out,omitempty"`
 	MaxConcurrency int                          `json:"max_observed_concurrency,omitempty"`
 	Waves          [][]string                   `json:"execution_waves,omitempty"`
 	Steps          map[string]string            `json:"step_states,omitempty"`
@@ -441,6 +442,7 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 			result.ExpandedPath = append([]string(nil), receipt.ExpandedPath...)
 			result.MaxConcurrency = receipt.MaxConcurrency
 			result.Parallel = operationParallelStates(receipt)
+			result.FanOut = operationFanOutCounts(receipt)
 			result.Waves = operationWaveSteps(receipt)
 			result.Steps = operationStepStates(receipt)
 			result.Attempts, result.RetryReasons = operationRetryResults(receipt)
@@ -463,6 +465,12 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 				continue
 			}
 			if err := matchOperationProofParallel(proof.ExpectParallel, result.Parallel); err != nil {
+				result.Status, result.Error = "fail", err.Error()
+				report.Failed++
+				report.Results = append(report.Results, result)
+				continue
+			}
+			if err := matchOperationProofFanOut(proof.ExpectFanOut, result.FanOut); err != nil {
 				result.Status, result.Error = "fail", err.Error()
 				report.Failed++
 				report.Results = append(report.Results, result)
@@ -671,6 +679,25 @@ func matchOperationProofParallel(expected, actual map[string]map[string]string) 
 			if got != want {
 				return fmt.Errorf("parallel branch %s/%s=%q did not match %q", groupID, branchID, got, want)
 			}
+		}
+	}
+	return nil
+}
+
+func operationFanOutCounts(receipt operationsvc.Receipt) map[string]int {
+	result := map[string]int{}
+	for _, step := range receipt.Steps {
+		if step.FanOut != nil {
+			result[step.ID] = len(step.FanOut.Branches)
+		}
+	}
+	return result
+}
+
+func matchOperationProofFanOut(expected, actual map[string]int) error {
+	for stepID, want := range expected {
+		if got := actual[stepID]; got != want {
+			return fmt.Errorf("fan-out step %s targets=%d did not match %d", stepID, got, want)
 		}
 	}
 	return nil

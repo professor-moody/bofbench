@@ -23,6 +23,40 @@ var executeVagrantCommand vagrantCommandFunc = runVagrantCommand
 func ResolveRemoteOptions(ctx context.Context, name string, profile Profile) (RemoteOptions, error) {
 	profile = NormalizeProfile(profile)
 	opts := RemoteOptionsFromProfile(name, profile)
+	if profile.Provider == "proxmox" {
+		if strings.TrimSpace(opts.Host) == "" {
+			provider, err := ResolveProvider(name, profile)
+			if err != nil {
+				return RemoteOptions{}, err
+			}
+			defer provider.Close()
+			resource, err := provider.DiscoverGuest(ctx)
+			if err != nil {
+				return RemoteOptions{}, fmt.Errorf("discover Proxmox guest for lab %q: %w", name, err)
+			}
+			if resource.State == "running" && resource.GuestIPv4 == "" {
+				resource, err = waitForProviderGuestIPv4(ctx, provider, resource, proxmoxGuestReadyTimeout)
+				if err != nil {
+					return RemoteOptions{}, fmt.Errorf("discover Proxmox guest for lab %q: %w", name, err)
+				}
+			}
+			if strings.TrimSpace(resource.GuestIPv4) == "" {
+				return RemoteOptions{}, fmt.Errorf("Proxmox guest %d has no discoverable IPv4 address; start it, install/enable qemu-guest-agent, or set --host", profile.Proxmox.VMID)
+			}
+			opts.Host = resource.GuestIPv4
+		}
+		opts.SnapshotSupport = true
+		if opts.Transport == "winrm" && opts.WinRMPassword == "" && term.IsTerminal(int(os.Stdin.Fd())) {
+			fmt.Fprintf(os.Stderr, "WinRM password for lab %s (%s\\%s): ", name, opts.Host, opts.User)
+			password, err := term.ReadPassword(int(os.Stdin.Fd()))
+			fmt.Fprintln(os.Stderr)
+			if err != nil {
+				return RemoteOptions{}, fmt.Errorf("read WinRM password: %w", err)
+			}
+			opts.WinRMPassword = string(password)
+		}
+		return opts, nil
+	}
 	if profile.Provider != "vagrant" {
 		if opts.Transport == "winrm" && opts.WinRMPassword == "" && term.IsTerminal(int(os.Stdin.Fd())) {
 			fmt.Fprintf(os.Stderr, "WinRM password for lab %s (%s\\%s): ", name, opts.Host, opts.User)

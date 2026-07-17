@@ -174,6 +174,9 @@ func remoteDownloadDirectory(ctx context.Context, opts RemoteOptions, remoteDire
 
 func sshBaseArgs(opts RemoteOptions) []string {
 	args := []string{}
+	if opts.JumpHost != "" {
+		args = append(args, "-o", "ProxyJump="+opts.JumpHost)
+	}
 	if opts.Port != 0 && opts.Port != 22 {
 		args = append(args, "-p", fmt.Sprintf("%d", opts.Port))
 	}
@@ -188,6 +191,9 @@ func sshBaseArgs(opts RemoteOptions) []string {
 
 func scpBaseArgs(opts RemoteOptions) []string {
 	args := []string{}
+	if opts.JumpHost != "" {
+		args = append(args, "-o", "ProxyJump="+opts.JumpHost)
+	}
 	if opts.Port != 0 && opts.Port != 22 {
 		args = append(args, "-P", fmt.Sprintf("%d", opts.Port))
 	}

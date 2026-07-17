@@ -1,0 +1,14 @@
+[Unit]
+Description=BOFBench vmbr290 outbound NAT
+After=network-online.target
+Wants=network-online.target
+Before=bofbench-dnsmasq-vmbr290.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/bofbench-vmbr290-nat start
+ExecStop=/usr/local/libexec/bofbench-vmbr290-nat stop
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -100,7 +100,7 @@ Profiles then live in `$BOFBENCH_CONFIG_HOME/labs.json`. Without that variable, 
 ```json
 {
   "schema": "bofbench.labs",
-  "schema_version": 3,
+  "schema_version": 4,
   "active": "dedicated",
   "profiles": {
     "dedicated": {
@@ -126,6 +126,8 @@ Profiles then live in `$BOFBENCH_CONFIG_HOME/labs.json`. Without that variable, 
   }
 }
 ```
+
+Schema version 4 retains ordinary `existing` and `vagrant` profiles and adds a secret-free `proxmox` block. Version-2 and version-3 files migrate automatically, with the original retained as a versioned backup.
 
 The file is written with user-only permissions. Passwords and private-key contents are rejected by design because the schema has no fields for them.
 
@@ -253,6 +255,31 @@ bofbench lab restore clean --lab disposable
 ```
 
 Forwarded ports may change between `up` operations without requiring a profile edit.
+
+## Proxmox profiles
+
+Proxmox profiles record a VMID, node, storage, bridge, template VMID, guest CIDR, and an external token-secret source. They never record the token secret or Windows password:
+
+```bash
+bofbench lab add win11-dev \
+  --provider proxmox \
+  --proxmox-prep ~/.config/bofbench/proxmox-lab.json \
+  --proxmox-vmid 4110 \
+  --proxmox-template-vmid 4101 \
+  --transport ssh \
+  --user Administrator \
+  --identity ~/.ssh/bofbench-windows \
+  --build-mode remote
+
+bofbench lab up --lab win11-dev
+bofbench lab provider status --lab win11-dev
+bofbench lab bootstrap --lab win11-dev
+bofbench lab snapshot clean --lab win11-dev
+```
+
+When a Proxmox profile's VM is absent, `lab up` clones the configured template into the profile VMID, places it in the configured pool, waits for the UPID, starts it, and discovers the guest address through the QEMU agent. If the API is reachable only from the hypervisor network, `ssh_proxy` is used both for the API tunnel and the guest SSH jump. Every lifecycle action writes a secret-free `bofbench.provider-receipt`.
+
+See [Proxmox-Native Labs](proxmox-labs.md) for bridge isolation, template construction, pool permissions, multi-role topologies, and teardown.
 
 ## Import and migration
 

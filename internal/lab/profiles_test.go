@@ -206,3 +206,54 @@ func TestTopologyLifecycleResolutionAndProfileProtection(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestProfilesV3MigratesToV4AndRetainsBackup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "labs.json")
+	data := []byte(`{"schema":"bofbench.labs","schema_version":3,"active":"devbox","profiles":{"devbox":{"provider":"existing","topology":"standalone","transport":"ssh","host":"devbox","port":22,"remote_root":"C:\\bofbench","build_mode":"auto"}},"topologies":{}}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := LoadProfiles(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.SchemaVersion != 4 || config.Profiles["devbox"].Host != "devbox" {
+		t.Fatalf("config=%+v", config)
+	}
+	if _, err := os.Stat(path + ".v3.bak"); err != nil {
+		t.Fatalf("migration backup: %v", err)
+	}
+	persisted, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), `"schema_version": 4`) {
+		t.Fatalf("migration was not persisted: %s", persisted)
+	}
+}
+
+func TestProxmoxProfileValidationAndPreparation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prep.json")
+	data := []byte(`{"schema":"bofbench.proxmox-preparation","schema_version":1,"endpoint":"https://pve:8006/api2/json","node":"gr9","pool":"bofbench","storage":"local-lvm","iso_storage":"local","token_id":"bofbench@pve!provider","token_secret_source":{"kind":"env","name":"BOFBENCH_TEST_TOKEN"},"ca_file":"/tmp/ca.pem","resource_plan":{"management_bridge":"vmbr0","lab_bridge":"vmbr290","lab_subnet":"10.12.90.0/24"}}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prep, err := LoadProxmoxPreparation(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := DefaultProfile("proxmox")
+	profile.Proxmox = &ProxmoxProfile{Endpoint: prep.Endpoint, Node: prep.Node, VMID: 4101, Pool: prep.Pool, Storage: prep.Storage, ISOStorage: prep.ISOStorage, TokenID: prep.TokenID, TokenSecretSource: prep.TokenSecretSource, CAFile: prep.CAFile, CloneMode: "full", Bridge: prep.ResourcePlan.LabBridge, GuestIPv4CIDR: prep.ResourcePlan.LabSubnet, GuestAgent: true}
+	if err := ValidateProfile(profile); err != nil {
+		t.Fatal(err)
+	}
+	profile.Proxmox.SSHProxy = "pve -oProxyCommand=bad"
+	if err := ValidateProfile(profile); err == nil || !strings.Contains(err.Error(), "ssh_proxy") {
+		t.Fatalf("ssh proxy error=%v", err)
+	}
+	profile.Proxmox.SSHProxy = "bofbench-proxmox"
+	profile.Proxmox.TokenID = "bad"
+	if err := ValidateProfile(profile); err == nil || !strings.Contains(err.Error(), "user@realm!token") {
+		t.Fatalf("token id error=%v", err)
+	}
+}

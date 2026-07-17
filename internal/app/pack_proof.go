@@ -1045,10 +1045,10 @@ func proofPlaceholderValues(target lab.TargetReport, runID, proofSecret string) 
 		"$MEMORY_SHA256":        target.State.MemoryCanarySHA256,
 		"$MEMORY_WRITE_ADDRESS": target.State.MemoryWriteAddress, "$MEMORY_WRITE_SIZE": strconv.Itoa(target.State.MemoryWriteSize), "$MEMORY_WRITE_SHA256": target.State.MemoryWriteSHA256,
 		"$MEMORY_PROTECTION_ADDRESS": target.State.MemoryProtectAddress, "$MEMORY_PROTECTION_SIZE": strconv.Itoa(target.State.MemoryProtectSize), "$MEMORY_PROTECTION": target.State.MemoryProtection,
-		"$CANARY_PATH": target.State.CanaryFile, "$CANARY_SHA256": target.State.CanaryFileSHA256,
+		"$CANARY_PATH": target.State.CanaryFile, "$CANARY_SHA256": target.State.CanaryFileSHA256, "$TARGET_MOVE_CANARY_PATH": target.State.MoveCanaryFile, "$TARGET_MOVE_CANARY_SHA256": target.State.MoveCanarySHA256,
 		"$CREDENTIAL_TARGET": target.Fixtures.CredentialTarget, "$CREDENTIAL_SHA256": target.Fixtures.CredentialSHA256, "$CREDENTIAL_SIZE": strconv.Itoa(target.Fixtures.CredentialSize),
-		"$DPAPI_USER_PATH": target.Fixtures.DPAPIUserPath, "$DPAPI_USER_SHA256": target.Fixtures.DPAPIUserSHA256,
-		"$DPAPI_MACHINE_PATH": target.Fixtures.DPAPIMachinePath, "$DPAPI_MACHINE_SHA256": target.Fixtures.DPAPIMachineSHA256,
+		"$DPAPI_USER_PATH": target.Fixtures.DPAPIUserPath, "$DPAPI_USER_SHA256": target.Fixtures.DPAPIUserSHA256, "$DPAPI_USER_FILE_SHA256": target.Fixtures.DPAPIUserFileSHA256,
+		"$DPAPI_MACHINE_PATH": target.Fixtures.DPAPIMachinePath, "$DPAPI_MACHINE_SHA256": target.Fixtures.DPAPIMachineSHA256, "$DPAPI_MACHINE_FILE_SHA256": target.Fixtures.DPAPIMachineFileSHA256,
 		"$VAULT_GUID": target.Fixtures.VaultGUID, "$VAULT_RESOURCE": target.Fixtures.VaultResource, "$VAULT_IDENTITY": target.Fixtures.VaultIdentity,
 		"$VAULT_SHA256": target.Fixtures.VaultSHA256, "$VAULT_SIZE": strconv.Itoa(target.Fixtures.VaultSize),
 		"$CERT_THUMBPRINT": target.Fixtures.CertificateThumbprint, "$CERT_STORE": target.Fixtures.CertificateStore, "$CERT_SUBJECT": target.Fixtures.CertificateSubject,
@@ -1281,6 +1281,12 @@ func proofStateCheckScript(kind, expect string, parameters map[string]string) (s
 		probe = `$present=Test-Path -LiteralPath ` + q(parameters["path"])
 	case "file_sha256":
 		probe = `$path=` + q(parameters["path"]) + `; $present=Test-Path -LiteralPath $path; $matches=$false; if($present){$hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash; $matches=$hash -ieq ` + q(parameters["sha256"]) + `}`
+	case "alternate_stream":
+		probe = `$path=` + q(parameters["path"]) + `; $stream=` + q(parameters["stream"]) + `; $item=Get-Item -LiteralPath $path -Stream $stream -ErrorAction SilentlyContinue; $present=$null -ne $item; $matches=$present; if($present -and ` + q(parameters["sha256"]) + `){if((Get-Command Get-Content).Parameters.ContainsKey('AsByteStream')){$bytes=[byte[]](Get-Content -LiteralPath $path -Stream $stream -AsByteStream -Raw)}else{$bytes=[byte[]](Get-Content -LiteralPath $path -Stream $stream -Encoding Byte -Raw)}; $sha=[Security.Cryptography.SHA256]::Create(); try{$hash=([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','')}finally{$sha.Dispose()}; $matches=$hash -ieq ` + q(parameters["sha256"]) + `}`
+	case "reparse_point":
+		probe = `$path=` + q(parameters["path"]) + `; $item=Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue; $present=($null -ne $item) -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0); $matches=$present; if($present -and ` + q(parameters["tag"]) + `){$text=(& fsutil.exe reparsepoint query $path 2>&1 | Out-String); $matches=$text -match [regex]::Escape(` + q(parameters["tag"]) + `)}`
+	case "smb_connection":
+		probe = `$remote=` + q(parameters["remote"]) + `; $items=@(Get-SmbMapping -ErrorAction SilentlyContinue | Where-Object {[string]$_.RemotePath -ieq $remote}); $present=$items.Count -gt 0; $matches=$present`
 	case "startup_file":
 		leaf := parameters["name"]
 		if leaf == "" || strings.ContainsAny(leaf, `\/:`) {

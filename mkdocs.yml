@@ -56,6 +56,7 @@ nav:
       - Runtime Adapters: runtime.md
       - Windows Lab: windows-lab.md
       - Portable Lab Profiles: lab-profiles.md
+      - Proxmox-Native Labs: proxmox-labs.md
       - Lab Architecture: lab-setup.md
       - Sliver: sliver.md
       - Cobalt Strike: cobaltstrike.md
@@ -91,6 +92,7 @@ nav:
       - Asynchronous Eventing and Cancellation: scenarios/asynchronous-eventing.md
       - Resilient Network Transport and Retry: scenarios/network-transport-retry.md
       - Secure HTTP and BITS Control: scenarios/secure-http-bits.md
+      - Fan-Out SMB and NTFS: scenarios/fanout-smb-ntfs.md
       - Operator Playbooks: playbooks.md
       - Deep Capability Workflows: deep-capabilities.md
       - Native Process Depth: native-process-depth.md

@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+rule="-t nat -C POSTROUTING -s 10.12.90.0/24 -o vmbr0 -j MASQUERADE"
+
+case "${1:-}" in
+  start)
+    if ! /usr/sbin/iptables $rule 2>/dev/null; then
+      /usr/sbin/iptables -t nat -A POSTROUTING -s 10.12.90.0/24 -o vmbr0 -j MASQUERADE
+    fi
+    ;;
+  stop)
+    if /usr/sbin/iptables $rule 2>/dev/null; then
+      /usr/sbin/iptables -t nat -D POSTROUTING -s 10.12.90.0/24 -o vmbr0 -j MASQUERADE
+    fi
+    ;;
+  *)
+    echo "usage: $0 start|stop" >&2
+    exit 2
+    ;;
+esac

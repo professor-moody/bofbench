@@ -32,6 +32,7 @@ type RemoteOptions struct {
 	Port            int
 	IdentityFile    string
 	KnownHosts      string
+	JumpHost        string
 	WinRMHTTPS      bool
 	WinRMPassword   string
 	BuildMode       string
@@ -259,10 +260,14 @@ func DefaultRemoteOptions() RemoteOptions {
 
 func RemoteOptionsFromProfile(name string, profile Profile) RemoteOptions {
 	profile = NormalizeProfile(profile)
+	jumpHost := ""
+	if profile.Proxmox != nil {
+		jumpHost = strings.TrimSpace(profile.Proxmox.SSHProxy)
+	}
 	return RemoteOptions{
 		ProfileName: name, Transport: profile.Transport, Host: profile.Host, User: profile.User,
-		Port: profile.Port, IdentityFile: expandUserPath(profile.IdentityFile), KnownHosts: expandUserPath(profile.KnownHosts),
-		WinRMHTTPS: profile.WinRMHTTPS, WinRMPassword: os.Getenv(WinRMPasswordEnvironment(name)), BuildMode: profile.BuildMode, SnapshotSupport: profile.Provider == "vagrant",
+		Port: profile.Port, IdentityFile: expandUserPath(profile.IdentityFile), KnownHosts: expandUserPath(profile.KnownHosts), JumpHost: jumpHost,
+		WinRMHTTPS: profile.WinRMHTTPS, WinRMPassword: os.Getenv(WinRMPasswordEnvironment(name)), BuildMode: profile.BuildMode, SnapshotSupport: profile.Provider == "vagrant" || profile.Provider == "proxmox",
 		RemoteRoot: profile.RemoteRoot, Executable: windowsJoin(profile.RemoteRoot, "work", "bin", "bofbench.exe"),
 		SSH: "ssh", SCP: "scp",
 	}
@@ -285,7 +290,7 @@ func RemoteStatus(ctx context.Context, opts RemoteOptions) (RemoteStatusReport, 
 	}
 	loaderX64 := windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader.exe")
 	loaderX86 := windowsJoin(opts.RemoteRoot, "native", "loader", "bofbench-loader-x86.exe")
-	script := fmt.Sprintf(`$ErrorActionPreference='Stop'; $exeReady=Test-Path %s; $loaderReady=Test-Path %s; $loaderX86Ready=Test-Path %s; $version=$null; if($exeReady){$version=(& %s version --format json | ConvertFrom-Json)}; $compiler=if(Get-Command cl.exe -ErrorAction SilentlyContinue){'msvc'}elseif(Get-Command x86_64-w64-mingw32-gcc.exe -ErrorAction SilentlyContinue){'mingw'}else{''}; $identity=[Security.Principal.WindowsIdentity]::GetCurrent(); $principal=New-Object Security.Principal.WindowsPrincipal($identity); $root=Get-Item %s -ErrorAction SilentlyContinue; [ordered]@{computer_name=$env:COMPUTERNAME;powershell=$PSVersionTable.PSVersion.ToString();windows_version=[Environment]::OSVersion.Version.ToString();architecture=$env:PROCESSOR_ARCHITECTURE;elevated=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);disk_free_bytes=if($root){$root.PSDrive.Free}else{0};executable_ready=$exeReady;loader_ready=$loaderReady;loader_x86_ready=$loaderX86Ready;executable_sha256=if($exeReady){(Get-FileHash -Algorithm SHA256 -LiteralPath %s).Hash.ToLower()}else{''};loader_x64_sha256=if($loaderReady){(Get-FileHash -Algorithm SHA256 -LiteralPath %s).Hash.ToLower()}else{''};loader_x86_sha256=if($loaderX86Ready){(Get-FileHash -Algorithm SHA256 -LiteralPath %s).Hash.ToLower()}else{''};compiler=$compiler;sliver=((Get-Command sliver-client.exe -ErrorAction SilentlyContinue) -ne $null);debugging=(((Get-Command cdb.exe -ErrorAction SilentlyContinue) -ne $null) -or ((Get-Command windbg.exe -ErrorAction SilentlyContinue) -ne $null));version=$version} | ConvertTo-Json -Depth 12 -Compress`,
+	script := fmt.Sprintf(`$ErrorActionPreference='Stop'; $exeReady=Test-Path %s; $loaderReady=Test-Path %s; $loaderX86Ready=Test-Path %s; $version=$null; if($exeReady){$version=(& %s version --format json | ConvertFrom-Json)}; $compiler=if(Get-Command cl.exe -ErrorAction SilentlyContinue){'msvc'}elseif(Get-Command x86_64-w64-mingw32-gcc.exe -ErrorAction SilentlyContinue){'mingw'}else{''}; $identity=[Security.Principal.WindowsIdentity]::GetCurrent(); $principal=New-Object Security.Principal.WindowsPrincipal($identity); $root=Get-Item %s -ErrorAction SilentlyContinue; [ordered]@{computer_name=$env:COMPUTERNAME;powershell=$PSVersionTable.PSVersion.ToString();windows_version=[Environment]::OSVersion.Version.ToString();architecture=$env:PROCESSOR_ARCHITECTURE;elevated=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);disk_free_bytes=if($root){$root.PSDrive.Free}else{0};executable_ready=$exeReady;loader_ready=$loaderReady;loader_x86_ready=$loaderX86Ready;executable_sha256=if($exeReady){(Get-FileHash -Algorithm SHA256 -LiteralPath %s).Hash.ToLower()}else{''};loader_x64_sha256=if($loaderReady){(Get-FileHash -Algorithm SHA256 -LiteralPath %s).Hash.ToLower()}else{''};loader_x86_sha256=if($loaderX86Ready){(Get-FileHash -Algorithm SHA256 -LiteralPath %s).Hash.ToLower()}else{''};compiler=$compiler;sliver=((Get-Command sliver-client.exe -ErrorAction SilentlyContinue) -ne $null);debugging=(((Get-Command cdb.exe -ErrorAction SilentlyContinue) -ne $null) -or ((Get-Command windbg.exe -ErrorAction SilentlyContinue) -ne $null) -or (Test-Path 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'));version=$version} | ConvertTo-Json -Depth 12 -Compress`,
 		powerShellQuote(opts.Executable), powerShellQuote(loaderX64), powerShellQuote(loaderX86), powerShellQuote(opts.Executable), powerShellQuote(opts.RemoteRoot), powerShellQuote(opts.Executable), powerShellQuote(loaderX64), powerShellQuote(loaderX86))
 	stdout, stderr, runErr := remoteExecute(ctx, opts, script)
 	if runErr != nil {

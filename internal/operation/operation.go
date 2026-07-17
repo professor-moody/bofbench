@@ -20,10 +20,10 @@ import (
 
 const (
 	Schema                = "bofbench.operation"
-	SchemaVersion         = 9
+	SchemaVersion         = 10
 	MinimumSchemaVersion  = 1
 	ReceiptSchema         = "bofbench.operation-receipt"
-	ReceiptSchemaVersion  = 9
+	ReceiptSchemaVersion  = 10
 	MinimumReceiptVersion = 1
 )
 
@@ -93,6 +93,17 @@ type Parallel struct {
 	Exports  map[string]string `json:"exports,omitempty"`
 }
 
+// FanOut expands one pack or child-operation invocation over an explicit,
+// bounded operator-supplied list. Expansion happens before any branch starts,
+// producing the same atomic preparation and reverse cleanup semantics as an
+// explicit parallel group.
+type FanOut struct {
+	Source        string   `json:"source"`
+	Separator     string   `json:"separator,omitempty"`
+	MaxItems      int      `json:"max_items"`
+	ResolvedItems []string `json:"-"`
+}
+
 type Step struct {
 	ID             string                    `json:"id"`
 	Pack           string                    `json:"pack,omitempty"`
@@ -110,6 +121,7 @@ type Step struct {
 	Retry          *RetryPolicy              `json:"retry,omitempty"`
 	Outcomes       []Outcome                 `json:"outcomes,omitempty"`
 	Parallel       *Parallel                 `json:"parallel,omitempty"`
+	FanOut         *FanOut                   `json:"fan_out,omitempty"`
 }
 
 type ProofCase struct {
@@ -130,6 +142,7 @@ type ProofCase struct {
 	ExpectTransitions  map[string][]string          `json:"expect_transitions,omitempty"`
 	ExpectAttempts     map[string]int               `json:"expect_attempts,omitempty"`
 	ExpectRetryReasons map[string][]string          `json:"expect_retry_reasons,omitempty"`
+	ExpectFanOut       map[string]int               `json:"expect_fan_out,omitempty"`
 }
 
 type Document struct {
@@ -213,6 +226,24 @@ type StepReceipt struct {
 	NextAttemptAt      string                  `json:"next_attempt_at,omitempty"`
 	Attempts           []AttemptReceipt        `json:"attempts,omitempty"`
 	Parallel           *ParallelReceipt        `json:"parallel,omitempty"`
+	FanOut             *FanOutReceipt          `json:"fan_out,omitempty"`
+}
+
+type FanOutBranchReceipt struct {
+	ID           string `json:"id"`
+	Item         string `json:"item"`
+	State        string `json:"state"`
+	CleanupState string `json:"cleanup_state,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
+type FanOutReceipt struct {
+	Source              string                `json:"source"`
+	Items               []string              `json:"items"`
+	MaxItems            int                   `json:"max_items"`
+	State               string                `json:"state"`
+	ObservedConcurrency int                   `json:"observed_concurrency,omitempty"`
+	Branches            []FanOutBranchReceipt `json:"branches"`
 }
 
 // AttemptReceipt preserves the exact runtime result that caused success,
@@ -768,6 +799,33 @@ func validate(document Document) error {
 		if document.SchemaVersion < 8 && step.Retry != nil {
 			return fmt.Errorf("step %s retry requires schema version 8", step.ID)
 		}
+		if document.SchemaVersion < 10 && step.FanOut != nil {
+			return fmt.Errorf("step %s fan_out requires schema version 10", step.ID)
+		}
+		if step.FanOut != nil {
+			if document.Execution != "linear" {
+				return fmt.Errorf("step %s fan_out must be invoked by a linear operation; DAGs may compose that child operation", step.ID)
+			}
+			if step.Parallel != nil || (step.Pack == "") == (step.Operation == "") {
+				return fmt.Errorf("step %s fan_out requires exactly one pack or child operation target", step.ID)
+			}
+			if step.FanOut.MaxItems < 1 || step.FanOut.MaxItems > 64 {
+				return fmt.Errorf("step %s fan_out max_items must be between 1 and 64", step.ID)
+			}
+			separator := step.FanOut.Separator
+			if separator == "" {
+				separator = ","
+			}
+			if separator != "," && separator != ";" && separator != "\\n" {
+				return fmt.Errorf("step %s fan_out separator must be comma, semicolon, or \\n", step.ID)
+			}
+			if !strings.HasPrefix(step.FanOut.Source, "$input.") || strings.Contains(step.FanOut.Source, "${") {
+				return fmt.Errorf("step %s fan_out source must be an exact $input reference", step.ID)
+			}
+			if index != len(document.Steps)-1 || len(step.Outcomes) > 0 {
+				return fmt.Errorf("step %s fan_out must be the terminal linear step and cannot declare outcomes", step.ID)
+			}
+		}
 		if document.Execution != "dag" && step.Retry != nil {
 			return fmt.Errorf("step %s retry is available only in dag execution", step.ID)
 		}
@@ -818,6 +876,15 @@ func validate(document Document) error {
 	} else {
 		for stepIndex, step := range document.Steps {
 			steps[step.ID] = true
+			if step.FanOut != nil {
+				if err := validateReference(step.FanOut.Source, inputs, captures, steps); err != nil {
+					return fmt.Errorf("step %s fan_out: %w", step.ID, err)
+				}
+				inputName := strings.TrimPrefix(step.FanOut.Source, "$input.")
+				if inputs[inputName].Sensitive {
+					return fmt.Errorf("step %s fan_out source input cannot be sensitive because target items are recorded in the receipt", step.ID)
+				}
+			}
 			if step.Parallel != nil {
 				if err := validateParallel(step.ID, *step.Parallel, inputs, captures, steps); err != nil {
 					return err
@@ -840,7 +907,8 @@ func validate(document Document) error {
 				return fmt.Errorf("step %s must declare exactly one of expect or outcomes", step.ID)
 			}
 			if step.Expect != nil {
-				if err := validateExpectation(step.ID, *step.Expect, inputs, captures, steps); err != nil {
+				expectation := expandFanOutExpectation(*step.Expect, "fanout-item")
+				if err := validateExpectation(step.ID, expectation, inputs, captures, steps); err != nil {
 					return err
 				}
 			}
@@ -864,6 +932,7 @@ func validate(document Document) error {
 				}
 			}
 			for _, value := range step.Arguments {
+				value = expandFanOutString(value, "fanout-item")
 				if err := validateReference(value, inputs, captures, steps); err != nil {
 					return fmt.Errorf("step %s: %w", step.ID, err)
 				}
@@ -885,6 +954,7 @@ func validate(document Document) error {
 			}
 			if step.Cleanup != nil {
 				for _, value := range step.Cleanup.Arguments {
+					value = expandFanOutString(value, "fanout-item")
 					if err := validateReference(value, inputs, captures, steps); err != nil {
 						return fmt.Errorf("step %s cleanup: %w", step.ID, err)
 					}
@@ -1016,6 +1086,15 @@ func validate(document Document) error {
 				if !known[reason] {
 					return fmt.Errorf("proof case %s step %s expects unknown retry reason %q", proof.ID, stepID, reason)
 				}
+			}
+		}
+		for stepID, count := range proof.ExpectFanOut {
+			index, ok := stepIndexes[stepID]
+			if !ok || document.Steps[index].FanOut == nil {
+				return fmt.Errorf("proof case %s expects fan-out for unknown or non-fan-out step %q", proof.ID, stepID)
+			}
+			if count < 1 || count > document.Steps[index].FanOut.MaxItems {
+				return fmt.Errorf("proof case %s step %s has invalid expected fan-out count %d", proof.ID, stepID, count)
 			}
 		}
 	}
@@ -1240,6 +1319,119 @@ func stepTargetCount(step Step) int {
 		count++
 	}
 	return count
+}
+
+func expandFanOutString(value, item string) string {
+	value = strings.ReplaceAll(value, "${item}", item)
+	return strings.ReplaceAll(value, "$item", item)
+}
+
+func expandFanOutExpectation(expectation packsvc.ProofExpectation, item string) packsvc.ProofExpectation {
+	result := expectation
+	result.Tag = expandFanOutString(result.Tag, item)
+	result.Fields = map[string]string{}
+	for name, value := range expectation.Fields {
+		result.Fields[name] = expandFanOutString(value, item)
+	}
+	if expectation.Payload != nil {
+		payload := *expectation.Payload
+		payload.Tag = expandFanOutString(payload.Tag, item)
+		payload.Field = expandFanOutString(payload.Field, item)
+		payload.SHA256 = expandFanOutString(payload.SHA256, item)
+		result.Payload = &payload
+	}
+	return result
+}
+
+func expandFanOutMap(values map[string]string, item string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(values))
+	for name, value := range values {
+		result[name] = expandFanOutString(value, item)
+	}
+	return result
+}
+
+// ExpandFanOutDocument converts bounded schema-v10 fan-out declarations into
+// explicit parallel branches. The original definition hash remains pinned;
+// the concrete items and branch states are pinned in the v10 receipt.
+func ExpandFanOutDocument(document Document, inputs map[string]string) (Document, error) {
+	result := document
+	result.Steps = append([]Step(nil), document.Steps...)
+	for index := range result.Steps {
+		step := result.Steps[index]
+		if step.FanOut == nil {
+			continue
+		}
+		source, err := ResolveValue(step.FanOut.Source, inputs, nil, nil)
+		if err != nil {
+			return Document{}, fmt.Errorf("expand fan-out step %s: %w", step.ID, err)
+		}
+		separator := step.FanOut.Separator
+		if separator == "" {
+			separator = ","
+		}
+		if separator == "\\n" {
+			separator = "\n"
+		}
+		seen := map[string]bool{}
+		items := []string{}
+		for _, raw := range strings.Split(source, separator) {
+			item := strings.TrimSpace(raw)
+			if item == "" || seen[item] {
+				continue
+			}
+			seen[item] = true
+			items = append(items, item)
+		}
+		if len(items) == 0 {
+			return Document{}, fmt.Errorf("fan-out step %s resolved no targets", step.ID)
+		}
+		if len(items) > step.FanOut.MaxItems {
+			return Document{}, fmt.Errorf("fan-out step %s resolved %d targets; maximum is %d", step.ID, len(items), step.FanOut.MaxItems)
+		}
+		parallel := &Parallel{Join: "all"}
+		for itemIndex, item := range items {
+			branch := ParallelBranch{ID: fmt.Sprintf("target-%02d", itemIndex+1), Pack: step.Pack, Operation: step.Operation, Arguments: expandFanOutMap(step.Arguments, item), Captures: step.Captures}
+			if step.Expect != nil {
+				expectation := expandFanOutExpectation(*step.Expect, item)
+				branch.Expect = &expectation
+			}
+			if step.Cleanup != nil {
+				cleanup := *step.Cleanup
+				cleanup.Arguments = expandFanOutMap(step.Cleanup.Arguments, item)
+				branch.Cleanup = &cleanup
+			}
+			parallel.Branches = append(parallel.Branches, branch)
+		}
+		fanOut := *step.FanOut
+		fanOut.ResolvedItems = append([]string(nil), items...)
+		step.FanOut, step.Parallel = &fanOut, parallel
+		step.Pack, step.Operation, step.Arguments, step.Captures, step.Cleanup, step.Expect = "", "", nil, nil, nil, nil
+		result.Steps[index] = step
+	}
+	return result, nil
+}
+
+func SyncFanOutReceipt(step Step, receipt *StepReceipt) {
+	if receipt == nil || step.FanOut == nil || receipt.Parallel == nil {
+		return
+	}
+	if receipt.FanOut == nil {
+		receipt.FanOut = &FanOutReceipt{Source: step.FanOut.Source, Items: append([]string(nil), step.FanOut.ResolvedItems...), MaxItems: step.FanOut.MaxItems}
+	}
+	receipt.FanOut.State = receipt.Parallel.State
+	receipt.FanOut.ObservedConcurrency = receipt.Parallel.ObservedConcurrency
+	receipt.FanOut.Branches = receipt.FanOut.Branches[:0]
+	for index, branch := range receipt.Parallel.Branches {
+		item := ""
+		if index < len(receipt.FanOut.Items) {
+			item = receipt.FanOut.Items[index]
+		}
+		receipt.FanOut.Branches = append(receipt.FanOut.Branches, FanOutBranchReceipt{ID: branch.ID, Item: item, State: branch.State, CleanupState: branch.CleanupState, Error: branch.Error})
+	}
 }
 
 func branchTargetCount(branch ParallelBranch) int {
@@ -2287,7 +2479,12 @@ func NewReceipt(item Resolved, registry *Registry, path, runtime, lab, topology,
 			for _, branch := range step.Parallel.Branches {
 				parallel.Branches = append(parallel.Branches, newInvocationReceipt(branch.ID, branch.Pack, branch.Operation, branch.Cleanup, registry))
 			}
-			receipt.Steps = append(receipt.Steps, StepReceipt{ID: step.ID, State: "pending", ContractState: "pending", DependsOn: append([]string(nil), step.DependsOn...), DependsOnReady: append([]string(nil), step.DependsOnReady...), Mode: emptyDefault(step.Mode, "foreground"), ReadyState: "pending", ReadyContractState: "pending", Parallel: parallel})
+			state := StepReceipt{ID: step.ID, State: "pending", ContractState: "pending", DependsOn: append([]string(nil), step.DependsOn...), DependsOnReady: append([]string(nil), step.DependsOnReady...), Mode: emptyDefault(step.Mode, "foreground"), ReadyState: "pending", ReadyContractState: "pending", Parallel: parallel}
+			if step.FanOut != nil {
+				state.FanOut = &FanOutReceipt{Source: step.FanOut.Source, Items: append([]string(nil), step.FanOut.ResolvedItems...), MaxItems: step.FanOut.MaxItems, State: "pending"}
+				SyncFanOutReceipt(step, &state)
+			}
+			receipt.Steps = append(receipt.Steps, state)
 			continue
 		}
 		state := newInvocationReceipt(step.ID, step.Pack, step.Operation, step.Cleanup, registry)
@@ -2616,7 +2813,18 @@ func builtins() []Resolved {
 		},
 		ProofCases: []ProofCase{{ID: "fixture-https", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Inputs: map[string]string{"https_url": "$TARGET_HTTPS_BLOB_URL", "allow_invalid": "1", "bits_filter": "BOFBench", "result_limit": "16"}, ExpectWaves: [][]string{{"certificate", "response", "bits"}}, ExpectSteps: map[string]string{"certificate": "completed", "response": "completed", "bits": "completed"}}},
 	}
-	documents := []Document{triage, network, waitTriage, coordination, ipc, ipcActivation, eventing, networkConnectivity, secureNetwork}
+	filesystemSMB := Document{
+		Schema: Schema, SchemaVersion: 10, Execution: "dag", ID: "filesystem-and-smb-posture", Version: "1.0.0",
+		Title: "Filesystem and SMB Posture", Summary: "Inspect NTFS streams, reparse metadata, and active SMB connections as one concurrent ready wave", Tier: "public",
+		Inputs: []Input{{Name: "path", Type: "wstring", Required: true}, {Name: "stream_filter", Type: "wstring", Default: ""}, {Name: "remote_filter", Type: "wstring", Default: ""}, {Name: "result_limit", Type: "int", Default: "32"}},
+		Steps: []Step{
+			{ID: "streams", Pack: "file-stream-inventory", Arguments: map[string]string{"path": "$input.path", "stream_filter": "$input.stream_filter", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "file-stream-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+			{ID: "reparse", Pack: "file-reparse-point-inventory", Arguments: map[string]string{"path": "$input.path"}, Expect: &packsvc.ProofExpectation{Tag: "file-reparse-point-inventory", Fields: map[string]string{"status": "complete", "reparse": "*"}}},
+			{ID: "smb", Pack: "smb-connection-inventory", Arguments: map[string]string{"remote_filter": "$input.remote_filter", "result_limit": "$input.result_limit"}, Expect: &packsvc.ProofExpectation{Tag: "smb-connection-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}},
+		},
+		ProofCases: []ProofCase{{ID: "canary-filesystem", Via: []string{"lab", "sliver"}, Architectures: []string{"x64", "x86"}, Inputs: map[string]string{"path": "$CANARY_PATH", "stream_filter": "", "remote_filter": "", "result_limit": "16"}, ExpectWaves: [][]string{{"streams", "reparse", "smb"}}, ExpectSteps: map[string]string{"streams": "completed", "reparse": "completed", "smb": "completed"}}},
+	}
+	documents := []Document{triage, network, waitTriage, coordination, ipc, ipcActivation, eventing, networkConnectivity, secureNetwork, filesystemSMB}
 	items := make([]Resolved, 0, len(documents))
 	for _, document := range documents {
 		item := Resolved{Document: document, Catalog: "builtin", Qualified: "builtin/" + document.ID}
@@ -2631,6 +2839,8 @@ type GraphNode struct {
 	Pack             string   `json:"pack,omitempty"`
 	Operation        string   `json:"operation,omitempty"`
 	Kind             string   `json:"kind"`
+	FanOutSource     string   `json:"fan_out_source,omitempty"`
+	FanOutMaxItems   int      `json:"fan_out_max_items,omitempty"`
 	RetryMaxAttempts int      `json:"retry_max_attempts,omitempty"`
 	RetryReasons     []string `json:"retry_reasons,omitempty"`
 }
@@ -2662,7 +2872,7 @@ func (r *Registry) Graph(item Resolved, format string, expand bool) (string, err
 }
 
 func graphDocument(document Document, prefix string, registry *Registry, expand bool) GraphDocument {
-	graph := GraphDocument{Schema: "bofbench.operation-graph", SchemaVersion: 4, Operation: document.ID}
+	graph := GraphDocument{Schema: "bofbench.operation-graph", SchemaVersion: 5, Operation: document.ID}
 	if IsDAG(document) {
 		graph.Nodes = append(graph.Nodes, GraphNode{ID: prefix + "$start", Kind: "start"})
 		dependents := map[string]bool{}
@@ -2719,8 +2929,14 @@ func graphDocument(document Document, prefix string, registry *Registry, expand 
 			kind = "operation"
 		} else if step.Parallel != nil {
 			kind = "parallel"
+		} else if step.FanOut != nil {
+			kind = "fan-out"
 		}
-		graph.Nodes = append(graph.Nodes, GraphNode{ID: id, Pack: step.Pack, Operation: step.Operation, Kind: kind})
+		node := GraphNode{ID: id, Pack: step.Pack, Operation: step.Operation, Kind: kind}
+		if step.FanOut != nil {
+			node.FanOutSource, node.FanOutMaxItems = step.FanOut.Source, step.FanOut.MaxItems
+		}
+		graph.Nodes = append(graph.Nodes, node)
 		outgoing := id
 		if step.Parallel != nil {
 			joinID := id + "/$join"
@@ -2804,6 +3020,9 @@ func renderGraph(graph GraphDocument, format string) (string, error) {
 			if target == "" {
 				target = node.Kind
 			}
+			if node.Kind == "fan-out" {
+				target = fmt.Sprintf("fan-out %s · max %d · %s", node.FanOutSource, node.FanOutMaxItems, target)
+			}
 			if node.RetryMaxAttempts > 1 {
 				target += fmt.Sprintf(" · retry≤%d (%s)", node.RetryMaxAttempts, strings.Join(node.RetryReasons, ","))
 			}
@@ -2861,6 +3080,8 @@ func ReferenceMarkdown(items []Resolved) string {
 				target = "operation:" + step.Operation
 			} else if step.Parallel != nil {
 				target = fmt.Sprintf("parallel:%s (%d branches)", step.Parallel.Join, len(step.Parallel.Branches))
+			} else if step.FanOut != nil {
+				target = fmt.Sprintf("fan-out:%s → %s (max %d)", step.FanOut.Source, step.Pack, step.FanOut.MaxItems)
 			}
 			fmt.Fprintf(&body, "%d. `%s` → `%s`", i+1, step.ID, target)
 			if len(step.DependsOn) > 0 {

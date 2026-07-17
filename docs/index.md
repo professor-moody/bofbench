@@ -12,10 +12,10 @@
 </div>
 
 <div class="bb-proof">
-  <div><strong>254 packs</strong><span>93 public · 161 private</span></div>
+  <div><strong>267 packs</strong><span>96 public · 171 private</span></div>
   <div><strong>x64 + x86</strong><span>separate native loaders</span></div>
   <div><strong>4 runtimes</strong><span>native · lab · Sliver · CS</span></div>
-  <div><strong class="bb-impact">56 operations</strong><span>DAG · async · retry · templates</span></div>
+  <div><strong class="bb-impact">63 operations</strong><span>DAG · async · retry · fan-out</span></div>
 </div>
 
 # The operator loop
@@ -90,6 +90,16 @@ Version 9 can compose typed inputs, topology fields, and earlier captures inside
 ```
 
 See [Secure HTTP and BITS Control](scenarios/secure-http-bits.md) for HTTPS certificate inspection, authenticated requests, captured listener ports, and paused BITS job control.
+
+Version 10 adds finite fan-out over an exact operator input. BOFBench deduplicates the selected targets or paths, enforces the declared maximum, pins every expanded branch, and reuses the same bounded parallel executor and reverse cleanup model:
+
+```bash
+bofbench operation run internal/multi-path-file-collection \
+  --via lab --lab dedicated --parallelism 4 \
+  --arg paths='C:\\Temp\\one.txt;C:\\Temp\\two.txt'
+```
+
+See [Fan-Out SMB and NTFS](scenarios/fanout-smb-ntfs.md) for single-target and multi-target workflows and [Proxmox-Native Labs](proxmox-labs.md) for reusable VM profiles and topologies.
 
 ## Use the same interface at different depths
 

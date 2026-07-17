@@ -134,6 +134,44 @@ func TestSchemaVersionNineTemplateValidationAndCompatibility(t *testing.T) {
 	}
 }
 
+func TestSchemaVersionTenExpandsBoundedFanOut(t *testing.T) {
+	document := Document{Schema: Schema, SchemaVersion: 10, Execution: "linear", ID: "multi-host", Version: "1.0.0", Title: "Multi host", Summary: "Fan out over exact targets", Tier: "internal", Inputs: []Input{{Name: "targets", Type: "string", Required: true}}, Steps: []Step{{ID: "inspect", Pack: "host-discovery", Arguments: map[string]string{"target": "$item"}, Expect: &packsvc.ProofExpectation{Tag: "host", Fields: map[string]string{"status": "complete", "target": "$item"}}, FanOut: &FanOut{Source: "$input.targets", MaxItems: 4}}}}
+	if err := validate(document); err != nil {
+		t.Fatal(err)
+	}
+	expanded, err := ExpandFanOutDocument(document, map[string]string{"targets": "one, two,one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := expanded.Steps[0]
+	if step.Parallel == nil || len(step.Parallel.Branches) != 2 || step.FanOut == nil || len(step.FanOut.ResolvedItems) != 2 {
+		t.Fatalf("expanded=%+v", step)
+	}
+	if got := step.Parallel.Branches[1].Arguments["target"]; got != "two" {
+		t.Fatalf("target=%q", got)
+	}
+	if _, err := ExpandFanOutDocument(document, map[string]string{"targets": "one,two,three,four,five"}); err == nil || !strings.Contains(err.Error(), "maximum is 4") {
+		t.Fatalf("limit error=%v", err)
+	}
+}
+
+func TestSchemaVersionTenFanOutValidation(t *testing.T) {
+	base := Document{Schema: Schema, SchemaVersion: 10, Execution: "linear", ID: "multi", Version: "1", Title: "Multi", Summary: "Multi", Tier: "internal", Inputs: []Input{{Name: "targets", Type: "string", Required: true}}, Steps: []Step{{ID: "run", Pack: "host-discovery", Expect: &packsvc.ProofExpectation{Tag: "host", Fields: map[string]string{"status": "complete"}}, FanOut: &FanOut{Source: "$input.targets", MaxItems: 2}}}}
+	if err := validate(base); err != nil {
+		t.Fatal(err)
+	}
+	bad := base
+	bad.Execution = "dag"
+	if err := validate(bad); err == nil || !strings.Contains(err.Error(), "linear operation") {
+		t.Fatalf("dag error=%v", err)
+	}
+	bad = base
+	bad.Inputs[0].Sensitive = true
+	if err := validate(bad); err == nil || !strings.Contains(err.Error(), "cannot be sensitive") {
+		t.Fatalf("sensitive error=%v", err)
+	}
+}
+
 func TestTopologyRolesRequireResolvedComputers(t *testing.T) {
 	if err := ValidateTopologyRoles([]string{"execution", "target"}, map[string]string{"execution.computer_name": "DEVBOX"}); err == nil || !strings.Contains(err.Error(), "target") {
 		t.Fatalf("expected missing target role, got %v", err)

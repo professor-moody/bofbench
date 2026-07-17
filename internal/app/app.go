@@ -1113,7 +1113,8 @@ func requiresInteractiveLabSession(project string) bool {
 		return false
 	}
 	for _, record := range lock.Packs {
-		if record.ID == "credential-list" || record.ID == "credential-read" {
+		switch record.ID {
+		case "credential-list", "credential-read":
 			return true
 		}
 	}
@@ -1405,9 +1406,15 @@ func labCommand(stdout, stderr io.Writer) *cobra.Command {
 		labTargetCommand(stdout),
 		labInitCommand(stdout),
 		labBootstrapCommand(stdout),
+		labProviderRootCommand(stdout),
 		labProviderCommand(stdout, "up"),
+		labProviderCommand(stdout, "down"),
+		labProviderCommand(stdout, "stop"),
 		labProviderCommand(stdout, "snapshot"),
 		labProviderCommand(stdout, "restore"),
+		labProviderCommand(stdout, "clone"),
+		labProviderCommand(stdout, "template"),
+		labProviderCommand(stdout, "destroy"),
 		labRemoteStatusCommand(stdout),
 		labRemoteSyncCommand(stdout),
 		labRemoteRunCommand(stdout),

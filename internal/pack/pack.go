@@ -1202,6 +1202,35 @@ func builtins() []Resolved {
 	remoteTasks.AnalysisSignatures = []AnalysisSignature{{ID: "remote_task_inventory", Name: "Exact-host Task Scheduler inventory", Summary: "Connect to Task Scheduler on one supplied host and enumerate bounded task state and last-result metadata.", Steps: []AnalysisStep{{Action: "initialize Task Scheduler COM", APIs: []string{"CoCreateInstance"}}, {Action: "read task metadata", APIs: []string{"SysAllocString", "VariantClear"}}}, RequiredStrings: []string{"[remote-task-inventory]"}, Effects: []string{"reaches a supplied host", "reads scheduled-task metadata"}, Requirements: []string{"Task Scheduler RPC access to the exact host"}}}
 	remoteTasks.ProofCases = []ProofCase{{ID: "named-host", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"target_host": "$LAB_HOST", "name_filter": "", "result_limit": "8"}, Expect: ProofExpectation{Tag: "remote-task-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
 	byID["remote-task-inventory"] = remoteTasks
+	fileStreams := byID["file-stream-inventory"]
+	fileStreams.Title = "NTFS File Stream Inventory"
+	fileStreams.Capabilities = []string{"bounded alternate-data-stream inventory for one exact file or directory"}
+	fileStreams.Arguments = []Argument{{Name: "path", Type: "wstring", Required: true, Description: "exact file or directory path"}, {Name: "stream_filter", Type: "wstring", Default: "", Description: "case-insensitive stream-name substring"}, {Name: "result_limit", Type: "int", Default: "64", Description: "maximum stream rows (1-512)"}}
+	fileStreams.ExpectedAnalysis = []string{"file_stream_inventory"}
+	fileStreams.OutputFields = []string{"path", "stream", "size", "status", "shown", "limit", "error"}
+	fileStreams.AnalysisSignatures = []AnalysisSignature{{ID: "file_stream_inventory", Name: "NTFS file-stream inventory", Summary: "Enumerate bounded named streams attached to one exact path.", Steps: []AnalysisStep{{Action: "begin stream enumeration", APIs: []string{"FindFirstStreamW"}}, {Action: "enumerate additional streams", APIs: []string{"FindNextStreamW"}}}, RequiredStrings: []string{"[file-stream-inventory]"}, Effects: []string{"reads NTFS stream metadata"}, Requirements: []string{"an exact accessible path"}}}
+	fileStreams.ProofCases = []ProofCase{{ID: "canary-streams", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"path": "$CANARY_PATH", "stream_filter": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "file-stream-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["file-stream-inventory"] = fileStreams
+	reparse := byID["file-reparse-point-inventory"]
+	reparse.Title = "File Reparse Point Inventory"
+	reparse.Capabilities = []string{"exact-path reparse-point tag and metadata inspection"}
+	reparse.Arguments = []Argument{{Name: "path", Type: "wstring", Required: true, Description: "exact file or directory path"}}
+	reparse.ExpectedAnalysis = []string{"file_reparse_point_inventory"}
+	reparse.OutputFields = []string{"path", "reparse", "tag", "data_bytes", "attributes", "status", "error"}
+	reparse.AnalysisSignatures = []AnalysisSignature{{ID: "file_reparse_point_inventory", Name: "File reparse-point inventory", Summary: "Inspect one exact path and read its reparse tag when present.", Steps: []AnalysisStep{{Action: "read file attributes", APIs: []string{"GetFileAttributesW"}}, {Action: "read reparse metadata", APIs: []string{"DeviceIoControl"}}}, RequiredStrings: []string{"[file-reparse-point-inventory]"}, Effects: []string{"reads filesystem reparse metadata"}, Requirements: []string{"an exact accessible path"}}}
+	reparse.ProofCases = []ProofCase{{ID: "canary-path", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"path": "$CANARY_PATH"}, Expect: ProofExpectation{Tag: "file-reparse-point-inventory", Fields: map[string]string{"status": "complete", "reparse": "*"}}}}
+	byID["file-reparse-point-inventory"] = reparse
+	smbConnections := byID["smb-connection-inventory"]
+	smbConnections.Title = "SMB Connection Inventory"
+	smbConnections.Capabilities = []string{"bounded active SMB network-use connection inventory"}
+	smbConnections.Network = "local SMB connection table"
+	smbConnections.Arguments = []Argument{{Name: "remote_filter", Type: "wstring", Default: "", Description: "case-insensitive remote UNC substring"}, {Name: "result_limit", Type: "int", Default: "64", Description: "maximum connections (1-512)"}}
+	smbConnections.ExpectedAnalysis = []string{"smb_connection_inventory"}
+	smbConnections.OutputFields = []string{"local", "remote", "status_code", "assignment", "refcount", "usecount", "username", "domain", "status", "shown", "limit", "total", "error"}
+	smbConnections.SensitiveOutputFields = []string{"username", "domain"}
+	smbConnections.AnalysisSignatures = []AnalysisSignature{{ID: "smb_connection_inventory", Name: "SMB connection inventory", Summary: "Enumerate bounded local SMB network-use connections and their state.", Steps: []AnalysisStep{{Action: "enumerate network uses", APIs: []string{"NetUseEnum"}}}, RequiredStrings: []string{"[smb-connection-inventory]"}, Effects: []string{"reads SMB connection metadata"}, Requirements: []string{"local NetAPI access"}}}
+	smbConnections.ProofCases = []ProofCase{{ID: "bounded-connections", Via: []string{"lab", "sliver"}, Arguments: map[string]string{"remote_filter": "", "result_limit": "16"}, Expect: ProofExpectation{Tag: "smb-connection-inventory", Fields: map[string]string{"status": "complete", "shown": "*"}}}}
+	byID["smb-connection-inventory"] = smbConnections
 	for id, document := range byID {
 		for _, feature := range document.Source.Features {
 			if signature, ok := builtinContextSignature(feature); ok && !hasAnalysisSignature(document.AnalysisSignatures, signature.ID) {
@@ -1438,11 +1467,11 @@ func validate(document Document, root string) error {
 		"$TARGET_DNS_NAME": true, "$TARGET_NETWORK_PAYLOAD_SHA256": true,
 		"$TARGET_ARCH": true, "$TARGET_MODULE_BASE": true, "$TARGET_MODULE_PATH": true, "$EXECUTION_ADDRESS": true,
 		"$X86_TARGET_PID": true, "$X86_TARGET_TID": true, "$X86_TARGET_MODULE_BASE": true, "$X86_TARGET_MODULE_PATH": true,
-		"$MEMORY_ADDRESS": true, "$MEMORY_SIZE": true, "$MEMORY_SHA256": true, "$CANARY_PATH": true, "$CANARY_SHA256": true,
+		"$MEMORY_ADDRESS": true, "$MEMORY_SIZE": true, "$MEMORY_SHA256": true, "$CANARY_PATH": true, "$CANARY_SHA256": true, "$TARGET_MOVE_CANARY_PATH": true, "$TARGET_MOVE_CANARY_SHA256": true,
 		"$MEMORY_WRITE_ADDRESS": true, "$MEMORY_WRITE_SIZE": true, "$MEMORY_WRITE_SHA256": true,
 		"$MEMORY_PROTECTION_ADDRESS": true, "$MEMORY_PROTECTION_SIZE": true, "$MEMORY_PROTECTION": true,
 		"$CREDENTIAL_TARGET": true, "$CREDENTIAL_SHA256": true, "$CREDENTIAL_SIZE": true,
-		"$DPAPI_USER_PATH": true, "$DPAPI_USER_SHA256": true, "$DPAPI_MACHINE_PATH": true, "$DPAPI_MACHINE_SHA256": true,
+		"$DPAPI_USER_PATH": true, "$DPAPI_USER_SHA256": true, "$DPAPI_USER_FILE_SHA256": true, "$DPAPI_MACHINE_PATH": true, "$DPAPI_MACHINE_SHA256": true, "$DPAPI_MACHINE_FILE_SHA256": true,
 		"$VAULT_GUID": true, "$VAULT_RESOURCE": true, "$VAULT_IDENTITY": true, "$VAULT_SHA256": true, "$VAULT_SIZE": true,
 		"$CERT_THUMBPRINT": true, "$CERT_STORE": true, "$CERT_SUBJECT": true,
 		"$LAB_HOST": true, "$SERVICE_BINARY": true, "$TARGET_SERVICE": true, "$WMI_MARKER_PATH": true, "$TEMP": true, "$RUN_ID": true, "$PROOF_SECRET": true,
@@ -1544,6 +1573,7 @@ func validate(document Document, root string) error {
 		}
 		stateParameters := map[string][]string{
 			"file": {"path"}, "file_sha256": {"path", "sha256"}, "startup_file": {"name"}, "registry_value": {"hive", "path", "name"}, "service": {"name"},
+			"alternate_stream": {"path", "stream"}, "reparse_point": {"path"}, "smb_connection": {"remote"},
 			"service_state": {"name", "state"}, "process_id": {"pid"}, "process_image_path": {"path"}, "etw_session": {"name"}, "event_log_record": {"channel", "message"},
 			"active_loader_tasks": {},
 			"scheduled_task":      {"name"}, "credential": {"target"}, "certificate": {"scope", "store", "thumbprint"},

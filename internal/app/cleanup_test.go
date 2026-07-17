@@ -99,3 +99,35 @@ func TestCleanupNamedArgumentsPrefersExplicitMapping(t *testing.T) {
 		t.Fatalf("cleanup arguments = %#v", got)
 	}
 }
+
+func TestCleanupNamedArgumentsUsesActionDefaults(t *testing.T) {
+	tmp := t.TempDir()
+	project, cleanupProject := filepath.Join(tmp, "action"), filepath.Join(tmp, "cleanup")
+	for _, path := range []string{project, cleanupProject} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(path string, lock packsvc.Lock) {
+		t.Helper()
+		data, err := json.Marshal(lock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, packsvc.LockName), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(project, packsvc.Lock{Schema: packsvc.LockSchema, SchemaVersion: packsvc.LockSchemaVersion, Packs: []packsvc.LockRecord{{
+		ID:        "smb-connection-open",
+		Arguments: []packsvc.Argument{{Name: "remote", Type: "wstring", Required: true}, {Name: "cleanup_force", Type: "int", Default: "1"}},
+		Cleanup:   "smb-connection-close", CleanupArguments: map[string]string{"name": "$arg.remote", "force": "$arg.cleanup_force"},
+	}}})
+	write(cleanupProject, packsvc.Lock{Schema: packsvc.LockSchema, SchemaVersion: packsvc.LockSchemaVersion, Packs: []packsvc.LockRecord{{
+		ID: "smb-connection-close", Arguments: []packsvc.Argument{{Name: "name", Type: "wstring", Required: true}, {Name: "force", Type: "int", Default: "0"}},
+	}}})
+	got := cleanupNamedArguments(project, cleanupProject, []string{`remote=\\DEVBOX\C$`})
+	if strings.Join(got, "|") != `force=1|name=\\DEVBOX\C$` {
+		t.Fatalf("cleanup arguments = %#v", got)
+	}
+}

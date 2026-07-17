@@ -89,6 +89,7 @@ type runEntry struct {
 	ChildReceipts  []string
 	NestedCleanup  []string
 	ParallelLanes  []string
+	FanOutRows     []string
 	MaxConcurrency int
 	ExecutionMode  string
 	ExecutionWaves []string
@@ -919,6 +920,9 @@ func (m model) viewOperations() string {
 					lanes = append(lanes, step.ID+"/"+branch.ID+" → "+target)
 				}
 			}
+			if step.FanOut != nil {
+				lanes = append(lanes, fmt.Sprintf("%s fan-out %s → %s (max %d)", step.ID, step.FanOut.Source, step.Pack, step.FanOut.MaxItems))
+			}
 			for name, value := range step.Arguments {
 				if strings.Contains(value, "${") {
 					templates = append(templates, step.ID+"."+name+" = "+value)
@@ -1147,6 +1151,9 @@ func renderRunDetail(run runEntry) string {
 	if len(run.ParallelLanes) > 0 {
 		fmt.Fprintf(&b, "  parallel lanes: %s\n", strings.Join(run.ParallelLanes, ", "))
 		fmt.Fprintf(&b, "  max concurrency: %d\n", run.MaxConcurrency)
+	}
+	if len(run.FanOutRows) > 0 {
+		fmt.Fprintf(&b, "  fan-out: %s\n", strings.Join(run.FanOutRows, ", "))
 	}
 	if run.ExecutionMode != "" {
 		fmt.Fprintf(&b, "  execution: %s\n", run.ExecutionMode)
@@ -1443,6 +1450,11 @@ func readRunEntry(path string, modTime time.Time) runEntry {
 								}
 							}
 						}
+					}
+					if fanOut, ok := step["fan_out"].(map[string]any); ok {
+						branches, _ := fanOut["branches"].([]any)
+						label := fmt.Sprintf("%s=%s targets=%d/%d concurrency=%d", stringField(step, "id"), emptyDash(stringField(fanOut, "state")), len(branches), int(intField(fanOut, "max_items")), int(intField(fanOut, "observed_concurrency")))
+						run.FanOutRows = append(run.FanOutRows, label)
 					}
 				}
 			}

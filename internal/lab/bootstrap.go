@@ -213,7 +213,7 @@ func Bootstrap(ctx context.Context, opts BootstrapOptions) (BootstrapReport, err
 	if err := json.Unmarshal(stdout, &report.System); err != nil {
 		return finish(fmt.Errorf("decode bootstrapped Windows system probe: %w", err))
 	}
-	payloadScript := fmt.Sprintf(`$ErrorActionPreference='Stop'; $compiler=if(Get-Command cl.exe -ErrorAction SilentlyContinue){'msvc'}elseif(Get-Command x86_64-w64-mingw32-gcc.exe -ErrorAction SilentlyContinue){'mingw'}else{''}; [ordered]@{compile=($compiler -ne '');compiler=$compiler;native_x64=(Test-Path %s);native_x86=(Test-Path %s);sliver=((Get-Command sliver-client.exe -ErrorAction SilentlyContinue) -ne $null);debugging=(((Get-Command cdb.exe -ErrorAction SilentlyContinue) -ne $null) -or ((Get-Command windbg.exe -ErrorAction SilentlyContinue) -ne $null));snapshot_support=$false} | ConvertTo-Json -Compress`, powerShellQuote(remoteLoader), powerShellQuote(windowsJoin(config.RemoteRoot, "native", "loader", "bofbench-loader-x86.exe")))
+	payloadScript := fmt.Sprintf(`$ErrorActionPreference='Stop'; $compiler=if(Get-Command cl.exe -ErrorAction SilentlyContinue){'msvc'}elseif(Get-Command x86_64-w64-mingw32-gcc.exe -ErrorAction SilentlyContinue){'mingw'}else{''}; [ordered]@{compile=($compiler -ne '');compiler=$compiler;native_x64=(Test-Path %s);native_x86=(Test-Path %s);sliver=((Get-Command sliver-client.exe -ErrorAction SilentlyContinue) -ne $null);debugging=(((Get-Command cdb.exe -ErrorAction SilentlyContinue) -ne $null) -or ((Get-Command windbg.exe -ErrorAction SilentlyContinue) -ne $null) -or (Test-Path 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'));snapshot_support=$false} | ConvertTo-Json -Compress`, powerShellQuote(remoteLoader), powerShellQuote(windowsJoin(config.RemoteRoot, "native", "loader", "bofbench-loader-x86.exe")))
 	eventStart = time.Now()
 	stdout, stderr, err = remoteExecute(ctx, remote, payloadScript)
 	report.TransportEvents = append(report.TransportEvents, transportEvent(remote.Transport+"-capabilities", eventStart, err, string(stderr)))
@@ -223,7 +223,7 @@ func Bootstrap(ctx context.Context, opts BootstrapOptions) (BootstrapReport, err
 	if err := json.Unmarshal(stdout, &report.Capabilities); err != nil {
 		return finish(fmt.Errorf("decode bootstrapped lab capabilities: %w", err))
 	}
-	report.Capabilities.SnapshotSupport = config.Provider == "vagrant"
+	report.Capabilities.SnapshotSupport = config.Provider == "vagrant" || config.Provider == "proxmox"
 	if !report.Capabilities.NativeX64 {
 		return finish(fmt.Errorf("x64 loader was not observable after deployment"))
 	}

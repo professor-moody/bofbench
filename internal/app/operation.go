@@ -631,6 +631,11 @@ func runOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.
 			return fmt.Errorf("operation input %s requires %s, but the selected topology does not provide it", input.Name, input.TopologyValue)
 		}
 	}
+	expandedDocument, err := operationsvc.ExpandFanOutDocument(item.Document, inputs)
+	if err != nil {
+		return err
+	}
+	item.Document = expandedDocument
 	var receipt operationsvc.Receipt
 	path := resumePath
 	if resumePath == "" {
@@ -887,6 +892,11 @@ type parallelBranchResult struct {
 }
 
 func executeOperationParallelStep(ctx context.Context, stdout io.Writer, registry *operationsvc.Registry, parent operationsvc.Resolved, step operationsvc.Step, stepReceipt *operationsvc.StepReceipt, index int, inputs, topology map[string]string, receipt *operationsvc.Receipt, path string, opts operationOptions) (bool, error) {
+	defer operationsvc.SyncFanOutReceipt(step, stepReceipt)
+	save := func() error {
+		operationsvc.SyncFanOutReceipt(step, stepReceipt)
+		return operationsvc.SaveReceipt(path, receipt)
+	}
 	if step.Parallel == nil || stepReceipt.Parallel == nil {
 		return false, fmt.Errorf("parallel step %s has no pinned parallel receipt", step.ID)
 	}
@@ -964,7 +974,7 @@ func executeOperationParallelStep(ctx context.Context, stdout io.Writer, registr
 			}
 		}
 	}
-	if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+	if err := save(); err != nil {
 		return false, err
 	}
 
@@ -1028,13 +1038,13 @@ func executeOperationParallelStep(ctx context.Context, stdout io.Writer, registr
 	if hasIncomplete {
 		stepReceipt.State, stepReceipt.Parallel.State, receipt.Status = "incomplete", "incomplete", "incomplete"
 		stepReceipt.Error = strings.Join(failures, "; ")
-		_ = operationsvc.SaveReceipt(path, receipt)
+		_ = save()
 		return false, fmt.Errorf("parallel step %s has incomplete branches; resume %s", step.ID, path)
 	}
 	if hasFailed {
 		stepReceipt.State, stepReceipt.Parallel.State, stepReceipt.ContractState = "failed", "failed", "failed"
 		stepReceipt.Error = strings.Join(failures, "; ")
-		_ = operationsvc.SaveReceipt(path, receipt)
+		_ = save()
 		return false, fmt.Errorf("parallel step %s failed: %s", step.ID, stepReceipt.Error)
 	}
 
@@ -1067,7 +1077,7 @@ func executeOperationParallelStep(ctx context.Context, stdout io.Writer, registr
 	if err := operationsvc.ApplyRoute(parent.Document, receipt, index); err != nil {
 		return false, err
 	}
-	if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+	if err := save(); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -1522,6 +1532,11 @@ func executeOperationPack(ctx context.Context, stdout io.Writer, packs *packsvc.
 }
 
 func cleanupOperation(ctx context.Context, stdout io.Writer, registry *operationsvc.Registry, item operationsvc.Resolved, inputs map[string]string, receipt *operationsvc.Receipt, path string, opts operationOptions) error {
+	expandedDocument, err := operationsvc.ExpandFanOutDocument(item.Document, inputs)
+	if err != nil {
+		return err
+	}
+	item.Document = expandedDocument
 	topologyValues := map[string]string{}
 	if opts.topology != "" {
 		resolved, err := resolveTopologyRuntimeValues(ctx, opts.topology, opts.profiles)
@@ -1544,6 +1559,10 @@ func cleanupOperation(ctx context.Context, stdout io.Writer, registry *operation
 	for _, index := range operationsvc.CleanupStepIndexes(item.Document, *receipt) {
 		step, stepReceipt := item.Document.Steps[index], &receipt.Steps[index]
 		if step.Parallel != nil && stepReceipt.Parallel != nil {
+			saveParallel := func() error {
+				operationsvc.SyncFanOutReceipt(step, stepReceipt)
+				return operationsvc.SaveReceipt(path, receipt)
+			}
 			for branchIndex := len(step.Parallel.Branches) - 1; branchIndex >= 0; branchIndex-- {
 				branch, branchReceipt := step.Parallel.Branches[branchIndex], &stepReceipt.Parallel.Branches[branchIndex]
 				if branchReceipt.State != "completed" {
@@ -1570,7 +1589,7 @@ func cleanupOperation(ctx context.Context, stdout io.Writer, registry *operation
 						return cleanupFailure(path, receipt, branchReceipt, err)
 					}
 					branchReceipt.ChildCleanupState, branchReceipt.CleanupState = "completed", "completed"
-					if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+					if err := saveParallel(); err != nil {
 						return err
 					}
 					continue
@@ -1601,12 +1620,12 @@ func cleanupOperation(ctx context.Context, stdout io.Writer, registry *operation
 				}
 				printOperationResult(stdout, result.Output, nil)
 				branchReceipt.CleanupState = "completed"
-				if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+				if err := saveParallel(); err != nil {
 					return err
 				}
 			}
 			stepReceipt.CleanupState = "completed"
-			if err := operationsvc.SaveReceipt(path, receipt); err != nil {
+			if err := saveParallel(); err != nil {
 				return err
 			}
 			continue
@@ -1822,8 +1841,17 @@ func printOperation(stdout io.Writer, item operationsvc.Resolved) {
 			target = "operation:" + step.Operation
 		} else if step.Parallel != nil {
 			target = fmt.Sprintf("parallel:%s branches=%d", step.Parallel.Join, len(step.Parallel.Branches))
+		} else if step.FanOut != nil {
+			target = fmt.Sprintf("fan-out:%s max=%d pack=%s", step.FanOut.Source, step.FanOut.MaxItems, step.Pack)
 		}
 		fmt.Fprintf(stdout, "  %d. %-20s %s\n", index+1, step.ID, target)
+		if step.FanOut != nil {
+			separator := step.FanOut.Separator
+			if separator == "" {
+				separator = ","
+			}
+			fmt.Fprintf(stdout, "     fan-out source=%s separator=%q max=%d\n", step.FanOut.Source, separator, step.FanOut.MaxItems)
+		}
 		if step.Parallel != nil {
 			for _, branch := range step.Parallel.Branches {
 				branchTarget := branch.Pack

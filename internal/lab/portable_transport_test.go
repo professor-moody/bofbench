@@ -12,8 +12,8 @@ import (
 )
 
 func TestSSHArgumentsRetainHostVerificationAndIdentity(t *testing.T) {
-	opts := RemoteOptions{Host: "lab.example", User: "operator", Port: 2222, IdentityFile: "/keys/lab", KnownHosts: "/keys/known_hosts"}
-	if got, want := sshBaseArgs(opts), []string{"-p", "2222", "-i", "/keys/lab", "-o", "UserKnownHostsFile=/keys/known_hosts"}; !reflect.DeepEqual(got, want) {
+	opts := RemoteOptions{Host: "lab.example", User: "operator", Port: 2222, IdentityFile: "/keys/lab", KnownHosts: "/keys/known_hosts", JumpHost: "pve-lab"}
+	if got, want := sshBaseArgs(opts), []string{"-o", "ProxyJump=pve-lab", "-p", "2222", "-i", "/keys/lab", "-o", "UserKnownHostsFile=/keys/known_hosts"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("ssh args=%v want=%v", got, want)
 	}
 	if got := sshTarget(opts); got != "operator@lab.example" {

@@ -127,6 +127,8 @@ type targetState struct {
 	User                  string `json:"user"`
 	CanaryFile            string `json:"canary_file"`
 	CanaryFileSHA256      string `json:"canary_file_sha256"`
+	MoveCanaryFile        string `json:"move_canary_file"`
+	MoveCanarySHA256      string `json:"move_canary_sha256"`
 	MemoryCanaryAddress   string `json:"memory_canary_address"`
 	MemoryCanarySize      int    `json:"memory_canary_size"`
 	MemoryCanarySHA256    string `json:"memory_canary_sha256"`
@@ -142,26 +144,28 @@ type targetState struct {
 }
 
 type fixtureState struct {
-	Schema                string `json:"schema"`
-	SchemaVersion         int    `json:"schema_version"`
-	User                  string `json:"user"`
-	CredentialTarget      string `json:"credential_target"`
-	CredentialSHA256      string `json:"credential_sha256"`
-	CredentialSize        int    `json:"credential_size"`
-	DPAPIUserPath         string `json:"dpapi_user_path"`
-	DPAPIUserSHA256       string `json:"dpapi_user_sha256"`
-	DPAPIMachinePath      string `json:"dpapi_machine_path"`
-	DPAPIMachineSHA256    string `json:"dpapi_machine_sha256"`
-	WMIMarkerPath         string `json:"wmi_marker_path"`
-	VaultGUID             string `json:"vault_guid,omitempty"`
-	VaultResource         string `json:"vault_resource,omitempty"`
-	VaultIdentity         string `json:"vault_identity,omitempty"`
-	VaultSHA256           string `json:"vault_sha256,omitempty"`
-	VaultSize             int    `json:"vault_size,omitempty"`
-	CertificateStore      string `json:"certificate_store,omitempty"`
-	CertificateSubject    string `json:"certificate_subject,omitempty"`
-	CertificateThumbprint string `json:"certificate_thumbprint,omitempty"`
-	CreatedAt             string `json:"created_at"`
+	Schema                 string `json:"schema"`
+	SchemaVersion          int    `json:"schema_version"`
+	User                   string `json:"user"`
+	CredentialTarget       string `json:"credential_target"`
+	CredentialSHA256       string `json:"credential_sha256"`
+	CredentialSize         int    `json:"credential_size"`
+	DPAPIUserPath          string `json:"dpapi_user_path"`
+	DPAPIUserSHA256        string `json:"dpapi_user_sha256"`
+	DPAPIUserFileSHA256    string `json:"dpapi_user_file_sha256"`
+	DPAPIMachinePath       string `json:"dpapi_machine_path"`
+	DPAPIMachineSHA256     string `json:"dpapi_machine_sha256"`
+	DPAPIMachineFileSHA256 string `json:"dpapi_machine_file_sha256"`
+	WMIMarkerPath          string `json:"wmi_marker_path"`
+	VaultGUID              string `json:"vault_guid,omitempty"`
+	VaultResource          string `json:"vault_resource,omitempty"`
+	VaultIdentity          string `json:"vault_identity,omitempty"`
+	VaultSHA256            string `json:"vault_sha256,omitempty"`
+	VaultSize              int    `json:"vault_size,omitempty"`
+	CertificateStore       string `json:"certificate_store,omitempty"`
+	CertificateSubject     string `json:"certificate_subject,omitempty"`
+	CertificateThumbprint  string `json:"certificate_thumbprint,omitempty"`
+	CreatedAt              string `json:"created_at"`
 }
 
 type credential struct {
@@ -256,6 +260,11 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 	fileCanary := append([]byte("BOFBENCH-TARGET-FILE-CANARY\n"), randomBytes(32)...)
 	canaryPath := filepath.Join(service.root, "canary.txt")
 	if err := os.WriteFile(canaryPath, fileCanary, 0o600); err != nil {
+		return true, 2
+	}
+	moveCanary := append([]byte("BOFBENCH-TARGET-MOVE-CANARY\n"), randomBytes(32)...)
+	moveCanaryPath := filepath.Join(service.root, "move-canary.bin")
+	if err := os.WriteFile(moveCanaryPath, moveCanary, 0o600); err != nil {
 		return true, 2
 	}
 	knownFile, err := os.Open(canaryPath)
@@ -478,7 +487,7 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		HTTPSURL: networkState.HTTPSURL, HTTPSBlobURL: networkState.HTTPSBlobURL, HTTPSAuthURL: networkState.HTTPSAuthURL,
 		HTTPAuthUser: networkState.HTTPAuthUser, TLSCertificateSHA256: networkState.TLSCertificateSHA256,
 		WebSocketURL: networkState.WebSocketURL, DNSName: networkState.DNSName, NetworkPayloadSHA256: networkState.NetworkPayloadSHA256,
-		CanaryFile: canaryPath, CanaryFileSHA256: hashBytes(fileCanary),
+		CanaryFile: canaryPath, CanaryFileSHA256: hashBytes(fileCanary), MoveCanaryFile: moveCanaryPath, MoveCanarySHA256: hashBytes(moveCanary),
 		MemoryCanaryAddress: fmt.Sprintf("0x%X", uintptr(unsafe.Pointer(&memoryCanary[0]))),
 		MemoryCanarySize:    len(canary), MemoryCanarySHA256: hashBytes(canary),
 		ExecutionAddress:   fmt.Sprintf("0x%X", executionRegion),
@@ -926,6 +935,16 @@ func deployFixtures(root string) (fixtureState, error) {
 		deleteCredential(credentialName)
 		return fixtureState{}, err
 	}
+	userProtected, err := os.ReadFile(userPath)
+	if err != nil {
+		deleteCredential(credentialName)
+		return fixtureState{}, err
+	}
+	machineProtected, err := os.ReadFile(machinePath)
+	if err != nil {
+		deleteCredential(credentialName)
+		return fixtureState{}, err
+	}
 	vaultGUID, thumbprint, err := deployVaultAndCertificate(vaultResource, vaultIdentity, vaultSecret, certificateSubject)
 	if err != nil {
 		deleteCredential(credentialName)
@@ -934,8 +953,8 @@ func deployFixtures(root string) (fixtureState, error) {
 	state := fixtureState{
 		Schema: "bofbench.target-fixtures", SchemaVersion: 2, User: currentUser(),
 		CredentialTarget: credentialName, CredentialSHA256: hashBytes(credentialCanary), CredentialSize: len(credentialCanary),
-		DPAPIUserPath: userPath, DPAPIUserSHA256: hashBytes(userCanary),
-		DPAPIMachinePath: machinePath, DPAPIMachineSHA256: hashBytes(machineCanary),
+		DPAPIUserPath: userPath, DPAPIUserSHA256: hashBytes(userCanary), DPAPIUserFileSHA256: hashBytes(userProtected),
+		DPAPIMachinePath: machinePath, DPAPIMachineSHA256: hashBytes(machineCanary), DPAPIMachineFileSHA256: hashBytes(machineProtected),
 		WMIMarkerPath: filepath.Join(fixtureRoot, "wmi-marker.txt"), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		VaultGUID: vaultGUID, VaultResource: vaultResource, VaultIdentity: vaultIdentity, VaultSHA256: hashBytes([]byte(vaultSecret)), VaultSize: len(vaultSecret),
 		CertificateStore: "MY", CertificateSubject: certificateName, CertificateThumbprint: thumbprint,

@@ -16,32 +16,109 @@ import (
 
 const (
 	ProfilesSchema                = "bofbench.labs"
-	ProfilesSchemaVersion         = 3
-	PreviousProfilesSchemaVersion = 2
+	ProfilesSchemaVersion         = 4
+	PreviousProfilesSchemaVersion = 3
 	SelectionSchema               = "bofbench.lab-selection"
 	SelectionVersion              = 1
 )
 
 var validProfileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var validSSHProxy = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@:-]*$`)
 
 // Profile describes one portable Windows target. Authentication secrets are
 // deliberately excluded: SSH uses an agent or identity-file path, and WinRM
 // passwords are resolved at execution time.
 type Profile struct {
-	Provider       string `json:"provider"`
-	Topology       string `json:"topology,omitempty"`
-	Transport      string `json:"transport"`
-	Host           string `json:"host,omitempty"`
-	User           string `json:"user,omitempty"`
-	Port           int    `json:"port,omitempty"`
-	IdentityFile   string `json:"identity_file,omitempty"`
-	KnownHosts     string `json:"known_hosts,omitempty"`
-	RemoteRoot     string `json:"remote_root,omitempty"`
-	BuildMode      string `json:"build_mode,omitempty"`
-	VagrantFile    string `json:"vagrant_file,omitempty"`
-	VagrantMachine string `json:"vagrant_machine,omitempty"`
-	SliverSession  string `json:"sliver_session,omitempty"`
-	WinRMHTTPS     bool   `json:"winrm_https,omitempty"`
+	Provider       string          `json:"provider"`
+	Topology       string          `json:"topology,omitempty"`
+	Transport      string          `json:"transport"`
+	Host           string          `json:"host,omitempty"`
+	User           string          `json:"user,omitempty"`
+	Port           int             `json:"port,omitempty"`
+	IdentityFile   string          `json:"identity_file,omitempty"`
+	KnownHosts     string          `json:"known_hosts,omitempty"`
+	RemoteRoot     string          `json:"remote_root,omitempty"`
+	BuildMode      string          `json:"build_mode,omitempty"`
+	VagrantFile    string          `json:"vagrant_file,omitempty"`
+	VagrantMachine string          `json:"vagrant_machine,omitempty"`
+	SliverSession  string          `json:"sliver_session,omitempty"`
+	WinRMHTTPS     bool            `json:"winrm_https,omitempty"`
+	Proxmox        *ProxmoxProfile `json:"proxmox,omitempty"`
+}
+
+// ProxmoxProfile contains only non-secret provider metadata. Token material is
+// resolved at execution time from TokenSecretSource and is never serialized
+// into a BOFBench profile or receipt.
+type ProxmoxProfile struct {
+	Endpoint          string       `json:"endpoint"`
+	Node              string       `json:"node"`
+	VMID              int          `json:"vmid"`
+	Pool              string       `json:"pool,omitempty"`
+	Storage           string       `json:"storage,omitempty"`
+	ISOStorage        string       `json:"iso_storage,omitempty"`
+	TokenID           string       `json:"token_id"`
+	TokenSecretSource SecretSource `json:"token_secret_source"`
+	CAFile            string       `json:"ca_file"`
+	TemplateVMID      int          `json:"template_vmid,omitempty"`
+	CloneMode         string       `json:"clone_mode,omitempty"`
+	Bridge            string       `json:"bridge,omitempty"`
+	GuestIPv4CIDR     string       `json:"guest_ipv4_cidr,omitempty"`
+	GuestAgent        bool         `json:"guest_agent,omitempty"`
+	SSHProxy          string       `json:"ssh_proxy,omitempty"`
+}
+
+// SecretSource names a supported external secret provider. The value itself
+// never appears here. Supported kinds are env and macos-keychain.
+type SecretSource struct {
+	Kind    string `json:"kind"`
+	Name    string `json:"name,omitempty"`
+	Service string `json:"service,omitempty"`
+	Account string `json:"account,omitempty"`
+}
+
+type ProxmoxPreparation struct {
+	Schema            string       `json:"schema"`
+	SchemaVersion     int          `json:"schema_version"`
+	Endpoint          string       `json:"endpoint"`
+	Node              string       `json:"node"`
+	Release           string       `json:"release,omitempty"`
+	Pool              string       `json:"pool"`
+	Storage           string       `json:"storage"`
+	ISOStorage        string       `json:"iso_storage"`
+	TokenID           string       `json:"token_id"`
+	TokenSecretSource SecretSource `json:"token_secret_source"`
+	CAFile            string       `json:"ca_file"`
+	SSHAlias          string       `json:"ssh_alias,omitempty"`
+	SSHIdentity       string       `json:"ssh_identity,omitempty"`
+	ResourcePlan      struct {
+		VMIDMin          int    `json:"vmid_min,omitempty"`
+		VMIDMax          int    `json:"vmid_max,omitempty"`
+		ManagementBridge string `json:"management_bridge"`
+		LabBridge        string `json:"lab_bridge"`
+		LabSubnet        string `json:"lab_subnet"`
+		LabGateway       string `json:"lab_gateway,omitempty"`
+	} `json:"resource_plan"`
+	PlannedTemplates struct {
+		Windows11Clean int `json:"windows_11_clean,omitempty"`
+		Windows11Dev   int `json:"windows_11_dev,omitempty"`
+		WindowsServer  int `json:"windows_server_base,omitempty"`
+		WindowsMember  int `json:"windows_member_base,omitempty"`
+	} `json:"planned_templates,omitempty"`
+}
+
+func LoadProxmoxPreparation(path string) (ProxmoxPreparation, error) {
+	data, err := os.ReadFile(expandUserPath(path))
+	if err != nil {
+		return ProxmoxPreparation{}, err
+	}
+	var prep ProxmoxPreparation
+	if err := decodeStrict(data, &prep); err != nil {
+		return ProxmoxPreparation{}, err
+	}
+	if prep.Schema != "bofbench.proxmox-preparation" || prep.SchemaVersion != 1 {
+		return ProxmoxPreparation{}, fmt.Errorf("preparation schema must be bofbench.proxmox-preparation version 1")
+	}
+	return prep, nil
 }
 
 type ProfilesConfig struct {
@@ -88,7 +165,7 @@ func DefaultProfile(provider string) Profile {
 		provider = "existing"
 	}
 	transport := "ssh"
-	if provider == "vagrant" {
+	if provider == "vagrant" || provider == "proxmox" {
 		transport = "winrm"
 	}
 	port := 22
@@ -101,6 +178,9 @@ func DefaultProfile(provider string) Profile {
 	}
 	if provider == "vagrant" {
 		profile.VagrantFile = "Vagrantfile"
+	}
+	if provider == "proxmox" {
+		profile.Proxmox = &ProxmoxProfile{CloneMode: "full", GuestAgent: true}
 	}
 	return profile
 }
@@ -143,7 +223,9 @@ func LoadProfiles(path string) (ProfilesConfig, error) {
 	if err := decodeStrict(data, &config); err != nil {
 		return ProfilesConfig{}, fmt.Errorf("parse %s: %w", path, err)
 	}
-	if config.Schema == ProfilesSchema && config.SchemaVersion == PreviousProfilesSchemaVersion {
+	migratedFrom := 0
+	if config.Schema == ProfilesSchema && (config.SchemaVersion == 2 || config.SchemaVersion == PreviousProfilesSchemaVersion) {
+		migratedFrom = config.SchemaVersion
 		config.SchemaVersion = ProfilesSchemaVersion
 		if config.Topologies == nil {
 			config.Topologies = map[string]ProfileTopology{}
@@ -151,6 +233,17 @@ func LoadProfiles(path string) (ProfilesConfig, error) {
 	}
 	if err := ValidateProfiles(config); err != nil {
 		return ProfilesConfig{}, fmt.Errorf("%s: %w", path, err)
+	}
+	if migratedFrom != 0 {
+		backup := fmt.Sprintf("%s.v%d.bak", path, migratedFrom)
+		if _, statErr := os.Stat(backup); errors.Is(statErr, os.ErrNotExist) {
+			if err := os.WriteFile(backup, data, 0o600); err != nil {
+				return ProfilesConfig{}, fmt.Errorf("retain lab profile schema-v%d backup: %w", migratedFrom, err)
+			}
+		}
+		if err := SaveProfiles(path, config); err != nil {
+			return ProfilesConfig{}, fmt.Errorf("persist lab profile schema-v%d migration: %w", migratedFrom, err)
+		}
 	}
 	return config, nil
 }
@@ -234,8 +327,8 @@ func ValidateProfile(profile Profile) error {
 	profile.Topology = strings.ToLower(strings.TrimSpace(profile.Topology))
 	profile.Transport = strings.ToLower(strings.TrimSpace(profile.Transport))
 	profile.BuildMode = strings.ToLower(strings.TrimSpace(profile.BuildMode))
-	if profile.Provider != "existing" && profile.Provider != "vagrant" {
-		return fmt.Errorf("provider must be existing or vagrant")
+	if profile.Provider != "existing" && profile.Provider != "vagrant" && profile.Provider != "proxmox" {
+		return fmt.Errorf("provider must be existing, vagrant, or proxmox")
 	}
 	if profile.Topology == "" {
 		profile.Topology = "standalone"
@@ -249,8 +342,22 @@ func ValidateProfile(profile Profile) error {
 	if profile.Provider == "vagrant" && profile.Transport != "winrm" {
 		return fmt.Errorf("vagrant profiles use WinRM transport")
 	}
+	if profile.Provider == "proxmox" && profile.Transport != "ssh" && profile.Transport != "winrm" {
+		return fmt.Errorf("proxmox guest transport must be ssh or winrm")
+	}
 	if profile.Provider == "existing" && strings.TrimSpace(profile.Host) == "" {
 		return fmt.Errorf("existing provider requires host")
+	}
+	if profile.Provider != "proxmox" && profile.Proxmox != nil {
+		return fmt.Errorf("proxmox settings require the proxmox provider")
+	}
+	if profile.Provider == "proxmox" {
+		if profile.Proxmox == nil {
+			return fmt.Errorf("proxmox provider requires proxmox settings")
+		}
+		if err := ValidateProxmoxProfile(*profile.Proxmox); err != nil {
+			return err
+		}
 	}
 	if profile.Transport != "ssh" && (strings.TrimSpace(profile.IdentityFile) != "" || strings.TrimSpace(profile.KnownHosts) != "") {
 		return fmt.Errorf("identity_file and known_hosts apply only to SSH profiles")
@@ -311,7 +418,62 @@ func NormalizeProfile(profile Profile) Profile {
 	if profile.Provider == "vagrant" && strings.TrimSpace(profile.VagrantFile) == "" {
 		profile.VagrantFile = defaults.VagrantFile
 	}
+	if profile.Provider == "proxmox" {
+		if profile.Proxmox == nil {
+			profile.Proxmox = defaults.Proxmox
+		}
+		if profile.Proxmox != nil {
+			profile.Proxmox.Endpoint = strings.TrimRight(strings.TrimSpace(profile.Proxmox.Endpoint), "/")
+			profile.Proxmox.Node = strings.TrimSpace(profile.Proxmox.Node)
+			profile.Proxmox.CloneMode = strings.ToLower(strings.TrimSpace(profile.Proxmox.CloneMode))
+			if profile.Proxmox.CloneMode == "" {
+				profile.Proxmox.CloneMode = "full"
+			}
+			profile.Proxmox.TokenSecretSource.Kind = strings.ToLower(strings.TrimSpace(profile.Proxmox.TokenSecretSource.Kind))
+		}
+	}
 	return profile
+}
+
+func ValidateProxmoxProfile(config ProxmoxProfile) error {
+	if !strings.HasPrefix(config.Endpoint, "https://") {
+		return fmt.Errorf("proxmox endpoint must use https")
+	}
+	if strings.TrimSpace(config.Node) == "" {
+		return fmt.Errorf("proxmox node is required")
+	}
+	if config.VMID < 100 || config.VMID > 999999999 {
+		return fmt.Errorf("proxmox vmid must be between 100 and 999999999")
+	}
+	if strings.TrimSpace(config.TokenID) == "" || !strings.Contains(config.TokenID, "!") {
+		return fmt.Errorf("proxmox token_id must use user@realm!token form")
+	}
+	if strings.TrimSpace(config.CAFile) == "" {
+		return fmt.Errorf("proxmox ca_file is required")
+	}
+	if config.SSHProxy != "" && !validSSHProxy.MatchString(config.SSHProxy) {
+		return fmt.Errorf("proxmox ssh_proxy contains invalid characters")
+	}
+	if config.TemplateVMID != 0 && (config.TemplateVMID < 100 || config.TemplateVMID > 999999999) {
+		return fmt.Errorf("proxmox template_vmid must be zero or a valid VMID")
+	}
+	if config.CloneMode != "" && config.CloneMode != "full" && config.CloneMode != "linked" {
+		return fmt.Errorf("proxmox clone_mode must be full or linked")
+	}
+	source := config.TokenSecretSource
+	switch strings.ToLower(strings.TrimSpace(source.Kind)) {
+	case "env":
+		if strings.TrimSpace(source.Name) == "" {
+			return fmt.Errorf("proxmox env token source requires name")
+		}
+	case "macos-keychain":
+		if strings.TrimSpace(source.Service) == "" || strings.TrimSpace(source.Account) == "" {
+			return fmt.Errorf("proxmox keychain token source requires service and account")
+		}
+	default:
+		return fmt.Errorf("proxmox token secret source must be env or macos-keychain")
+	}
+	return nil
 }
 
 func AddProfile(config *ProfilesConfig, name string, profile Profile, replace bool) error {

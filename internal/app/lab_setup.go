@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -79,7 +77,9 @@ func labBootstrapCommand(stdout io.Writer) *cobra.Command {
 func labProviderCommand(stdout io.Writer, operation string) *cobra.Command {
 	var labName string
 	var profilesPath string
-	var machine string
+	var resourceName string
+	var format string
+	var force bool
 	use := operation
 	if operation == "snapshot" || operation == "restore" {
 		use += " <name>"
@@ -97,68 +97,76 @@ func labProviderCommand(stdout io.Writer, operation string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			profile := resolved.Profile
-			if profile.Provider != "vagrant" {
-				return fmt.Errorf("lab %s requires the vagrant provider; existing VMs are controlled by their operator snapshot system", operation)
+			if format != "text" && format != "json" {
+				return fmt.Errorf("lab %s format must be text or json", operation)
 			}
-			selectedMachine := machine
-			if selectedMachine == "" {
-				selectedMachine = profile.VagrantMachine
+			snapshot := ""
+			if len(args) > 0 {
+				snapshot = args[0]
 			}
-			vagrantArgs := []string{}
-			switch operation {
-			case "up":
-				vagrantArgs = append(vagrantArgs, "up")
-				if selectedMachine != "" {
-					vagrantArgs = append(vagrantArgs, selectedMachine)
+			if operation == "up" && strings.EqualFold(resolved.Profile.Provider, "proxmox") {
+				status, statusErr := lab.RunProviderAction(cmd.Context(), resolved.Name, resolved.Profile, "status", lab.ProviderActionOptions{})
+				if statusErr != nil {
+					return codedError{code: 1, err: statusErr}
 				}
-			case "snapshot":
-				vagrantArgs = append(vagrantArgs, "snapshot", "save")
-				if selectedMachine != "" {
-					vagrantArgs = append(vagrantArgs, selectedMachine)
+				if status.Resource.State == "absent" {
+					_, cloneErr := lab.RunProviderAction(cmd.Context(), resolved.Name, resolved.Profile, "clone", lab.ProviderActionOptions{Name: resolved.Name})
+					if cloneErr != nil {
+						return codedError{code: 1, err: cloneErr}
+					}
 				}
-				vagrantArgs = append(vagrantArgs, args[0])
-			case "restore":
-				vagrantArgs = append(vagrantArgs, "snapshot", "restore")
-				if selectedMachine != "" {
-					vagrantArgs = append(vagrantArgs, selectedMachine)
-				}
-				vagrantArgs = append(vagrantArgs, args[0])
 			}
-			command := exec.CommandContext(cmd.Context(), "vagrant", vagrantArgs...)
-			if profile.VagrantFile != "" {
-				absolute, err := filepath.Abs(profile.VagrantFile)
-				if err != nil {
+			receipt, actionErr := lab.RunProviderAction(cmd.Context(), resolved.Name, resolved.Profile, operation, lab.ProviderActionOptions{Snapshot: snapshot, Name: resourceName, Force: force})
+			if format == "json" {
+				if err := printJSON(stdout, receipt); err != nil {
 					return err
 				}
-				command.Dir = filepath.Dir(absolute)
-				command.Env = append(os.Environ(), "VAGRANT_VAGRANTFILE="+filepath.Base(absolute))
+			} else {
+				fmt.Fprint(stdout, lab.ProviderReceiptText(receipt))
 			}
-			output, err := command.CombinedOutput()
-			if len(output) > 0 {
-				fmt.Fprint(stdout, string(output))
-			}
-			if err != nil {
-				return codedError{code: 1, err: fmt.Errorf("vagrant %s failed: %w", operation, err)}
+			if actionErr != nil {
+				return codedError{code: 1, err: actionErr}
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&labName, "lab", "", "named Vagrant lab profile")
+	cmd.Flags().StringVar(&labName, "lab", "", "named lab profile")
 	cmd.Flags().StringVar(&profilesPath, "profiles", lab.ProfilesPath(), "global lab profiles file")
-	if operation == "snapshot" || operation == "restore" {
-		cmd.Flags().StringVar(&machine, "machine", "", "Vagrant machine name; omit for single-machine labs")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	if operation == "clone" {
+		cmd.Flags().StringVar(&resourceName, "name", "", "name for the cloned VM")
 	}
+	if operation == "destroy" || operation == "stop" {
+		cmd.Flags().BoolVar(&force, "force", false, "request forceful provider action")
+	}
+	return cmd
+}
+
+func labProviderRootCommand(stdout io.Writer) *cobra.Command {
+	cmd := &cobra.Command{Use: "provider", Short: "Inspect the infrastructure provider behind a lab profile"}
+	cmd.AddCommand(labProviderCommand(stdout, "status"))
 	return cmd
 }
 
 func providerCommandSummary(operation string) string {
 	switch operation {
 	case "up":
-		return "Start the configured Vagrant Windows topology"
+		return "Start the configured lab machine"
+	case "down":
+		return "Gracefully stop the configured lab machine"
+	case "stop":
+		return "Immediately stop the configured lab machine"
 	case "snapshot":
-		return "Save a named Vagrant lab snapshot"
+		return "Save a named lab snapshot"
+	case "restore":
+		return "Restore a named lab snapshot"
+	case "clone":
+		return "Clone the configured Proxmox template into this profile VMID"
+	case "template":
+		return "Convert the configured Proxmox VM into a template"
+	case "destroy":
+		return "Destroy the configured provider-managed lab machine"
 	default:
-		return "Restore a named Vagrant lab snapshot"
+		return "Show provider state and discovered guest identity"
 	}
 }

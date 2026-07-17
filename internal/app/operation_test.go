@@ -149,3 +149,14 @@ func TestNormalizeOperationPackArgumentsLoadsFileInputsForByteArguments(t *testi
 		t.Fatalf("@file byte payload was not normalized: %q", got["payload"])
 	}
 }
+
+func TestOperationFanOutProofCountsResolvedBranches(t *testing.T) {
+	receipt := operationsvc.Receipt{Steps: []operationsvc.StepReceipt{{ID: "targets", FanOut: &operationsvc.FanOutReceipt{Branches: []operationsvc.FanOutBranchReceipt{{ID: "target-01"}, {ID: "target-02"}}}}}}
+	counts := operationFanOutCounts(receipt)
+	if err := matchOperationProofFanOut(map[string]int{"targets": 2}, counts); err != nil {
+		t.Fatal(err)
+	}
+	if err := matchOperationProofFanOut(map[string]int{"targets": 3}, counts); err == nil {
+		t.Fatal("mismatched fan-out count passed")
+	}
+}

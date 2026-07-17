@@ -1,6 +1,6 @@
 # Composable, Provable Multi-Step Operations
 
-Operations connect capability packs into result-aware workflows. A step can capture a structured output field—such as a PID, address, hash, path, object name, pipe name, window handle, or retained handle—and pass it to later work. Version 3 can route a completed, understood result to a later step. Version 4 can invoke another catalog operation as an atomic child step. Version 5 can run explicit parallel groups. Version 6 adds dependency-aware DAG execution. Version 7 adds bounded background steps, readiness dependencies, live progress, and cancellation. Version 8 adds finite retry for explicitly declared complete transient results. Version 9 adds safe interpolation of typed inputs, topology fields, and ancestor captures inside argument strings. Work advances only when the relevant contract is true:
+Operations connect capability packs into result-aware workflows. A step can capture a structured output field—such as a PID, address, hash, path, object name, pipe name, window handle, or retained handle—and pass it to later work. Version 3 can route a completed, understood result to a later step. Version 4 can invoke another catalog operation as an atomic child step. Version 5 can run explicit parallel groups. Version 6 adds dependency-aware DAG execution. Version 7 adds bounded background steps, readiness dependencies, live progress, and cancellation. Version 8 adds finite retry for explicitly declared complete transient results. Version 9 adds safe interpolation of typed inputs, topology fields, and ancestor captures inside argument strings. Version 10 adds finite, operator-controlled fan-out over an exact typed input. Work advances only when the relevant contract is true:
 
 1. the runtime task completed with complete output; and
 2. the step's declared structured-result contract matched.
@@ -288,6 +288,54 @@ Validation applies the same rules as exact references:
 - an argument containing a sensitive input remains sensitive after interpolation and is redacted from receipts.
 
 Version-1 through version-8 definitions remain readable, but embedded templates require version 9. The TUI definition view lists every templated argument before execution.
+
+## Bounded fan-out
+
+Schema version 10 can expand one terminal linear step, or one DAG child-operation step, from a declared input containing exact paths or targets:
+
+```json
+{
+  "id": "multi-path-file-collection",
+  "schema": "bofbench.operation",
+  "schema_version": 10,
+  "inputs": [
+    {"name": "paths", "type": "string", "required": true}
+  ],
+  "steps": [
+    {
+      "id": "collect",
+      "pack": "file-collect",
+      "fan_out": {
+        "source": "$input.paths",
+        "separator": ";",
+        "max_items": 16
+      },
+      "arguments": {"path": "$item"},
+      "expect": {"tag": "file-collect", "fields": {"status": "complete"}}
+    }
+  ]
+}
+```
+
+Fan-out is explicit and finite:
+
+- the source is one declared, non-sensitive exact input;
+- separators are comma, semicolon, or newline;
+- empty items are removed and duplicate items retain first-seen order;
+- `max_items` is 1–64 and is checked before build or execution;
+- `$item` and `${item}` are resolved by BOFBench, never by a shell;
+- each expanded branch is pinned with its definition, pack/object hashes, runtime receipt, result contract, captures, and cleanup state;
+- `--parallelism 1–16` bounds execution across the expansion;
+- cleanup visits only completed stateful branches in reverse execution order.
+
+The receipt records source, separator, declared maximum, resolved count, completed/failed/incomplete counts, maximum concurrency, and each branch's non-sensitive item and terminal state. Proof cases can assert `expect_fan_out`. Fan-out does not scan, discover, or synthesize targets; it operates only on values the operator supplied.
+
+```bash
+bofbench operation show internal/multi-target-remote-triage --expand
+bofbench operation run internal/multi-target-remote-triage \
+  --via lab --topology dedicated-standalone --parallelism 4 \
+  --arg targets='host-a;host-b'
+```
 
 ## Parallel groups
 

@@ -33,6 +33,35 @@ Correlate detailed process handles, exact synchronization state, and the local m
 
 - `target-coordination`: via `lab,sliver`, architectures `x64,x86`, expected path `handles → state → mailslots`, expanded path `handles → state → mailslots`
 
+## `builtin/filesystem-and-smb-posture`
+
+Inspect NTFS streams, reparse metadata, and active SMB connections as one concurrent ready wave
+
+- Schema version: `10`
+- Execution: `dag`
+- Tier: `public`
+- Steps: `3`
+- Proof cases: `1`
+
+### Inputs
+
+| Name | Type | Required | Sensitive | Topology value |
+|---|---|---:|---:|---|
+| `path` | `wstring` | true | false | `` |
+| `stream_filter` | `wstring` | false | false | `` |
+| `remote_filter` | `wstring` | false | false | `` |
+| `result_limit` | `int` | false | false | `` |
+
+### Steps
+
+1. `streams` → `file-stream-inventory`
+2. `reparse` → `file-reparse-point-inventory`
+3. `smb` → `smb-connection-inventory`
+
+### Proof cases
+
+- `canary-filesystem`: via `lab,sliver`, architectures `x64,x86`, waves `streams+reparse+smb`
+
 ## `builtin/ipc-activation-triage`
 
 Inventory RPC, COM registration, active COM monikers, ALPC ports, and windows as one dependency-aware ready wave

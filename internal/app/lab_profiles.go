@@ -15,20 +15,37 @@ import (
 )
 
 type labProfileFlags struct {
-	Provider       string
-	Topology       string
-	Transport      string
-	Host           string
-	User           string
-	Port           int
-	Identity       string
-	KnownHosts     string
-	RemoteRoot     string
-	BuildMode      string
-	VagrantFile    string
-	VagrantMachine string
-	SliverSession  string
-	WinRMHTTPS     bool
+	Provider               string
+	Topology               string
+	Transport              string
+	Host                   string
+	User                   string
+	Port                   int
+	Identity               string
+	KnownHosts             string
+	RemoteRoot             string
+	BuildMode              string
+	VagrantFile            string
+	VagrantMachine         string
+	SliverSession          string
+	WinRMHTTPS             bool
+	ProxmoxPrep            string
+	ProxmoxEndpoint        string
+	ProxmoxNode            string
+	ProxmoxVMID            int
+	ProxmoxPool            string
+	ProxmoxStorage         string
+	ProxmoxISOStorage      string
+	ProxmoxTokenID         string
+	ProxmoxSecretEnv       string
+	ProxmoxKeychainService string
+	ProxmoxKeychainAccount string
+	ProxmoxCAFile          string
+	ProxmoxTemplateVMID    int
+	ProxmoxCloneMode       string
+	ProxmoxBridge          string
+	ProxmoxGuestCIDR       string
+	ProxmoxSSHProxy        string
 }
 
 func labAddCommand(stdout io.Writer) *cobra.Command {
@@ -53,8 +70,22 @@ func labAddCommand(stdout io.Writer) *cobra.Command {
 				if !ok {
 					return fmt.Errorf("source profile %q does not exist; available: %s", from, strings.Join(lab.ProfileNames(config), ", "))
 				}
+				// Profiles contain provider-specific pointer fields. Clone those
+				// values before applying overrides so changing a new Proxmox VMID
+				// cannot mutate the source profile through a shared pointer.
+				profile = cloneLabProfile(profile)
 			} else {
 				profile = lab.DefaultProfile(flags.Provider)
+			}
+			if strings.TrimSpace(flags.ProxmoxPrep) != "" {
+				prep, err := lab.LoadProxmoxPreparation(flags.ProxmoxPrep)
+				if err != nil {
+					return fmt.Errorf("load Proxmox preparation: %w", err)
+				}
+				flags.ProxmoxSSHProxy = prep.SSHAlias
+				profile.Provider = "proxmox"
+				profile.Transport = lab.DefaultProfile("proxmox").Transport
+				profile.Proxmox = &lab.ProxmoxProfile{Endpoint: prep.Endpoint, Node: prep.Node, Pool: prep.Pool, Storage: prep.Storage, ISOStorage: prep.ISOStorage, TokenID: prep.TokenID, TokenSecretSource: prep.TokenSecretSource, CAFile: prep.CAFile, CloneMode: "full", Bridge: prep.ResourcePlan.LabBridge, GuestIPv4CIDR: prep.ResourcePlan.LabSubnet, GuestAgent: true, SSHProxy: prep.SSHAlias}
 			}
 			applyProfileFlagChanges(cmd, &profile, flags)
 			if err := lab.AddProfile(&config, name, profile, replace); err != nil {
@@ -73,6 +104,14 @@ func labAddCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&replace, "replace", false, "replace an existing profile")
 	bindLabProfileFlags(cmd, &flags)
 	return cmd
+}
+
+func cloneLabProfile(profile lab.Profile) lab.Profile {
+	if profile.Proxmox != nil {
+		proxmox := *profile.Proxmox
+		profile.Proxmox = &proxmox
+	}
+	return profile
 }
 
 func labListCommand(stdout io.Writer) *cobra.Command {
@@ -145,6 +184,9 @@ func labShowCommand(stdout io.Writer) *cobra.Command {
 			}
 			if profile.Transport == "winrm" {
 				fmt.Fprintf(stdout, "Password env   %s\n", lab.WinRMPasswordEnvironment(args[0]))
+			}
+			if profile.Proxmox != nil {
+				fmt.Fprintf(stdout, "Proxmox API    %s\nProxmox node   %s\nProxmox VMID   %d\nProxmox pool   %s\nProxmox bridge %s\nGuest CIDR     %s\nToken source   %s\n", profile.Proxmox.Endpoint, profile.Proxmox.Node, profile.Proxmox.VMID, profile.Proxmox.Pool, profile.Proxmox.Bridge, profile.Proxmox.GuestIPv4CIDR, profile.Proxmox.TokenSecretSource.Kind)
 			}
 			fmt.Fprintf(stdout, "Profiles file  %s\n", absolutePath(profilesPath))
 			return nil
@@ -320,7 +362,7 @@ func labSetupScriptCommand(stdout io.Writer) *cobra.Command {
 }
 
 func bindLabProfileFlags(cmd *cobra.Command, flags *labProfileFlags) {
-	cmd.Flags().StringVar(&flags.Provider, "provider", flags.Provider, "provider: existing or vagrant")
+	cmd.Flags().StringVar(&flags.Provider, "provider", flags.Provider, "provider: existing, vagrant, or proxmox")
 	cmd.Flags().StringVar(&flags.Topology, "topology", "", "topology: standalone or domain")
 	cmd.Flags().StringVar(&flags.Transport, "transport", "", "transport: ssh or winrm")
 	cmd.Flags().StringVar(&flags.Host, "host", "", "SSH alias, DNS name, or IP address")
@@ -334,12 +376,33 @@ func bindLabProfileFlags(cmd *cobra.Command, flags *labProfileFlags) {
 	cmd.Flags().StringVar(&flags.VagrantMachine, "machine", "", "Vagrant machine name")
 	cmd.Flags().StringVar(&flags.SliverSession, "sliver-session", "", "Sliver session selector; no C2 secrets are stored")
 	cmd.Flags().BoolVar(&flags.WinRMHTTPS, "winrm-https", false, "use HTTPS WinRM on port 5986")
+	cmd.Flags().StringVar(&flags.ProxmoxPrep, "proxmox-prep", "", "prepared non-secret Proxmox connection JSON")
+	cmd.Flags().StringVar(&flags.ProxmoxEndpoint, "proxmox-endpoint", "", "Proxmox REST API endpoint")
+	cmd.Flags().StringVar(&flags.ProxmoxNode, "proxmox-node", "", "Proxmox node name")
+	cmd.Flags().IntVar(&flags.ProxmoxVMID, "proxmox-vmid", 0, "Proxmox VM ID")
+	cmd.Flags().StringVar(&flags.ProxmoxPool, "proxmox-pool", "", "Proxmox resource pool")
+	cmd.Flags().StringVar(&flags.ProxmoxStorage, "proxmox-storage", "", "Proxmox disk storage")
+	cmd.Flags().StringVar(&flags.ProxmoxISOStorage, "proxmox-iso-storage", "", "Proxmox ISO storage")
+	cmd.Flags().StringVar(&flags.ProxmoxTokenID, "proxmox-token-id", "", "non-secret API token ID")
+	cmd.Flags().StringVar(&flags.ProxmoxSecretEnv, "proxmox-token-secret-env", "", "environment variable containing the API token secret")
+	cmd.Flags().StringVar(&flags.ProxmoxKeychainService, "proxmox-keychain-service", "", "macOS Keychain service containing the API token secret")
+	cmd.Flags().StringVar(&flags.ProxmoxKeychainAccount, "proxmox-keychain-account", "", "macOS Keychain account for the API token secret")
+	cmd.Flags().StringVar(&flags.ProxmoxCAFile, "proxmox-ca", "", "PEM CA certificate for the Proxmox API")
+	cmd.Flags().IntVar(&flags.ProxmoxTemplateVMID, "proxmox-template-vmid", 0, "source template VM ID used by lab clone")
+	cmd.Flags().StringVar(&flags.ProxmoxCloneMode, "proxmox-clone-mode", "", "clone mode: full or linked")
+	cmd.Flags().StringVar(&flags.ProxmoxBridge, "proxmox-bridge", "", "guest lab bridge")
+	cmd.Flags().StringVar(&flags.ProxmoxGuestCIDR, "proxmox-guest-cidr", "", "CIDR used to select the guest-agent address")
+	cmd.Flags().StringVar(&flags.ProxmoxSSHProxy, "proxmox-ssh-proxy", "", "SSH alias used to forward otherwise unreachable Proxmox API traffic")
 }
 
 func applyProfileFlagChanges(cmd *cobra.Command, profile *lab.Profile, flags labProfileFlags) {
 	if cmd.Flags().Changed("provider") {
+		previousProvider := profile.Provider
 		profile.Provider = flags.Provider
-		if !cmd.Flags().Changed("transport") {
+		if profile.Provider == "proxmox" && profile.Proxmox == nil {
+			profile.Proxmox = lab.DefaultProfile("proxmox").Proxmox
+		}
+		if !cmd.Flags().Changed("transport") && !strings.EqualFold(previousProvider, flags.Provider) {
 			profile.Transport = lab.DefaultProfile(flags.Provider).Transport
 		}
 	}
@@ -388,10 +451,67 @@ func applyProfileFlagChanges(cmd *cobra.Command, profile *lab.Profile, flags lab
 			profile.Port = 0
 		}
 	}
+	if profile.Provider == "proxmox" || profile.Proxmox != nil {
+		if profile.Proxmox == nil {
+			profile.Proxmox = &lab.ProxmoxProfile{}
+		}
+		p := profile.Proxmox
+		if cmd.Flags().Changed("proxmox-endpoint") {
+			p.Endpoint = flags.ProxmoxEndpoint
+		}
+		if cmd.Flags().Changed("proxmox-node") {
+			p.Node = flags.ProxmoxNode
+		}
+		if cmd.Flags().Changed("proxmox-vmid") {
+			p.VMID = flags.ProxmoxVMID
+		}
+		if cmd.Flags().Changed("proxmox-pool") {
+			p.Pool = flags.ProxmoxPool
+		}
+		if cmd.Flags().Changed("proxmox-storage") {
+			p.Storage = flags.ProxmoxStorage
+		}
+		if cmd.Flags().Changed("proxmox-iso-storage") {
+			p.ISOStorage = flags.ProxmoxISOStorage
+		}
+		if cmd.Flags().Changed("proxmox-token-id") {
+			p.TokenID = flags.ProxmoxTokenID
+		}
+		if cmd.Flags().Changed("proxmox-token-secret-env") {
+			p.TokenSecretSource = lab.SecretSource{Kind: "env", Name: flags.ProxmoxSecretEnv}
+		}
+		if cmd.Flags().Changed("proxmox-keychain-service") || cmd.Flags().Changed("proxmox-keychain-account") {
+			p.TokenSecretSource = lab.SecretSource{Kind: "macos-keychain", Service: flags.ProxmoxKeychainService, Account: flags.ProxmoxKeychainAccount}
+		}
+		if cmd.Flags().Changed("proxmox-ca") {
+			p.CAFile = flags.ProxmoxCAFile
+		}
+		if cmd.Flags().Changed("proxmox-template-vmid") {
+			p.TemplateVMID = flags.ProxmoxTemplateVMID
+		}
+		if cmd.Flags().Changed("proxmox-clone-mode") {
+			p.CloneMode = flags.ProxmoxCloneMode
+		}
+		if cmd.Flags().Changed("proxmox-bridge") {
+			p.Bridge = flags.ProxmoxBridge
+		}
+		if cmd.Flags().Changed("proxmox-guest-cidr") {
+			p.GuestIPv4CIDR = flags.ProxmoxGuestCIDR
+		}
+		if flags.ProxmoxSSHProxy != "" || cmd.Flags().Changed("proxmox-ssh-proxy") {
+			p.SSHProxy = flags.ProxmoxSSHProxy
+		}
+	}
 	*profile = lab.NormalizeProfile(*profile)
 }
 
 func profileTarget(profile lab.Profile) string {
+	if profile.Provider == "proxmox" && profile.Proxmox != nil {
+		if profile.Host != "" {
+			return profile.Host
+		}
+		return fmt.Sprintf("proxmox:%s/%d", profile.Proxmox.Node, profile.Proxmox.VMID)
+	}
 	if profile.Provider == "vagrant" && profile.Host == "" {
 		if profile.VagrantMachine != "" {
 			return "vagrant:" + profile.VagrantMachine

@@ -84,6 +84,26 @@ bofbench lab status --lab clean-winrm
 
 See [Portable Lab Profiles](lab-profiles.md) for the full configuration model and selection precedence.
 
+## Proxmox-native disposable labs
+
+Use a Proxmox profile when BOFBench should own clone, power, snapshot, restore, and teardown for an isolated Windows VM. BOFBench scopes those actions to the configured pool and VMID range; existing machines and resources outside that pool are never lifecycle-controlled.
+
+```bash
+bofbench lab add win11-clean \
+  --provider proxmox \
+  --proxmox-prep ~/.config/bofbench/proxmox-lab.json \
+  --proxmox-vmid 4110 \
+  --proxmox-template-vmid 4100 \
+  --transport ssh --user Administrator \
+  --identity ~/.ssh/bofbench-windows \
+  --build-mode local
+
+bofbench lab up --lab win11-clean
+bofbench lab bootstrap --lab win11-clean
+```
+
+The clean template needs no compiler in local-build mode. A development template may include MSVC, MinGW x64/x86, Go, and WinDbg and use remote-build mode. The checked-in `infra/proxmox` assets define the isolated bridge services, answer-file builder, Windows provisioner, and development-tool installer. See [Proxmox-Native Labs](proxmox-labs.md).
+
 ## Standalone Vagrant topology
 
 ```mermaid
