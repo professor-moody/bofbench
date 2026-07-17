@@ -12,10 +12,10 @@
 </div>
 
 <div class="bb-proof">
-  <div><strong>244 packs</strong><span>90 public · 154 private</span></div>
+  <div><strong>254 packs</strong><span>93 public · 161 private</span></div>
   <div><strong>x64 + x86</strong><span>separate native loaders</span></div>
   <div><strong>4 runtimes</strong><span>native · lab · Sliver · CS</span></div>
-  <div><strong class="bb-impact">50 operations</strong><span>linear · routed · async · bounded retry</span></div>
+  <div><strong class="bb-impact">56 operations</strong><span>DAG · async · retry · templates</span></div>
 </div>
 
 # The operator loop
@@ -82,6 +82,14 @@ bofbench operation cancel runs/<run-id>/operation.json --cleanup
 ```
 
 Native and lab tasks stream structured progress into atomically readable receipts. A trigger is not scheduled until its watcher emits the exact `status=ready` contract. Retry never guesses that a crash, timeout, partial response, or incomplete C2 task is transient, and cancellation interrupts pending backoff immediately.
+
+Version 9 can compose typed inputs, topology fields, and earlier captures inside an ordinary argument string. This makes ephemeral endpoints first-class without adding shell evaluation or dynamic code:
+
+```json
+{"url":"http://${input.bind_address}:${capture.port}/echo"}
+```
+
+See [Secure HTTP and BITS Control](scenarios/secure-http-bits.md) for HTTPS certificate inspection, authenticated requests, captured listener ports, and paused BITS job control.
 
 ## Use the same interface at different depths
 

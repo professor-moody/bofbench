@@ -54,6 +54,23 @@ enumerate bounded ALPC and LPC port names from an Object Manager directory
 | `prefix` | `wstring` | no | no | `` | case-insensitive port-name prefix |
 | `result_limit` | `int` | no | no | `64` | maximum ports (1-512) |
 
+## `builtin/bits-job-inventory`
+
+enumerate bounded Background Intelligent Transfer Service job metadata
+
+- Can do: bounded current-user Background Intelligent Transfer Service job inventory
+- Effects: reads data
+- Needs: privilege=user; network=none; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `bits_job_inventory`
+- Live proofs: bounded-jobs (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `name_filter` | `wstring` | no | no | `` | case-insensitive display-name substring |
+| `result_limit` | `int` | no | no | `64` | maximum jobs (1-512) |
+
 ## `builtin/certificate-store-inventory`
 
 enumerate bounded certificate metadata from one explicit Windows certificate store
@@ -340,6 +357,26 @@ Collect process, host, user, and temporary-directory context from the current Wi
 - Works with: native, lab, sliver, cobaltstrike
 - Version: `1.0.0`
 - Analyzer signatures: `current_process_context`, `host_identity`, `filesystem_context`
+
+## `builtin/http-response-metadata`
+
+read bounded response status, header, and content metadata from one exact URL
+
+- Can do: exact URL response status, header hash, content type, and length inspection
+- Effects: reads data
+- Needs: privilege=user; network=operator-selected HTTP or HTTPS endpoint; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Analyzer signatures: `http_response_metadata`
+- Live proofs: fixture-https (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `url` | `wstring` | yes | no | `` |  |
+| `method` | `wstring` | no | no | `HEAD` |  |
+| `follow_redirects` | `int` | no | no | `0` |  |
+| `allow_invalid` | `int` | no | no | `0` |  |
+| `timeout_ms` | `int` | no | no | `10000` |  |
 
 ## `builtin/identity`
 
@@ -1316,6 +1353,25 @@ inspect bounded Windows wait chains for an exact process or thread
 | `target_pid` | `int` | no | no | `0` | exact process identifier; required when target_tid is zero |
 | `target_tid` | `int` | no | no | `0` | exact thread identifier; zero enumerates threads in target_pid |
 | `result_limit` | `int` | no | no | `64` | maximum wait-chain nodes (1-512) |
+
+## `builtin/tls-certificate-inventory`
+
+inspect the server certificate presented by one exact HTTPS URL
+
+- Can do: exact HTTPS server-certificate identity, validity, and SHA-256 inspection
+- Effects: reads data
+- Needs: privilege=user; network=operator-selected HTTPS endpoint; platform=windows/x64,x86
+- Works with: native, lab, sliver, cobaltstrike
+- Version: `1.0.0`
+- Stored-output redaction: `subject`, `issuer`
+- Analyzer signatures: `tls_certificate_inventory`
+- Live proofs: fixture-certificate (lab, sliver)
+
+| Argument | Type | Required | Sensitive | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `url` | `wstring` | yes | no | `` | exact HTTPS URL |
+| `allow_invalid` | `int` | no | no | `0` | allow invalid certificates while still reporting their identity |
+| `timeout_ms` | `int` | no | no | `10000` | bounded connection and response timeout |
 
 ## `builtin/token-context`
 

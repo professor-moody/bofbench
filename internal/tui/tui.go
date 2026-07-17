@@ -893,6 +893,7 @@ func (m model) viewOperations() string {
 		children := []string{}
 		lanes := []string{}
 		dependencies := []string{}
+		templates := []string{}
 		for _, step := range item.Document.Steps {
 			if len(step.DependsOn) == 0 && len(step.DependsOnReady) == 0 && operationsvc.IsDAG(item.Document) {
 				dependencies = append(dependencies, step.ID+" ← ready root")
@@ -918,6 +919,11 @@ func (m model) viewOperations() string {
 					lanes = append(lanes, step.ID+"/"+branch.ID+" → "+target)
 				}
 			}
+			for name, value := range step.Arguments {
+				if strings.Contains(value, "${") {
+					templates = append(templates, step.ID+"."+name+" = "+value)
+				}
+			}
 		}
 		if len(dependencies) > 0 {
 			b.WriteString("\nDependency readiness\n")
@@ -935,6 +941,13 @@ func (m model) viewOperations() string {
 			b.WriteString("\nChild operations\n")
 			for _, child := range children {
 				fmt.Fprintf(&b, "  %s\n", child)
+			}
+		}
+		if len(templates) > 0 {
+			sort.Strings(templates)
+			b.WriteString("\nRuntime templates\n")
+			for _, template := range templates {
+				fmt.Fprintf(&b, "  %s\n", template)
 			}
 		}
 		if len(m.operationArguments) == 0 {

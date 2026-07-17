@@ -25,6 +25,8 @@ Static capabilities and observed runtime evidence are intentionally separate:
 
 Operation receipt version 8 retains the complete version-7 asynchronous DAG record and adds per-step attempt number and limit, exact per-attempt runtime receipts, matched retry reason, deterministic delay, next eligible time, attempt captures, exhaustion, and optional attempt-cleanup state. A completion dependency is not scheduled until the normal terminal contract passes. Retry is possible only for complete terminal output matching a declared finite retry contract.
 
+Operation receipt version 9 preserves all version-8 fields and records the pinned definition used to resolve safe argument templates. Template source remains in the operation definition; receipts store only resolved non-sensitive arguments and the names of redacted sensitive values. Resolution supports typed operation inputs, topology fields, and completed ancestor captures—never shell expansion, expressions, or forward references.
+
 Runtime receipt version 6 adds asynchronous worker identity, progress timestamps, cancellation support/request/completion state, and terminal cancellation reasons to version-5 refresh and chunk metadata. Version-4 and version-5 runtime receipts remain readable and are normalized in memory.
 
 ## Quiet automation

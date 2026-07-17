@@ -187,6 +187,35 @@ Inspect a selected process, its loaded images, thread state, and security contex
 
 - `target-process`: via `lab,sliver`, architectures `x64,x86`
 
+## `builtin/secure-network-posture`
+
+Inspect one HTTPS endpoint certificate and response metadata while inventorying current-user BITS jobs
+
+- Schema version: `9`
+- Execution: `dag`
+- Tier: `public`
+- Steps: `3`
+- Proof cases: `1`
+
+### Inputs
+
+| Name | Type | Required | Sensitive | Topology value |
+|---|---|---:|---:|---|
+| `https_url` | `wstring` | true | false | `` |
+| `allow_invalid` | `int` | false | false | `` |
+| `bits_filter` | `wstring` | false | false | `` |
+| `result_limit` | `int` | false | false | `` |
+
+### Steps
+
+1. `certificate` → `tls-certificate-inventory`
+2. `response` → `http-response-metadata`
+3. `bits` → `bits-job-inventory`
+
+### Proof cases
+
+- `fixture-https`: via `lab,sliver`, architectures `x64,x86`, waves `certificate+response+bits`
+
 ## `builtin/wait-chain-triage`
 
 Correlate process images, thread state, handle types, and Windows wait chains for an exact process

@@ -1,6 +1,6 @@
 # Composable, Provable Multi-Step Operations
 
-Operations connect capability packs into result-aware workflows. A step can capture a structured output field—such as a PID, address, hash, path, object name, pipe name, window handle, or retained handle—and pass it to later work. Version 3 can route a completed, understood result to a later step. Version 4 can invoke another catalog operation as an atomic child step. Version 5 can run explicit parallel groups. Version 6 adds dependency-aware DAG execution. Version 7 adds bounded background steps, readiness dependencies, live progress, and cancellation. Version 8 adds finite retry for explicitly declared complete transient results. Work advances only when the relevant contract is true:
+Operations connect capability packs into result-aware workflows. A step can capture a structured output field—such as a PID, address, hash, path, object name, pipe name, window handle, or retained handle—and pass it to later work. Version 3 can route a completed, understood result to a later step. Version 4 can invoke another catalog operation as an atomic child step. Version 5 can run explicit parallel groups. Version 6 adds dependency-aware DAG execution. Version 7 adds bounded background steps, readiness dependencies, live progress, and cancellation. Version 8 adds finite retry for explicitly declared complete transient results. Version 9 adds safe interpolation of typed inputs, topology fields, and ancestor captures inside argument strings. Work advances only when the relevant contract is true:
 
 1. the runtime task completed with complete output; and
 2. the step's declared structured-result contract matched.
@@ -52,7 +52,7 @@ bofbench operation run internal/virtual-memory-execute \
 
 Normal operation accepts operator-selected targets and payloads. Proof fixtures and benign proof payloads are acceptance infrastructure, not runtime restrictions. `--cleanup` and `--cleanup-on-failure` remain optional.
 
-The run creates `runs/<run-id>/operation.json`. The version-8 receipt pins the complete transitive operation and pack set, action and cleanup pack hashes, child receipt paths, object hashes, runtime receipts, terminal and readiness contract state, matched outcomes, completion/readiness dependencies, waves, blocked steps, active task identity, timestamps, cancellation state, parent and expanded execution paths, non-sensitive captures, retry attempts/reasons/backoff, and cleanup results. Sensitive values are never stored.
+The run creates `runs/<run-id>/operation.json`. The version-9 receipt pins the complete transitive operation and pack set, action and cleanup pack hashes, child receipt paths, object hashes, runtime receipts, terminal and readiness contract state, matched outcomes, completion/readiness dependencies, waves, blocked steps, active task identity, timestamps, cancellation state, parent and expanded execution paths, non-sensitive captures, retry attempts/reasons/backoff, resolved template arguments, and cleanup results. Sensitive values are never stored.
 
 ```mermaid
 flowchart LR
@@ -261,6 +261,33 @@ The boundary is deliberate:
 - each attempt retains its exact runtime receipt, matched reason, captures, delay, and optional cleanup result.
 
 Proof cases can assert `expect_attempts` and the ordered `expect_retry_reasons`. Watch, graph, JSON, and the TUI expose `attempt N/max`, the current reason, next eligible time, and exhaustion. See [Resilient Network Transport](scenarios/network-transport-retry.md) for a 503→200 run that uses no wrapper scripts.
+
+## Runtime argument templates
+
+Schema version 9 can place resolved values inside an otherwise literal argument:
+
+```json
+{
+  "id": "request",
+  "pack": "winhttp-request",
+  "depends_on_ready": ["listener"],
+  "arguments": {
+    "url": "http://${input.bind_address}:${capture.port}/echo"
+  }
+}
+```
+
+Supported forms are `${input.name}`, `${capture.name}`, `${step.id.capture}`, and `${topology.role.field}`. Existing exact references such as `$input.url` remain unchanged. Templates are resolved by BOFBench itself; they do not run a shell, evaluate expressions, expand environment variables, or create steps dynamically.
+
+Validation applies the same rules as exact references:
+
+- every input must exist;
+- every capture must already exist in a linear definition or belong to a transitive DAG ancestor;
+- topology references must select a declared role and field;
+- missing and unterminated references stop before build or execution;
+- an argument containing a sensitive input remains sensitive after interpolation and is redacted from receipts.
+
+Version-1 through version-8 definitions remain readable, but embedded templates require version 9. The TUI definition view lists every templated argument before execution.
 
 ## Parallel groups
 

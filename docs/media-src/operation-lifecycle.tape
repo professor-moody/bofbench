@@ -4,20 +4,20 @@ Set Width 1280
 Set Height 720
 Set FontSize 17
 Set TypingSpeed 40ms
-Set PlaybackSpeed 2.4
-Type "bofbench operation graph internal/network-transport-matrix"
+Set PlaybackSpeed 2.6
+Type "bofbench operation graph internal/secure-transport-matrix"
 Enter
 Sleep 2s
-Type "bofbench operation prove internal/network-transport-matrix --via lab --lab $BOFBENCH_DOCS_LAB --arch x64 --parallelism 4"
+Type "bofbench operation prove internal/secure-transport-matrix --via lab --lab $BOFBENCH_DOCS_LAB --parallelism 2"
 Enter
 Wait+Screen@120s /OPERATION PROOF PASS/
 Sleep 2s
-Type "bofbench operation watch runs/*operation-http-transaction-roundtrip*/operation.json"
+Type "bofbench operation watch runs/*operation-secure-transport-matrix*/children/listener/operation.json"
 Enter
 Sleep 2s
-Type "bofbench operation watch runs/*operation-tcp-echo-roundtrip*/operation.json"
+Type "bofbench operation watch runs/*operation-secure-transport-matrix*/operation.json"
 Enter
 Sleep 2s
-Type "bofbench operation cleanup runs/*operation-network-transport-matrix*/operation.json --parallelism 4"
+Type "bofbench operation cleanup runs/*operation-secure-transport-matrix*/operation.json --parallelism 2"
 Enter
-Sleep 8s
+Sleep 5s

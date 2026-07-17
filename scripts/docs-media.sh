@@ -47,7 +47,7 @@ rm -rf \
   bofs/docs-capture bofs/docs-lab bofs/docs-export \
   export/docs-capture-* export/docs-lab-* export/docs-export-* \
   dist/docs-capture.* dist/docs-lab.* dist/docs-export.* || true
-for existing in runs/*operation-network-transport-matrix* runs/*operation-http-transaction-roundtrip* runs/*operation-tcp-echo-roundtrip*; do
+for existing in runs/*operation-secure-transport-matrix* runs/*operation-http-listener-roundtrip* runs/*operation-authenticated-http-roundtrip* runs/*operation-bits-control-lifecycle*; do
 	[[ -e "$existing" ]] || continue
 	mv "$existing" "$MEDIA_RUN_STASH"/
 done
@@ -88,7 +88,7 @@ for video in docs/assets/media/*.webm; do
     build-analyze) poster_second=10 ;;
     export-verify) poster_second=12 ;;
     lab-run) poster_second=12 ;;
-    operation-lifecycle) poster_second=30 ;;
+    operation-lifecycle) poster_second=41 ;;
     runtime-tasks) poster_second=27 ;;
     third-party-analysis) poster_second=6 ;;
     *) poster_second=6 ;;

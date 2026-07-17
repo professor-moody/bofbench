@@ -90,6 +90,7 @@ nav:
       - Dependency-Aware IPC: scenarios/dependency-aware-ipc.md
       - Asynchronous Eventing and Cancellation: scenarios/asynchronous-eventing.md
       - Resilient Network Transport and Retry: scenarios/network-transport-retry.md
+      - Secure HTTP and BITS Control: scenarios/secure-http-bits.md
       - Operator Playbooks: playbooks.md
       - Deep Capability Workflows: deep-capabilities.md
       - Native Process Depth: native-process-depth.md

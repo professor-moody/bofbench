@@ -137,16 +137,16 @@ def main() -> int:
     public_reference = (root / "docs/pack-reference.md").read_text(encoding="utf-8")
     public_ids = set(re.findall(r"^## `builtin/([^`]+)`", public_reference, re.MULTILINE))
     public_count = len(public_ids)
-    if public_count != 90:
-        errors.append(f"public pack reference count is {public_count}, expected 90")
+    if public_count != 93:
+        errors.append(f"public pack reference count is {public_count}, expected 93")
 
     public_operation_reference = (root / "docs/operation-reference.md").read_text(encoding="utf-8")
     public_operation_ids = set(
         re.findall(r"^## `builtin/([^`]+)`", public_operation_reference, re.MULTILINE)
     )
-    if len(public_operation_ids) != 8:
+    if len(public_operation_ids) != 9:
         errors.append(
-            f"public operation reference count is {len(public_operation_ids)}, expected 8"
+            f"public operation reference count is {len(public_operation_ids)}, expected 9"
         )
 
     check_media(root, errors)
@@ -158,8 +158,8 @@ def main() -> int:
         private_reference = (private / "PACK_REFERENCE.md").read_text(encoding="utf-8")
         private_ids = set(re.findall(r"^## `bofbench-packs-internal/([^`]+)`", private_reference, re.MULTILINE))
         private_count = len(private_ids)
-        if private_count != 154:
-            errors.append(f"private pack reference count is {private_count}, expected 154")
+        if private_count != 161:
+            errors.append(f"private pack reference count is {private_count}, expected 161")
         private_operation_reference = (private / "OPERATION_REFERENCE.md").read_text(
             encoding="utf-8"
         )
@@ -170,9 +170,9 @@ def main() -> int:
                 re.MULTILINE,
             )
         )
-        if len(private_operation_ids) != 42:
+        if len(private_operation_ids) != 47:
             errors.append(
-                f"private operation reference count is {len(private_operation_ids)}, expected 42"
+                f"private operation reference count is {len(private_operation_ids)}, expected 47"
             )
         known_output_tags |= private_ids
         for manifest in private.glob("*/pack.json"):
