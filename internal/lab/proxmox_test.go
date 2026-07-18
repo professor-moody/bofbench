@@ -82,3 +82,22 @@ func TestProxmoxProviderUPIDAndGuestDiscovery(t *testing.T) {
 		t.Fatalf("requests=%v", requests)
 	}
 }
+
+func TestProxmoxTemplateFormAttachesOptionalDriverISO(t *testing.T) {
+	prep := ProxmoxPreparation{Pool: "bofbench", Storage: "local-lvm"}
+	spec := ProxmoxTemplateSpec{VMID: 4102, Name: "server", ISO: "local:iso/server.iso", DriverISO: " local:iso/virtio.iso ", Cores: 4, MemoryMB: 4096, DiskGB: 64, Bridge: "vmbr290", OSType: "win11"}
+	form := proxmoxTemplateCreateForm(prep, spec)
+	if form.Get("ide2") != "local:iso/server.iso,media=cdrom" {
+		t.Fatalf("installer ISO=%q", form.Get("ide2"))
+	}
+	if form.Get("ide0") != "local:iso/virtio.iso,media=cdrom" {
+		t.Fatalf("driver ISO=%q", form.Get("ide0"))
+	}
+	if form.Get("scsi0") != "local-lvm:64,discard=on,iothread=1,ssd=1" {
+		t.Fatalf("disk=%q", form.Get("scsi0"))
+	}
+	withoutDriver := proxmoxTemplateCreateForm(prep, ProxmoxTemplateSpec{VMID: 4102, ISO: "local:iso/server.iso"})
+	if withoutDriver.Has("ide0") {
+		t.Fatalf("unexpected driver ISO: %q", withoutDriver.Get("ide0"))
+	}
+}

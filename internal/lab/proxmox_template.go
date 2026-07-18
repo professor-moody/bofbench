@@ -22,15 +22,16 @@ type ProxmoxMedia struct {
 // ProxmoxTemplateSpec describes a BOFBench-owned installation VM. It does not
 // contain API tokens, guest passwords, product keys, or unattend secrets.
 type ProxmoxTemplateSpec struct {
-	VMID     int    `json:"vmid"`
-	Name     string `json:"name"`
-	ISO      string `json:"iso"`
-	Cores    int    `json:"cores"`
-	MemoryMB int    `json:"memory_mb"`
-	DiskGB   int    `json:"disk_gb"`
-	Bridge   string `json:"bridge"`
-	OSType   string `json:"os_type,omitempty"`
-	Start    bool   `json:"start"`
+	VMID      int    `json:"vmid"`
+	Name      string `json:"name"`
+	ISO       string `json:"iso"`
+	DriverISO string `json:"driver_iso,omitempty"`
+	Cores     int    `json:"cores"`
+	MemoryMB  int    `json:"memory_mb"`
+	DiskGB    int    `json:"disk_gb"`
+	Bridge    string `json:"bridge"`
+	OSType    string `json:"os_type,omitempty"`
+	Start     bool   `json:"start"`
 }
 
 type proxmoxStorageContent struct {
@@ -135,19 +136,7 @@ func BuildProxmoxTemplate(ctx context.Context, preparationPath string, spec Prox
 	if status.State != "absent" {
 		return receipt, fmt.Errorf("vmid %d already exists as %s; refusing to replace it", spec.VMID, status.Name)
 	}
-	form := url.Values{}
-	form.Set("vmid", strconv.Itoa(spec.VMID))
-	form.Set("name", spec.Name)
-	form.Set("pool", prep.Pool)
-	form.Set("cores", strconv.Itoa(spec.Cores))
-	form.Set("memory", strconv.Itoa(spec.MemoryMB))
-	form.Set("ostype", spec.OSType)
-	form.Set("scsihw", "virtio-scsi-single")
-	form.Set("scsi0", fmt.Sprintf("%s:%d,discard=on,iothread=1,ssd=1", prep.Storage, spec.DiskGB))
-	form.Set("ide2", spec.ISO+",media=cdrom")
-	form.Set("net0", "virtio,bridge="+spec.Bridge)
-	form.Set("agent", "enabled=1")
-	form.Set("boot", "order=ide2;scsi0")
+	form := proxmoxTemplateCreateForm(prep, spec)
 	var task string
 	if err := client.request(ctx, http.MethodPost, "/nodes/"+url.PathEscape(prep.Node)+"/qemu", form, &task); err != nil {
 		return receipt, err
@@ -181,4 +170,24 @@ func BuildProxmoxTemplate(ctx context.Context, preparationPath string, spec Prox
 		return receipt, err
 	}
 	return receipt, nil
+}
+
+func proxmoxTemplateCreateForm(prep ProxmoxPreparation, spec ProxmoxTemplateSpec) url.Values {
+	form := url.Values{}
+	form.Set("vmid", strconv.Itoa(spec.VMID))
+	form.Set("name", spec.Name)
+	form.Set("pool", prep.Pool)
+	form.Set("cores", strconv.Itoa(spec.Cores))
+	form.Set("memory", strconv.Itoa(spec.MemoryMB))
+	form.Set("ostype", spec.OSType)
+	form.Set("scsihw", "virtio-scsi-single")
+	form.Set("scsi0", fmt.Sprintf("%s:%d,discard=on,iothread=1,ssd=1", prep.Storage, spec.DiskGB))
+	form.Set("ide2", spec.ISO+",media=cdrom")
+	if strings.TrimSpace(spec.DriverISO) != "" {
+		form.Set("ide0", strings.TrimSpace(spec.DriverISO)+",media=cdrom")
+	}
+	form.Set("net0", "virtio,bridge="+spec.Bridge)
+	form.Set("agent", "enabled=1")
+	form.Set("boot", "order=ide2;scsi0")
+	return form
 }

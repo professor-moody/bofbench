@@ -197,6 +197,8 @@ bofbench lab topology status proxmox-standalone
 
 For a domain topology, add the domain-controller profile after Server media and a DC template are available:
 
+When creating the Server installation VM, pass the exact VirtIO driver ISO with `lab template build --driver-iso ...` so Windows Setup can load the BOFBench template disk and network drivers without any host-wide Proxmox change.
+
 ```bash
 bofbench lab topology add proxmox-domain \
   --execution devbox \

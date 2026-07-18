@@ -53,10 +53,45 @@ func labMediaListCommand(stdout io.Writer) *cobra.Command {
 
 func labTemplateCommand(stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{Use: "template", Short: "Inspect and prepare BOFBench-owned provider templates"}
-	convert := labProviderCommand(stdout, "template")
-	convert.Use = "convert"
-	convert.Short = "Convert an installed provider VM into a reusable template"
-	cmd.AddCommand(labTemplateStatusCommand(stdout), labTemplateBuildCommand(stdout), convert)
+	cmd.AddCommand(labTemplateStatusCommand(stdout), labTemplateBuildCommand(stdout), labTemplateConvertCommand(stdout))
+	return cmd
+}
+
+func labTemplateConvertCommand(stdout io.Writer) *cobra.Command {
+	var labName, profilesPath, format string
+	cmd := &cobra.Command{Use: "convert", Short: "Convert the installed source VM into the profile's reusable template", Args: cobra.NoArgs}
+	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		resolved, err := lab.ResolveProfile(labName, ".", profilesPath)
+		if err != nil {
+			return err
+		}
+		if resolved.Profile.Proxmox == nil {
+			return fmt.Errorf("lab %s is not Proxmox-backed", resolved.Name)
+		}
+		if resolved.Profile.Proxmox.TemplateVMID == 0 {
+			return fmt.Errorf("lab %s has no Proxmox source template VMID", resolved.Name)
+		}
+		if format != "text" && format != "json" {
+			return fmt.Errorf("lab template convert format must be text or json")
+		}
+		profile := templateStatusProfile(resolved.Profile, 0)
+		receipt, actionErr := lab.RunProviderAction(cmd.Context(), resolved.Name, profile, "template", lab.ProviderActionOptions{})
+		if format == "json" {
+			if err := printJSON(stdout, receipt); err != nil {
+				return err
+			}
+		} else {
+			fmt.Fprint(stdout, lab.ProviderReceiptText(receipt))
+		}
+		if actionErr != nil {
+			return codedError{code: 1, err: actionErr}
+		}
+		return nil
+	}
+	cmd.Flags().StringVar(&labName, "lab", "", "Proxmox-backed lab profile whose source template is installed")
+	cmd.Flags().StringVar(&profilesPath, "profiles", lab.ProfilesPath(), "global lab profiles file")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
+	_ = cmd.MarkFlagRequired("lab")
 	return cmd
 }
 
@@ -121,7 +156,7 @@ func templateStatusProfile(profile lab.Profile, requestedVMID int) lab.Profile {
 }
 
 func labTemplateBuildCommand(stdout io.Writer) *cobra.Command {
-	var labName, profilesPath, preparation, iso, name, bridge, osType, format string
+	var labName, profilesPath, preparation, iso, driverISO, name, bridge, osType, format string
 	var vmid, cores, memoryMB, diskGB int
 	var start bool
 	cmd := &cobra.Command{Use: "build", Short: "Create a BOFBench-owned Windows installation VM from an exact ISO", Args: cobra.NoArgs}
@@ -144,20 +179,21 @@ func labTemplateBuildCommand(stdout io.Writer) *cobra.Command {
 			}
 			defer cleanup()
 		}
-		receipt, err := lab.BuildProxmoxTemplate(cmd.Context(), preparation, lab.ProxmoxTemplateSpec{VMID: vmid, Name: name, ISO: iso, Cores: cores, MemoryMB: memoryMB, DiskGB: diskGB, Bridge: bridge, OSType: osType, Start: start})
+		receipt, err := lab.BuildProxmoxTemplate(cmd.Context(), preparation, lab.ProxmoxTemplateSpec{VMID: vmid, Name: name, ISO: iso, DriverISO: driverISO, Cores: cores, MemoryMB: memoryMB, DiskGB: diskGB, Bridge: bridge, OSType: osType, Start: start})
 		if err != nil {
 			return err
 		}
 		if format == "json" {
 			return printJSON(stdout, receipt)
 		}
-		fmt.Fprintf(stdout, "Template installation VM prepared\nvmid     %d\nstate    %s\niso      %s\nreceipt  %s\nnext     install Windows, enable the guest agent/transport, then run 'bofbench lab template --lab %s'\n", receipt.Resource.VMID, receipt.Resource.State, iso, receipt.EvidencePath, labName)
+		fmt.Fprintf(stdout, "Template installation VM prepared\nvmid     %d\nstate    %s\niso      %s\nreceipt  %s\nnext     install Windows, enable the guest agent/transport, then run 'bofbench lab template convert --lab %s'\n", receipt.Resource.VMID, receipt.Resource.State, iso, receipt.EvidencePath, labName)
 		return nil
 	}
 	cmd.Flags().StringVar(&labName, "lab", "", "Proxmox-backed template lab profile")
 	cmd.Flags().StringVar(&profilesPath, "profiles", lab.ProfilesPath(), "global lab profiles file")
 	cmd.Flags().StringVar(&preparation, "proxmox-prep", defaultProxmoxPreparationPath(), "secret-free Proxmox preparation file")
 	cmd.Flags().StringVar(&iso, "iso", "", "exact Proxmox ISO volume, for example local:iso/windows-server.iso")
+	cmd.Flags().StringVar(&driverISO, "driver-iso", "", "optional exact VirtIO or storage-driver ISO volume")
 	cmd.Flags().StringVar(&name, "name", "", "installation VM name")
 	cmd.Flags().StringVar(&bridge, "bridge", "", "network bridge; defaults to the preparation lab bridge")
 	cmd.Flags().StringVar(&osType, "os-type", "win11", "Proxmox guest OS type")

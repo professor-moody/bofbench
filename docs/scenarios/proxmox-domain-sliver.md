@@ -29,7 +29,9 @@ If the Server ISO is absent, stop here. The domain lane is unavailable—not pas
 ```bash
 bofbench lab template build --lab proxmox-domain-dc \
   --vmid 4102 --name bofbench-windows-server-template \
-  --iso local:iso/windows-server.iso --memory-mb 4096 --cores 4
+  --iso local:iso/SERVER_EVAL_x64FRE_en-us.iso \
+  --driver-iso local:iso/virtio-win-0.1.271.iso \
+  --memory-mb 4096 --cores 4
 
 bofbench lab topology up proxmox-domain
 bofbench lab topology provision proxmox-domain \
