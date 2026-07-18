@@ -57,10 +57,12 @@ nav:
       - Windows Lab: windows-lab.md
       - Portable Lab Profiles: lab-profiles.md
       - Proxmox-Native Labs: proxmox-labs.md
+      - Neutral Operator Lab: operator-lab.md
       - Lab Architecture: lab-setup.md
       - Sliver: sliver.md
       - Cobalt Strike: cobaltstrike.md
       - Export: staging.md
+      - EDR Lab Bundles: edrlab-export.md
       - Runtime Receipts: evidence.md
       - Operator TUI: tui.md
   - Scenarios:

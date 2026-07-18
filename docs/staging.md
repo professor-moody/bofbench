@@ -7,6 +7,7 @@ bofbench export bofs/fieldcheck --for raw
 bofbench export bofs/fieldcheck --for sliver --arch x64
 bofbench export bofs/fieldcheck --for sliver --arch x86
 bofbench export bofs/fieldcheck --for cobaltstrike
+bofbench export bofs/fieldcheck --for edrlab
 ```
 
 Every package includes:

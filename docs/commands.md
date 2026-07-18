@@ -11,7 +11,7 @@
 | `build` | Compile a project to a COFF object. |
 | `analyze` | Explain capabilities, chains, effects, arguments, requirements, and runtime support. |
 | `run --via` | Execute through `native`, `lab`, `sliver`, or `cobaltstrike`. |
-| `export --for` | Produce raw, Sliver, or Cobalt Strike packages. |
+| `export --for` | Produce raw, Sliver, Cobalt Strike, or EDR Lab packages. |
 | `arsenal` | Acquire, index, search, compare, and operate on external BOFs. |
 | `operation` | Run, resume, inspect, and reverse-clean multi-step pack workflows. |
 | `lab` | Configure, bootstrap, run, snapshot, restore, and inspect Windows labs. |
@@ -136,6 +136,7 @@ bofbench export bofs/portable-survey --for raw
 bofbench export bofs/portable-survey --for sliver --arch x64
 bofbench export bofs/portable-survey --for sliver --arch x86
 bofbench export bofs/portable-survey --for cobaltstrike
+bofbench export bofs/portable-survey --for edrlab
 bofbench export verify export/portable-survey-sliver.zip
 ```
 
