@@ -50,3 +50,17 @@ func TestProfileCloneProxmoxOverridesDoNotMutateSource(t *testing.T) {
 		t.Fatalf("source Proxmox VMID mutated through clone: %d", source.Proxmox.VMID)
 	}
 }
+
+func TestTemplateStatusUsesProfileSourceTemplateAndHonorsOverride(t *testing.T) {
+	profile := lab.DefaultProfile("proxmox")
+	profile.Proxmox.VMID = 4130
+	profile.Proxmox.TemplateVMID = 4102
+	selected := templateStatusProfile(profile, 0)
+	if selected.Proxmox.VMID != 4102 || profile.Proxmox.VMID != 4130 {
+		t.Fatalf("selected=%d source=%d", selected.Proxmox.VMID, profile.Proxmox.VMID)
+	}
+	overridden := templateStatusProfile(profile, 4104)
+	if overridden.Proxmox.VMID != 4104 {
+		t.Fatalf("override=%d", overridden.Proxmox.VMID)
+	}
+}

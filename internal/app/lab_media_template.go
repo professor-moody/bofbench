@@ -73,7 +73,8 @@ func labTemplateStatusCommand(stdout io.Writer) *cobra.Command {
 			if resolved.Profile.Proxmox == nil {
 				return fmt.Errorf("lab %s is not Proxmox-backed", resolved.Name)
 			}
-			receipt, err := lab.RunProviderAction(cmd.Context(), resolved.Name, resolved.Profile, "status", lab.ProviderActionOptions{})
+			statusProfile := templateStatusProfile(resolved.Profile, vmid)
+			receipt, err := lab.RunProviderAction(cmd.Context(), resolved.Name, statusProfile, "status", lab.ProviderActionOptions{})
 			if err != nil {
 				return err
 			}
@@ -99,9 +100,24 @@ func labTemplateStatusCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&labName, "lab", "", "Proxmox-backed lab profile")
 	cmd.Flags().StringVar(&profilesPath, "profiles", lab.ProfilesPath(), "global lab profiles file")
 	cmd.Flags().StringVar(&preparation, "proxmox-prep", defaultProxmoxPreparationPath(), "secret-free Proxmox preparation file")
-	cmd.Flags().IntVar(&vmid, "vmid", 0, "exact BOFBench-owned VMID")
+	cmd.Flags().IntVar(&vmid, "vmid", 0, "exact BOFBench-owned VMID; overrides the profile source template")
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text or json")
 	return cmd
+}
+
+func templateStatusProfile(profile lab.Profile, requestedVMID int) lab.Profile {
+	result := cloneLabProfile(profile)
+	if result.Proxmox == nil {
+		return result
+	}
+	selected := requestedVMID
+	if selected == 0 {
+		selected = result.Proxmox.TemplateVMID
+	}
+	if selected != 0 {
+		result.Proxmox.VMID = selected
+	}
+	return result
 }
 
 func labTemplateBuildCommand(stdout io.Writer) *cobra.Command {
