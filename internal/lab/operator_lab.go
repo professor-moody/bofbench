@@ -47,6 +47,18 @@ type operatorLabDoctor struct {
 	Error   string `json:"error,omitempty"`
 }
 
+type OperatorLabEvidence struct {
+	SchemaVersion  string           `json:"schema_version"`
+	LeaseID        string           `json:"lease_id"`
+	SensorSession  string           `json:"sensor_session"`
+	ControllerTime time.Time        `json:"controller_time"`
+	SnapshotDigest string           `json:"snapshot_digest"`
+	PCAPComplete   bool             `json:"pcap_complete"`
+	Limitation     string           `json:"limitation,omitempty"`
+	Markers        []map[string]any `json:"markers"`
+	PCAPFiles      []map[string]any `json:"pcap_files,omitempty"`
+}
+
 type OperatorLabClient struct {
 	endpoint string
 	http     *http.Client
@@ -110,6 +122,12 @@ func (c *OperatorLabClient) Marker(ctx context.Context, id, name string, sequenc
 
 func (c *OperatorLabClient) Heartbeat(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/v1/leases/"+url.PathEscape(id)+"/heartbeat", map[string]any{}, nil)
+}
+
+func (c *OperatorLabClient) Evidence(ctx context.Context, id string) (OperatorLabEvidence, error) {
+	var evidence OperatorLabEvidence
+	err := c.do(ctx, http.MethodGet, "/v1/leases/"+url.PathEscape(id)+"/evidence", nil, &evidence)
+	return evidence, err
 }
 
 func (c *OperatorLabClient) Release(ctx context.Context, id string) (OperatorLabLease, error) {
@@ -207,6 +225,22 @@ func OperatorLabRemoteOptions(profileName string, profile Profile, lease Operato
 	}
 	user := firstNonempty(profile.OperatorLab.User, "bofbench")
 	return RemoteOptions{ProfileName: profileName, Transport: "ssh", Host: lease.Address, User: user, Port: 22, IdentityFile: expandUserPath(identity), KnownHosts: knownHosts, BuildMode: "local", RemoteRoot: profile.RemoteRoot}, nil
+}
+
+// CleanupOperatorLabWorkspace removes only the declared run-owned root inside
+// the disposable lease, recreates it empty, and verifies the result. Clone
+// destruction remains mandatory and is a separate proof.
+func CleanupOperatorLabWorkspace(ctx context.Context, options RemoteOptions) error {
+	root := strings.TrimSpace(options.RemoteRoot)
+	if root == "" {
+		return fmt.Errorf("operator-lab remote root is empty")
+	}
+	script := fmt.Sprintf(`$ErrorActionPreference='Stop';$root=%s;if(Test-Path -LiteralPath $root){Get-ChildItem -Force -LiteralPath $root|Remove-Item -Recurse -Force};if(-not(Test-Path -LiteralPath $root)){New-Item -ItemType Directory -Force -Path $root|Out-Null};if(@(Get-ChildItem -Force -LiteralPath $root).Count -ne 0){throw 'operator-lab workspace cleanup incomplete'}`, powerShellQuote(root))
+	_, stderr, err := remoteExecute(ctx, options, script)
+	if err != nil {
+		return fmt.Errorf("operator-lab workspace cleanup: %w: %s", err, boundedText(string(stderr), 2048))
+	}
+	return nil
 }
 
 func firstNonempty(values ...string) string {

@@ -84,6 +84,8 @@ type LabLeaseReference struct {
 	DestroyTask       string `json:"destroy_task,omitempty"`
 	DestructionProof  string `json:"destruction_proof,omitempty"`
 	DestructionProved bool   `json:"destruction_proved"`
+	EvidenceSnapshot  string `json:"evidence_snapshot,omitempty"`
+	PCAPComplete      bool   `json:"pcap_complete"`
 }
 
 type Receipt struct {

@@ -31,12 +31,27 @@ bofbench run bofs/portable-survey \
   --via lab --lab shared-x64 --observe full
 ```
 
-`--observe full` writes ordered start/completion markers. The runtime receipt
+`--observe full` writes ordered lease, operation-start, operation-complete,
+workspace-cleanup, and destruction-request markers. It freezes the neutral
+controller's marker/clock and bounded PCAP snapshot before release. The runtime receipt
 records the lease ID, neutral profile identity, VMID, sensor session, deadline,
-clone task, destroy task, and destruction proof. It records neither mTLS key nor
+clone task, evidence-snapshot identity, PCAP completion, destroy task, and
+destruction proof. It records neither mTLS key nor
 guest private key. Clone-destruction failure fails the operation and leaves the
 neutral lab quarantined.
 
 Only `labd` owns machine lifecycle. BOFBench still owns its build, typed
 arguments, runtime result, and cleanup semantics; it does not classify EDR
 alerts or loader parity.
+
+The repository-owned live runner builds and observes `portable-survey`, exports
+the exact object/loader contract as `windows.artifact-bundle/v1`, then asks EDR
+Lab to execute those frozen bytes on separate Defender and Elastic leases:
+
+```text
+qualification/run-operator-lab-live.sh qualification/live/operator-lab
+```
+
+The final verifier requires the BOF effect, complete product/Sysmon/PCAP sensor
+sets, scores, workspace cleanup, and clone destruction. A missing neutral-lab
+key, profile, sensor, or destruction proof remains a live gate.

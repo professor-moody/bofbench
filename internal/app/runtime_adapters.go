@@ -307,9 +307,13 @@ func (run *runtimeRunContext) executeLab(ctx context.Context, _ runtimeadapter.P
 			return runtimeadapter.Receipt{}, err
 		}
 		if strings.ToLower(strings.TrimSpace(run.observe)) == "full" {
-			if err = operatorClient.Marker(ctx, operatorLease.ID, "bofbench-execution-start", 1); err != nil {
+			if err = operatorClient.Marker(ctx, operatorLease.ID, "lease-verified", 1); err != nil {
 				_, _ = operatorClient.Release(context.Background(), operatorLease.ID)
-				return runtimeadapter.Receipt{}, fmt.Errorf("record operator-lab start marker: %w", err)
+				return runtimeadapter.Receipt{}, fmt.Errorf("record operator-lab lease marker: %w", err)
+			}
+			if err = operatorClient.Marker(ctx, operatorLease.ID, "operation-started", 2); err != nil {
+				_, _ = operatorClient.Release(context.Background(), operatorLease.ID)
+				return runtimeadapter.Receipt{}, fmt.Errorf("record operator-lab operation marker: %w", err)
 			}
 		}
 		stopHeartbeat, heartbeatErrors = operatorClient.StartHeartbeat(ctx, operatorLease.ID)
@@ -370,8 +374,27 @@ func (run *runtimeRunContext) executeLab(ctx context.Context, _ runtimeadapter.P
 	}
 	if operatorClient != nil {
 		var markerErr error
+		var cleanupErr error
+		var evidenceErr error
+		var operatorEvidence lab.OperatorLabEvidence
 		if strings.ToLower(strings.TrimSpace(run.observe)) == "full" {
-			markerErr = operatorClient.Marker(context.Background(), operatorLease.ID, "bofbench-execution-complete", 2)
+			markerErr = operatorClient.Marker(context.Background(), operatorLease.ID, "operation-complete", 3)
+			cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 2*time.Minute)
+			cleanupErr = lab.CleanupOperatorLabWorkspace(cleanupCtx, remoteOptions)
+			cancelCleanup()
+			cleanupMarker := "cleanup-complete"
+			if cleanupErr != nil {
+				cleanupMarker = "cleanup-failed"
+			}
+			if markerErr == nil {
+				markerErr = operatorClient.Marker(context.Background(), operatorLease.ID, cleanupMarker, 4)
+			}
+			if markerErr == nil {
+				operatorEvidence, evidenceErr = operatorClient.Evidence(context.Background(), operatorLease.ID)
+			}
+			if markerErr == nil {
+				markerErr = operatorClient.Marker(context.Background(), operatorLease.ID, "destruction-requested", 5)
+			}
 		}
 		if stopHeartbeat != nil {
 			stopHeartbeat()
@@ -386,6 +409,10 @@ func (run *runtimeRunContext) executeLab(ctx context.Context, _ runtimeadapter.P
 		cancelRelease()
 		released = releaseErr == nil
 		leaseRef := &runtimeadapter.LabLeaseReference{Provider: "operator-lab", LeaseID: operatorLease.ID, Profile: operatorLease.Profile, ProfileIdentity: operatorLease.ProfileIdentity, VMID: operatorLease.VMID, SensorSession: operatorLease.SensorSession, Deadline: operatorLease.Deadline.UTC().Format(time.RFC3339Nano), CloneTask: operatorLease.CloneTask}
+		if evidenceErr == nil {
+			leaseRef.EvidenceSnapshot = operatorEvidence.SnapshotDigest
+			leaseRef.PCAPComplete = operatorEvidence.PCAPComplete
+		}
 		if releaseErr == nil {
 			leaseRef.DestroyTask, leaseRef.DestructionProof, leaseRef.DestructionProved = releasedLease.DestroyTask, releasedLease.DestructionProof, releasedLease.State == "released" && releasedLease.DestructionProof != ""
 		}
@@ -397,6 +424,12 @@ func (run *runtimeRunContext) executeLab(ctx context.Context, _ runtimeadapter.P
 		}
 		if markerErr != nil && runErr == nil {
 			runErr = fmt.Errorf("record operator-lab completion marker: %w", markerErr)
+		}
+		if cleanupErr != nil && runErr == nil {
+			runErr = cleanupErr
+		}
+		if evidenceErr != nil && runErr == nil {
+			runErr = fmt.Errorf("freeze operator-lab evidence: %w", evidenceErr)
 		}
 		if heartbeatErr != nil && runErr == nil {
 			runErr = fmt.Errorf("operator-lab heartbeat failed: %w", heartbeatErr)
