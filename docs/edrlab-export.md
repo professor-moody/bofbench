@@ -19,6 +19,18 @@ The output schema is `windows.artifact-bundle/v1`. The fixed wrapper writes the
 effect only when the native loader returns a valid `pass` result. It does not
 change BOF arguments or infer a successful external security effect.
 
+An operator may attach selected ReverseLab observations:
+
+```text
+bofbench export bofs/portable-survey --for edrlab \
+  --guidance guidance/windows-build-guidance.json \
+  --guidance-observation abi-runtime-1
+```
+
+The exporter verifies the guidance schema and selected IDs, hashes the exact
+file, and copies it owner-only. It does not alter the BOF, loader, arguments,
+effect, or cleanup automatically.
+
 ```text
 edrlab artifact export/portable-survey-edrlab/windows-artifact-bundle.json \
   --target-set targets/operator-lab.yml \
