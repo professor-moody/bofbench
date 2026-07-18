@@ -98,6 +98,11 @@ func executeComparisonRuntime(ctx context.Context, project, runtimeName string, 
 		compiler: opts.compiler, arch: opts.arch, runtimeName: "windows-coff", resolved: resolved, packed: packed, items: items,
 		labName: opts.lab, labProfiles: opts.profiles, bootstrapMode: opts.bootstrap,
 		sliverClient: opts.sliverClient, sliverSession: opts.sliverSession,
+		// A runtime comparison is meaningful only when every lane executes the
+		// same object. Force the lab adapter to build locally and upload instead
+		// of allowing a remote compiler to produce an equivalent-but-different
+		// COFF object.
+		forceLocalLab: runtimeName == "lab",
 	}
 	run.sensitiveOutputFields, run.sensitiveArgumentNames, run.sensitiveValues = runtimeSensitivity(project, resolved)
 	registry, err := runtimeAdapterRegistry(run)

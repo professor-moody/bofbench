@@ -4,7 +4,8 @@
 
 ```bash
 bofbench export bofs/fieldcheck --for raw
-bofbench export bofs/fieldcheck --for sliver
+bofbench export bofs/fieldcheck --for sliver --arch x64
+bofbench export bofs/fieldcheck --for sliver --arch x86
 bofbench export bofs/fieldcheck --for cobaltstrike
 ```
 
@@ -18,6 +19,8 @@ Every package includes:
 - source/project/version context;
 - a file inventory with sizes and hashes;
 - cleanup information when a companion exists.
+
+For project input, `--arch x64|x86` selects the compiled object and the matching target metadata. A Sliver x86 export advertises `windows/386`; it is never mislabeled as an amd64 extension.
 
 Verify the directory or ZIP independently:
 

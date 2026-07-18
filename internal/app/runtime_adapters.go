@@ -338,7 +338,7 @@ func (run *runtimeRunContext) executeSliver(ctx context.Context, _ runtimeadapte
 	options, err := prepareStageOptions(stageInputOptions{
 		Input: run.input, Target: "sliver", Entrypoint: run.entry, ArgumentTokens: run.resolved.Tokens,
 		ArgumentNames: run.resolved.Names, ArgumentOptional: run.resolved.Optional, ArgumentsExplicit: true,
-		Compiler: run.compiler, Runtime: run.runtimeName, SkipRun: true,
+		Compiler: run.compiler, Arch: run.arch, Runtime: run.runtimeName, SkipRun: true,
 	})
 	if err != nil {
 		return runtimeadapter.Receipt{}, err
@@ -352,7 +352,7 @@ func (run *runtimeRunContext) executeSliver(ctx context.Context, _ runtimeadapte
 
 func (run *runtimeRunContext) executeCobaltStrike(ctx context.Context, _ runtimeadapter.Prepared) (runtimeadapter.Receipt, error) {
 	return executeCobaltStrike(ctx, run.stdout, cobaltStrikeRunOptions{
-		Input: run.input, Entrypoint: run.entry, Compiler: run.compiler, Runtime: run.runtimeName,
+		Input: run.input, Entrypoint: run.entry, Compiler: run.compiler, Arch: run.arch, Runtime: run.runtimeName,
 		ArgumentTokens: run.resolved.Tokens, ArgumentNames: run.resolved.Names,
 		ArgumentOptional: run.resolved.Optional, CLIValues: run.resolved.CLIValues,
 		SensitiveOutputFields: run.sensitiveOutputFields, SensitiveArgumentNames: run.sensitiveArgumentNames, SensitiveValues: run.sensitiveValues,

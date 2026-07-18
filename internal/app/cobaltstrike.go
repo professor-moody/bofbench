@@ -28,6 +28,7 @@ type cobaltStrikeRunOptions struct {
 	Input                  string
 	Entrypoint             string
 	Compiler               string
+	Arch                   string
 	Runtime                string
 	ArgumentTokens         []string
 	ArgumentNames          []string
@@ -67,7 +68,7 @@ func executeCobaltStrike(parent context.Context, stdout io.Writer, opts cobaltSt
 	}
 	options, err := prepareStageOptions(stageInputOptions{
 		Input: opts.Input, Target: "cobaltstrike", Entrypoint: opts.Entrypoint, ArgumentTokens: opts.ArgumentTokens,
-		ArgumentNames: opts.ArgumentNames, ArgumentOptional: opts.ArgumentOptional, ArgumentsExplicit: true, Compiler: opts.Compiler, Runtime: opts.Runtime, SkipRun: true,
+		ArgumentNames: opts.ArgumentNames, ArgumentOptional: opts.ArgumentOptional, ArgumentsExplicit: true, Compiler: opts.Compiler, Arch: opts.Arch, Runtime: opts.Runtime, SkipRun: true,
 	})
 	if err != nil {
 		return runtimeadapter.Receipt{}, err

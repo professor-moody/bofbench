@@ -3,6 +3,7 @@ package stage
 import (
 	"crypto/sha256"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -283,11 +284,15 @@ func sliverExtension(manifest Manifest, objectFile string) SliverExtension {
 		help = "Execute the " + manifest.Name + " Beacon Object File"
 	}
 	longHelp := fmt.Sprintf("Entrypoint: %s. Privilege: %s. Network: %s. Effects: %s. See README.md for requirements and cleanup.", manifest.Entrypoint, manifest.Operations.Privilege, manifest.Operations.Network, manifest.Operations.Impact)
+	arch := "amd64"
+	if strings.Contains(strings.ToLower(filepath.Base(manifest.Object)), ".x86.") {
+		arch = "386"
+	}
 	extension := SliverExtension{
 		Name: manifest.Name, Version: "1.0.0", CommandName: manifest.TargetContract.CommandName,
 		ExtensionAuthor: "bofbench", OriginalAuthor: "bofbench project", RepositoryURL: "N/A",
 		Help: help, LongHelp: longHelp, DependsOn: "coff-loader", Entrypoint: manifest.Entrypoint,
-		Files: []SliverFile{{OS: "windows", Arch: "amd64", Path: objectFile}},
+		Files: []SliverFile{{OS: "windows", Arch: arch, Path: objectFile}},
 	}
 	for _, argument := range manifest.TargetContract.Arguments {
 		extension.Arguments = append(extension.Arguments, SliverArgument{

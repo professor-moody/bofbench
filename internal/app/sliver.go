@@ -542,7 +542,7 @@ func runSliverRCContext(ctx context.Context, client, body string) (string, error
 		return "", err
 	}
 	command := exec.CommandContext(ctx, client, "console", "--rc", path)
-	command.Stdin = strings.NewReader("1\n")
+	command.Stdin = strings.NewReader(sliverClientSelection() + "\n")
 	output, err := command.CombinedOutput()
 	if ctx.Err() != nil {
 		return string(output), fmt.Errorf("Sliver console stopped before completion: %w", ctx.Err())
@@ -551,6 +551,29 @@ func runSliverRCContext(ctx context.Context, client, body string) (string, error
 		return string(output), fmt.Errorf("Sliver console failed: %w\n%s", err, stripANSI(string(output)))
 	}
 	return string(output), nil
+}
+
+// sliverClientSelection returns the one-based profile number used by the
+// interactive Sliver client. The client does not currently accept a config
+// path on its command line, so selecting profile 1 unconditionally connects to
+// the wrong control plane whenever an operator has more than one profile.
+func sliverClientSelection() string {
+	selected := strings.TrimSpace(os.Getenv("BOFBENCH_SLIVER_CONFIG"))
+	if selected == "" {
+		return "1"
+	}
+	selectedInfo, err := os.Stat(selected)
+	if err != nil {
+		return "1"
+	}
+	matches, _ := filepath.Glob(filepath.Join(sliverClientHome(), "configs", "*.cfg"))
+	for index, match := range matches {
+		matchInfo, statErr := os.Stat(match)
+		if statErr == nil && os.SameFile(selectedInfo, matchInfo) {
+			return strconv.Itoa(index + 1)
+		}
+	}
+	return "1"
 }
 
 func conciseSliverLines(output, _ string) []string {

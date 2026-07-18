@@ -97,6 +97,15 @@ func TestStagePreservesPackArgumentNames(t *testing.T) {
 	}
 }
 
+func TestSliverExtensionUsesX86Architecture(t *testing.T) {
+	manifest := Manifest{Object: "dist/example.x86.o", Name: "example", Entrypoint: "go"}
+	manifest.TargetContract.CommandName = "example"
+	extension := sliverExtension(manifest, "example.x86.o")
+	if len(extension.Files) != 1 || extension.Files[0].Arch != "386" {
+		t.Fatalf("x86 extension files = %+v", extension.Files)
+	}
+}
+
 func TestStageIncludesAnalysisAndLatestReport(t *testing.T) {
 	tmp := t.TempDir()
 	wd, _ := os.Getwd()

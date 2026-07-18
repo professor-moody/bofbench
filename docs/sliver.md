@@ -19,7 +19,7 @@ bofbench sliver lab-session start \
   --control sliver-lab --lab proxmox-dev --arch x64 --context user
 ```
 
-Repeat session creation sequentially for `x64 user`, `x64 system`, and `x86 user` proof coverage. Do not place an implant in a Windows template or clean snapshot. Stop and remove the disposable session when its lane completes:
+Repeat session creation sequentially for `x64 user`, `x64 system`, and the required `x86` context. BOFBench launches the disposable executable through a uniquely named scheduled task so the selected user or SYSTEM context survives the remote bootstrap connection; cleanup removes that task, process, and file. Do not place an implant in a Windows template or clean snapshot. Stop and remove the disposable session when its lane completes:
 
 ```bash
 bofbench sliver lab-session stop --lab proxmox-dev --cleanup
@@ -65,7 +65,7 @@ bofbench run bofs/portable-survey --via sliver --lab dedicated \
 
 The adapter:
 
-1. builds and analyzes the x64 project;
+1. builds and analyzes the selected x64 or x86 project;
 2. generates and verifies its extension;
 3. preserves pack argument names and BOF types;
 4. selects the exact live session;
@@ -83,12 +83,12 @@ bofbench runtime compare bofs/portable-survey \
 
 The comparison uses the manifest's field contracts and retains separate runtime receipts. Volatile PIDs or timestamps may be ignored or normalized only when the pack declares that behavior.
 
-Use `--session <id-or-name>` for a one-command override. Otherwise `--lab`, `BOFBENCH_LAB`, project default, and active-profile selection apply in that order.
+Use `--session <id-or-name>` for a one-command override. Otherwise `--lab`, `BOFBENCH_LAB`, project default, and active-profile selection apply in that order. When several Sliver operator profiles exist, set `BOFBENCH_SLIVER_CONFIG` to the intended `.cfg`; BOFBench selects that profile rather than assuming the first client entry.
 
 ## Export for another operator
 
 ```bash
-bofbench export bofs/portable-survey --for sliver \
+bofbench export bofs/portable-survey --for sliver --arch x64 \
   --args z:lsass i:5
 bofbench export verify export/portable-survey-sliver.zip
 ```

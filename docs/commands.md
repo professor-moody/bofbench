@@ -133,7 +133,8 @@ bofbench run object.x64.o --via native --args z:target i:25
 
 ```bash
 bofbench export bofs/portable-survey --for raw
-bofbench export bofs/portable-survey --for sliver
+bofbench export bofs/portable-survey --for sliver --arch x64
+bofbench export bofs/portable-survey --for sliver --arch x86
 bofbench export bofs/portable-survey --for cobaltstrike
 bofbench export verify export/portable-survey-sliver.zip
 ```

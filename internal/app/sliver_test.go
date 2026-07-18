@@ -97,6 +97,29 @@ func TestDiscoverSliverConfigsPrefersExplicitConfig(t *testing.T) {
 	}
 }
 
+func TestSliverClientSelectionUsesExplicitProfileIndex(t *testing.T) {
+	home := t.TempDir()
+	configs := filepath.Join(home, "configs")
+	if err := os.MkdirAll(configs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var selected string
+	for _, name := range []string{"a.cfg", "b.cfg", "c.cfg"} {
+		path := filepath.Join(configs, name)
+		if err := os.WriteFile(path, []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if name == "b.cfg" {
+			selected = path
+		}
+	}
+	t.Setenv("SLIVER_CLIENT_HOME", home)
+	t.Setenv("BOFBENCH_SLIVER_CONFIG", selected)
+	if got := sliverClientSelection(); got != "2" {
+		t.Fatalf("selection = %q, want 2", got)
+	}
+}
+
 func TestSliverFetchedTaskState(t *testing.T) {
 	for state, line := range map[string]string{
 		"completed": "State: completed",

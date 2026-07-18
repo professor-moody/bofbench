@@ -22,6 +22,7 @@ type stageInputOptions struct {
 	ArgumentsExplicit  bool
 	Profile            string
 	Compiler           string
+	Arch               string
 	Runtime            string
 	VerifyReproducible bool
 	SkipRun            bool
@@ -34,8 +35,12 @@ func prepareStageOptions(input stageInputOptions) (stage.Options, error) {
 	}
 	argumentTokens := append([]string(nil), input.ArgumentTokens...)
 	if sourceaudit.IsSourceInput(input.Input) {
+		arch := strings.ToLower(strings.TrimSpace(input.Arch))
+		if arch == "" {
+			arch = "x64"
+		}
 		development, err := executeDevLoop(devLoopOptions{
-			Project: input.Input, Arch: "x64", Compiler: input.Compiler, Runtime: input.Runtime,
+			Project: input.Input, Arch: arch, Compiler: input.Compiler, Runtime: input.Runtime,
 			Profile: input.Profile, SkipRun: input.SkipRun, VerifyReproducible: input.VerifyReproducible,
 		})
 		if err != nil {

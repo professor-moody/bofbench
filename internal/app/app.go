@@ -1243,6 +1243,7 @@ func stageCommand(stdout io.Writer) *cobra.Command {
 	var argsMode bool
 	var profile string
 	var compiler string
+	var arch string
 	var runtimeName string
 	var verifyReproducible bool
 	var skipRun bool
@@ -1265,7 +1266,7 @@ func stageCommand(stdout io.Writer) *cobra.Command {
 			}
 			options, err := prepareStageOptions(stageInputOptions{
 				Input: args[0], Target: target, Entrypoint: entry, ArgumentTokens: argTokens, ArgumentsExplicit: argsMode,
-				Profile: profile, Compiler: compiler, Runtime: runtimeName, VerifyReproducible: verifyReproducible, SkipRun: skipRun,
+				Profile: profile, Compiler: compiler, Arch: arch, Runtime: runtimeName, VerifyReproducible: verifyReproducible, SkipRun: skipRun,
 			})
 			if err != nil {
 				return err
@@ -1289,6 +1290,7 @@ func stageCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&argsMode, "args", false, "treat remaining positional tokens as packed artifact args")
 	cmd.Flags().StringVar(&profile, "profile", "", "project test/operator profile")
 	cmd.Flags().StringVar(&compiler, "compiler", "auto", "project compiler profile: auto, mingw, or msvc")
+	cmd.Flags().StringVar(&arch, "arch", "x64", "project build architecture: x64 or x86")
 	cmd.Flags().StringVar(&runtimeName, "runtime", "auto", "project validation runtime")
 	cmd.Flags().BoolVar(&verifyReproducible, "verify-reproducible", true, "double-build project input and require identical object bytes")
 	cmd.Flags().BoolVar(&skipRun, "skip-run", false, "for project input, stop after build/analysis instead of native validation")
