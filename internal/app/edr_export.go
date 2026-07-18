@@ -51,12 +51,20 @@ type edrBundle struct {
 		Command      []string `json:"command"`
 		VerifyAbsent string   `json:"verify_absent"`
 	} `json:"cleanup"`
-	DeadlineSeconds int               `json:"deadline_seconds"`
-	Provenance      map[string]string `json:"provenance"`
-	Replay          map[string]any    `json:"replay"`
+	DeadlineSeconds int                   `json:"deadline_seconds"`
+	Provenance      map[string]string     `json:"provenance"`
+	Replay          map[string]any        `json:"replay"`
+	Guidance        *edrGuidanceSelection `json:"guidance,omitempty"`
 }
 
-func exportEDRBundle(input string, argumentTokens []string, argumentsExplicit bool, entry, profile, compiler, arch, runtimeName string, verifyReproducible, skipRun bool) (string, error) {
+type edrGuidanceSelection struct {
+	SchemaVersion  string         `json:"schema_version"`
+	SHA256         string         `json:"sha256"`
+	ObservationIDs []string       `json:"observation_ids"`
+	Applicability  map[string]any `json:"applicability"`
+}
+
+func exportEDRBundle(input string, argumentTokens []string, argumentsExplicit bool, entry, profile, compiler, arch, runtimeName string, verifyReproducible, skipRun bool, guidancePath string, guidanceObservations []string) (string, error) {
 	if strings.ToLower(strings.TrimSpace(arch)) != "x64" {
 		return "", fmt.Errorf("EDR Lab export supports x64 BOFs")
 	}
@@ -100,6 +108,21 @@ func exportEDRBundle(input string, argumentTokens []string, argumentsExplicit bo
 	loaderHash, _ := edrFileHash(loaderPath)
 	runnerHash, _ := edrFileHash(runnerPath)
 	bundle := edrBundle{SchemaVersion: windowsArtifactBundleSchema, Name: name, Architecture: "x64", DeadlineSeconds: 120, Provenance: map[string]string{"producer": "bofbench", "object_sha256": objectHash, "loader_sha256": loaderHash, "packed_arguments_sha256": "sha256:" + hex.EncodeToString(packedDigest[:])}, Replay: map[string]any{"entrypoint": options.Entrypoint, "argument_types": edrArgumentTypes(options.Arguments), "generated_at": time.Now().UTC().Format(time.RFC3339Nano)}}
+	if guidancePath != "" || len(guidanceObservations) > 0 {
+		selection, raw, err := loadEDRGuidance(guidancePath, guidanceObservations)
+		if err != nil {
+			return "", err
+		}
+		guidanceDir := filepath.Join(root, "guidance")
+		if err := os.MkdirAll(guidanceDir, 0700); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(guidanceDir, "windows-build-guidance.json"), raw, 0600); err != nil {
+			return "", err
+		}
+		bundle.Guidance = &selection
+		bundle.Replay["guidance_file"] = "guidance/windows-build-guidance.json"
+	}
 	for _, artifact := range []edrArtifact{{"bof", "artifacts/" + objectName, objectHash, "coff"}, {"loader", "artifacts/bofbench-loader.exe", loaderHash, "exe"}, {"runner", "artifacts/bofbench-edr-runner.ps1", runnerHash, "data"}} {
 		bundle.Artifacts = append(bundle.Artifacts, struct {
 			ID     string `json:"id"`
@@ -130,6 +153,42 @@ func exportEDRBundle(input string, argumentTokens []string, argumentsExplicit bo
 		return "", err
 	}
 	return bundlePath, nil
+}
+
+func loadEDRGuidance(path string, selected []string) (edrGuidanceSelection, []byte, error) {
+	if path == "" || len(selected) == 0 {
+		return edrGuidanceSelection{}, nil, fmt.Errorf("--guidance and at least one --guidance-observation are required together")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return edrGuidanceSelection{}, nil, err
+	}
+	var wire struct {
+		SchemaVersion string         `json:"schema_version"`
+		Applicability map[string]any `json:"applicability"`
+		Observations  []struct {
+			ID string `json:"id"`
+		} `json:"observations"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return edrGuidanceSelection{}, nil, err
+	}
+	if wire.SchemaVersion != "windows.build-guidance/v1" {
+		return edrGuidanceSelection{}, nil, fmt.Errorf("unsupported guidance schema %q", wire.SchemaVersion)
+	}
+	available := map[string]bool{}
+	for _, o := range wire.Observations {
+		available[o.ID] = true
+	}
+	seen := map[string]bool{}
+	for _, id := range selected {
+		if id == "" || seen[id] || !available[id] {
+			return edrGuidanceSelection{}, nil, fmt.Errorf("invalid, duplicate, or absent guidance observation %q", id)
+		}
+		seen[id] = true
+	}
+	sum := sha256.Sum256(raw)
+	return edrGuidanceSelection{SchemaVersion: wire.SchemaVersion, SHA256: "sha256:" + hex.EncodeToString(sum[:]), ObservationIDs: append([]string{}, selected...), Applicability: wire.Applicability}, raw, nil
 }
 
 func findEDRLoader() (string, error) {

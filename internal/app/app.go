@@ -1313,6 +1313,8 @@ func exportCommand(stdout io.Writer) *cobra.Command {
 	cmd.Aliases = []string{"stage"}
 	cmd.Short = "Build if needed and export a BOF for native or C2 use"
 	cmd.Flags().String("for", "", "export target: cobaltstrike, sliver, raw, edrlab")
+	cmd.Flags().String("guidance", "", "exact windows.build-guidance/v1 file for an EDR export")
+	cmd.Flags().StringSlice("guidance-observation", nil, "explicit ReverseLab observation ID to attach (repeatable)")
 	cmd.RunE = func(command *cobra.Command, args []string) error {
 		requested, _ := command.Flags().GetString("for")
 		if requested != "edrlab" {
@@ -1332,7 +1334,9 @@ func exportCommand(stdout io.Writer) *cobra.Command {
 		runtimeName, _ := command.Flags().GetString("runtime")
 		verify, _ := command.Flags().GetBool("verify-reproducible")
 		skipRun, _ := command.Flags().GetBool("skip-run")
-		bundle, err := exportEDRBundle(args[0], args[1:], argsMode, entry, profile, compiler, arch, runtimeName, verify, skipRun)
+		guidance, _ := command.Flags().GetString("guidance")
+		guidanceObservations, _ := command.Flags().GetStringSlice("guidance-observation")
+		bundle, err := exportEDRBundle(args[0], args[1:], argsMode, entry, profile, compiler, arch, runtimeName, verify, skipRun, guidance, guidanceObservations)
 		if err != nil {
 			return err
 		}
