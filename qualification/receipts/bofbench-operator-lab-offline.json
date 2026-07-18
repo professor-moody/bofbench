@@ -1,0 +1,18 @@
+{
+  "schema": "bofbench.operator-lab-qualification/v1",
+  "version": "dev",
+  "collected_at": "2026-07-18T19:46:38Z",
+  "capability_commit": "6c711b0dfa8c1666c0f0d435d4d794e1d1dbff09",
+  "documentation_commit": "7b38dd76b4a6dc9d54181fe8a6637d1d68718608",
+  "tool_sha256": "f9686c44f54aaa8e3df34305e00ba8eb9d3bca9bd00ef04678f7dce21522fee6",
+  "checks": [
+    {"command": "sh scripts/operator-lab-offline.sh", "result": "pass"},
+    {"command": "go test -race ./...", "result": "pass"},
+    {"command": "go vet ./...", "result": "pass"},
+    {"command": "make docs-check", "result": "pass"},
+    {"control": "profile quick form", "result": "operator-lab profile requires only the neutral profile name plus private environment material"},
+    {"control": "EDR export", "result": "repository-neutral windows.artifact-bundle/v1 validated in integration test"}
+  ],
+  "live_shared_lab": "not run",
+  "passed": true
+}

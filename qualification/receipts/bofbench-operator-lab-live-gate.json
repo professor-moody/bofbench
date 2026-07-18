@@ -1,0 +1,13 @@
+{
+  "schema": "bofbench.operator-lab-live-gate/v1",
+  "collected_at": "2026-07-18T19:46:38Z",
+  "status": "unavailable",
+  "reason": "The bofbench-clean-x64 and bofbench-dev-x64 neutral lab profiles are not sealed or available through labd.",
+  "claims_withheld": [
+    "shared-lab BOF execution",
+    "full telemetry markers",
+    "lease heartbeat and live destruction receipt",
+    "live EDR bundle execution"
+  ],
+  "passed": false
+}

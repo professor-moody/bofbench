@@ -1,0 +1,14 @@
+{
+  "schema": "bofbench.documentation-receipt/v1",
+  "version": "dev",
+  "documentation_commit": "7b38dd76b4a6dc9d54181fe8a6637d1d68718608",
+  "markdown_pages": 76,
+  "checks": {
+    "operator_lab_profile_documented": true,
+    "lease_evidence_documented": true,
+    "edrlab_export_documented": true,
+    "navigation_complete": true,
+    "strict_mkdocs_build": true
+  },
+  "passed": true
+}
