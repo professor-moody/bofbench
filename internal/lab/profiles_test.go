@@ -207,7 +207,7 @@ func TestTopologyLifecycleResolutionAndProfileProtection(t *testing.T) {
 	}
 }
 
-func TestProfilesV3MigratesToV5AndRetainsBackup(t *testing.T) {
+func TestProfilesV3MigratesToV6AndRetainsBackup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "labs.json")
 	data := []byte(`{"schema":"bofbench.labs","schema_version":3,"active":"devbox","profiles":{"devbox":{"provider":"existing","topology":"standalone","transport":"ssh","host":"devbox","port":22,"remote_root":"C:\\bofbench","build_mode":"auto"}},"topologies":{}}`)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
@@ -217,7 +217,7 @@ func TestProfilesV3MigratesToV5AndRetainsBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.SchemaVersion != 5 || config.Profiles["devbox"].Host != "devbox" {
+	if config.SchemaVersion != 6 || config.Profiles["devbox"].Host != "devbox" {
 		t.Fatalf("config=%+v", config)
 	}
 	if _, err := os.Stat(path + ".v3.bak"); err != nil {
@@ -227,7 +227,7 @@ func TestProfilesV3MigratesToV5AndRetainsBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(persisted), `"schema_version": 5`) {
+	if !strings.Contains(string(persisted), `"schema_version": 6`) {
 		t.Fatalf("migration was not persisted: %s", persisted)
 	}
 }

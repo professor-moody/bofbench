@@ -2,7 +2,10 @@ package runtimeadapter
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -10,7 +13,7 @@ import (
 
 const (
 	ReceiptSchema         = "bofbench.runtime-receipt"
-	ReceiptSchemaVersion  = 6
+	ReceiptSchemaVersion  = 7
 	MinimumReceiptVersion = 4
 )
 
@@ -69,53 +72,68 @@ type OutputChunk struct {
 	ReceivedAt string `json:"received_at,omitempty"`
 }
 
+type LabLeaseReference struct {
+	Provider          string `json:"provider"`
+	LeaseID           string `json:"lease_id"`
+	Profile           string `json:"profile"`
+	ProfileIdentity   string `json:"profile_identity"`
+	VMID              int    `json:"vmid"`
+	SensorSession     string `json:"sensor_session"`
+	Deadline          string `json:"deadline"`
+	CloneTask         string `json:"clone_task,omitempty"`
+	DestroyTask       string `json:"destroy_task,omitempty"`
+	DestructionProof  string `json:"destruction_proof,omitempty"`
+	DestructionProved bool   `json:"destruction_proved"`
+}
+
 type Receipt struct {
-	Schema               string            `json:"schema"`
-	SchemaVersion        int               `json:"schema_version"`
-	Runtime              string            `json:"runtime"`
-	RuntimeVersion       string            `json:"runtime_version,omitempty"`
-	Status               string            `json:"status"`
-	ExecutionState       string            `json:"execution_state,omitempty"`
-	OutputComplete       bool              `json:"output_complete"`
-	Profile              string            `json:"profile,omitempty"`
-	Transport            string            `json:"transport,omitempty"`
-	RemoteHost           string            `json:"remote_host,omitempty"`
-	RemoteComputer       string            `json:"remote_computer,omitempty"`
-	Session              string            `json:"session,omitempty"`
-	TaskID               string            `json:"task_id,omitempty"`
-	StateTransitions     []StateTransition `json:"state_transitions,omitempty"`
-	Object               string            `json:"object,omitempty"`
-	ObjectSHA256         string            `json:"object_sha256,omitempty"`
-	Entrypoint           string            `json:"entrypoint,omitempty"`
-	Arguments            []string          `json:"argument_types,omitempty"`
-	SensitiveArguments   []string          `json:"sensitive_arguments,omitempty"`
-	Output               []string          `json:"output,omitempty"`
-	RedactedOutputFields []string          `json:"redacted_output_fields,omitempty"`
-	TimeoutMS            int               `json:"timeout_ms,omitempty"`
-	TimedOut             bool              `json:"timed_out,omitempty"`
-	ExitState            string            `json:"exit_state,omitempty"`
-	ExitCode             *int              `json:"exit_code,omitempty"`
-	StartedAt            string            `json:"started_at"`
-	CompletedAt          string            `json:"completed_at"`
-	DurationMS           int64             `json:"duration_ms"`
-	Error                string            `json:"error,omitempty"`
-	ReceiptPath          string            `json:"receipt_path,omitempty"`
-	LastRefreshAt        string            `json:"last_refresh_at,omitempty"`
-	CompletionSource     string            `json:"completion_source,omitempty"`
-	OutputChunks         []OutputChunk     `json:"output_chunks,omitempty"`
-	FinalChunk           bool              `json:"final_chunk,omitempty"`
-	RemoteTaskError      string            `json:"remote_task_error,omitempty"`
-	TerminalReason       string            `json:"terminal_reason,omitempty"`
-	OutputClassification string            `json:"output_classification,omitempty"`
-	WorkerPID            int               `json:"worker_pid,omitempty"`
-	RemoteWorkerPID      int               `json:"remote_worker_pid,omitempty"`
-	RemoteTaskName       string            `json:"remote_task_name,omitempty"`
-	RemoteReceiptPath    string            `json:"remote_receipt_path,omitempty"`
-	CancelSupported      bool              `json:"cancel_supported,omitempty"`
-	CancelRequestedAt    string            `json:"cancel_requested_at,omitempty"`
-	CanceledAt           string            `json:"canceled_at,omitempty"`
-	CancelSource         string            `json:"cancel_source,omitempty"`
-	LastOutputAt         string            `json:"last_output_at,omitempty"`
+	Schema               string             `json:"schema"`
+	SchemaVersion        int                `json:"schema_version"`
+	Runtime              string             `json:"runtime"`
+	RuntimeVersion       string             `json:"runtime_version,omitempty"`
+	Status               string             `json:"status"`
+	ExecutionState       string             `json:"execution_state,omitempty"`
+	OutputComplete       bool               `json:"output_complete"`
+	Profile              string             `json:"profile,omitempty"`
+	Transport            string             `json:"transport,omitempty"`
+	RemoteHost           string             `json:"remote_host,omitempty"`
+	RemoteComputer       string             `json:"remote_computer,omitempty"`
+	Session              string             `json:"session,omitempty"`
+	TaskID               string             `json:"task_id,omitempty"`
+	StateTransitions     []StateTransition  `json:"state_transitions,omitempty"`
+	Object               string             `json:"object,omitempty"`
+	ObjectSHA256         string             `json:"object_sha256,omitempty"`
+	Entrypoint           string             `json:"entrypoint,omitempty"`
+	Arguments            []string           `json:"argument_types,omitempty"`
+	SensitiveArguments   []string           `json:"sensitive_arguments,omitempty"`
+	Output               []string           `json:"output,omitempty"`
+	RedactedOutputFields []string           `json:"redacted_output_fields,omitempty"`
+	TimeoutMS            int                `json:"timeout_ms,omitempty"`
+	TimedOut             bool               `json:"timed_out,omitempty"`
+	ExitState            string             `json:"exit_state,omitempty"`
+	ExitCode             *int               `json:"exit_code,omitempty"`
+	StartedAt            string             `json:"started_at"`
+	CompletedAt          string             `json:"completed_at"`
+	DurationMS           int64              `json:"duration_ms"`
+	Error                string             `json:"error,omitempty"`
+	ReceiptPath          string             `json:"receipt_path,omitempty"`
+	LastRefreshAt        string             `json:"last_refresh_at,omitempty"`
+	CompletionSource     string             `json:"completion_source,omitempty"`
+	OutputChunks         []OutputChunk      `json:"output_chunks,omitempty"`
+	FinalChunk           bool               `json:"final_chunk,omitempty"`
+	RemoteTaskError      string             `json:"remote_task_error,omitempty"`
+	TerminalReason       string             `json:"terminal_reason,omitempty"`
+	OutputClassification string             `json:"output_classification,omitempty"`
+	WorkerPID            int                `json:"worker_pid,omitempty"`
+	RemoteWorkerPID      int                `json:"remote_worker_pid,omitempty"`
+	RemoteTaskName       string             `json:"remote_task_name,omitempty"`
+	RemoteReceiptPath    string             `json:"remote_receipt_path,omitempty"`
+	CancelSupported      bool               `json:"cancel_supported,omitempty"`
+	CancelRequestedAt    string             `json:"cancel_requested_at,omitempty"`
+	CanceledAt           string             `json:"canceled_at,omitempty"`
+	CancelSource         string             `json:"cancel_source,omitempty"`
+	LastOutputAt         string             `json:"last_output_at,omitempty"`
+	LabLease             *LabLeaseReference `json:"lab_lease,omitempty"`
 	// TransientOutput carries unredacted runtime output only inside the current
 	// process so result contracts can verify sensitive payload hashes before
 	// persistence. It is deliberately excluded from every serialized receipt.
@@ -127,6 +145,44 @@ func AddTransition(receipt *Receipt, state, detail string, at time.Time) {
 		return
 	}
 	receipt.StateTransitions = append(receipt.StateTransitions, StateTransition{State: strings.ToLower(strings.TrimSpace(state)), At: at.UTC().Format(time.RFC3339Nano), Detail: strings.TrimSpace(detail)})
+}
+
+// PersistReceipt refreshes a receipt after an outer lifecycle provider has
+// completed. It uses an owner-only atomic replacement and never serializes
+// TransientOutput.
+func PersistReceipt(receipt Receipt) error {
+	if strings.TrimSpace(receipt.ReceiptPath) == "" {
+		return fmt.Errorf("runtime receipt path is empty")
+	}
+	data, err := json.MarshalIndent(receipt, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(receipt.ReceiptPath), 0o700); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(receipt.ReceiptPath), ".receipt-*")
+	if err != nil {
+		return err
+	}
+	temporaryName := temporary.Name()
+	defer os.Remove(temporaryName)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(append(data, '\n')); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryName, receipt.ReceiptPath)
 }
 
 // Adapter is the runtime boundary shared by native, lab, Sliver, and Cobalt

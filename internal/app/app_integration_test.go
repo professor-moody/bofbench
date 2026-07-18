@@ -29,6 +29,48 @@ func TestCLIWorkspaceBuildInspectStage(t *testing.T) {
 	mustExist(t, filepath.Join(tmp, "stage", "hello-cobaltstrike.zip"))
 }
 
+func TestCLIExportsRepositoryNeutralEDRBundle(t *testing.T) {
+	requireMinGW(t)
+	bin := buildTestBinary(t)
+	tmp := t.TempDir()
+	loader, err := filepath.Abs(filepath.Join("..", "..", "native", "loader", "bofbench-loader.exe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BOFBENCH_LOADER", loader)
+	runOK(t, tmp, bin, "new", "edr-export")
+	output := runOK(t, tmp, bin, "export", filepath.Join("bofs", "edr-export"), "--for", "edrlab", "--skip-run")
+	bundlePath := filepath.Join(tmp, "export", "edr-export-edrlab", "windows-artifact-bundle.json")
+	if !strings.Contains(output, bundlePath) && !strings.Contains(output, filepath.ToSlash(filepath.Join("export", "edr-export-edrlab"))) {
+		t.Fatalf("export output did not identify bundle: %s", output)
+	}
+	data, err := os.ReadFile(bundlePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bundle struct {
+		Schema    string `json:"schema_version"`
+		Artifacts []struct {
+			ID     string `json:"id"`
+			SHA256 string `json:"sha256"`
+			Kind   string `json:"kind"`
+		} `json:"artifacts"`
+		Modes []struct {
+			LoaderID string   `json:"loader_id"`
+			Command  []string `json:"command"`
+		} `json:"execution_modes"`
+		Effect struct {
+			Contains string `json:"contains"`
+		} `json:"effect"`
+	}
+	if err := json.Unmarshal(data, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Schema != "windows.artifact-bundle/v1" || len(bundle.Artifacts) != 3 || len(bundle.Modes) != 1 || bundle.Modes[0].LoaderID != "loader" || bundle.Effect.Contains != "{{run_id}}" {
+		t.Fatalf("bundle = %+v", bundle)
+	}
+}
+
 func TestCLIOperationCatalogSurface(t *testing.T) {
 	bin := buildTestBinary(t)
 	tmp := t.TempDir()

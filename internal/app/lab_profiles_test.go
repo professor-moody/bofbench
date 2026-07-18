@@ -51,6 +51,23 @@ func TestProfileCloneProxmoxOverridesDoNotMutateSource(t *testing.T) {
 	}
 }
 
+func TestOperatorLabQuickProfileNeedsOnlyNeutralProfileName(t *testing.T) {
+	flags := labProfileFlags{Provider: "existing"}
+	cmd := &cobra.Command{Use: "test"}
+	bindLabProfileFlags(cmd, &flags)
+	if err := cmd.ParseFlags([]string{"--provider", "operator-lab", "--profile", "bofbench-dev-x64"}); err != nil {
+		t.Fatal(err)
+	}
+	profile := lab.DefaultProfile("existing")
+	applyProfileFlagChanges(cmd, &profile, flags)
+	if err := lab.ValidateProfile(profile); err != nil {
+		t.Fatal(err)
+	}
+	if profile.Provider != "operator-lab" || profile.Transport != "ssh" || profile.OperatorLab == nil || profile.OperatorLab.Profile != "bofbench-dev-x64" || profile.Host != "" {
+		t.Fatalf("profile = %+v", profile)
+	}
+}
+
 func TestTemplateStatusUsesProfileSourceTemplateAndHonorsOverride(t *testing.T) {
 	profile := lab.DefaultProfile("proxmox")
 	profile.Proxmox.VMID = 4130

@@ -1009,11 +1009,16 @@ func runCommand(stdout io.Writer) *cobra.Command {
 	var bootstrapMode string
 	var cleanup bool
 	var topologyName string
+	var observe string
 	cmd := &cobra.Command{
 		Use:   "run <project|artifact> [--via native|lab|sliver|cobaltstrike] [--arg name=value]",
 		Short: "Build if needed and execute a BOF through the selected runtime",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			observe = strings.ToLower(strings.TrimSpace(observe))
+			if observe != "standard" && observe != "full" && observe != "off" {
+				return fmt.Errorf("--observe must be standard, full, or off")
+			}
 			if cleanup {
 				sourceProject := args[0]
 				if !sourceaudit.IsSourceInput(args[0]) {
@@ -1068,6 +1073,7 @@ func runCommand(stdout io.Writer) *cobra.Command {
 				labName: labName, labProfiles: labProfiles, labHost: labHost, labRoot: labRoot, labExecutable: labExecutable,
 				transportTimeout: transportTimeout, bootstrapMode: bootstrapMode, sliverClient: sliverClient, sliverSession: sliverSession,
 				interactiveLab: requiresInteractiveLabSession(args[0]),
+				observe:        observe,
 			}
 			run.sensitiveOutputFields, run.sensitiveArgumentNames, run.sensitiveValues = runtimeSensitivity(args[0], resolved)
 			registry, err := runtimeAdapterRegistry(run)
@@ -1128,6 +1134,7 @@ func runCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().DurationVar(&transportTimeout, "transport-timeout", 3*time.Minute, "lab operation timeout")
 	cmd.Flags().StringVar(&bootstrapMode, "bootstrap", "auto", "lab runtime bootstrap: auto, always, or never")
 	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "run the cleanup companion packs instead of the project's action packs")
+	cmd.Flags().StringVar(&observe, "observe", "standard", "lab telemetry markers: standard, full, or off")
 	cmd.MarkFlagsMutuallyExclusive("lab", "topology")
 	return cmd
 }
@@ -1301,10 +1308,37 @@ func stageCommand(stdout io.Writer) *cobra.Command {
 
 func exportCommand(stdout io.Writer) *cobra.Command {
 	cmd := stageCommand(stdout)
-	cmd.Use = "export <project-or-artifact> --for cobaltstrike|sliver|raw [--args ...]"
+	originalRun := cmd.RunE
+	cmd.Use = "export <project-or-artifact> --for cobaltstrike|sliver|raw|edrlab [--args ...]"
 	cmd.Aliases = []string{"stage"}
 	cmd.Short = "Build if needed and export a BOF for native or C2 use"
-	cmd.Flags().String("for", "", "export target: cobaltstrike, sliver, raw")
+	cmd.Flags().String("for", "", "export target: cobaltstrike, sliver, raw, edrlab")
+	cmd.RunE = func(command *cobra.Command, args []string) error {
+		requested, _ := command.Flags().GetString("for")
+		if requested != "edrlab" {
+			return originalRun(command, args)
+		}
+		if len(args) < 1 {
+			return fmt.Errorf("project or artifact is required")
+		}
+		argsMode, _ := command.Flags().GetBool("args")
+		if !argsMode && len(args) > 1 {
+			return fmt.Errorf("unexpected trailing args; put packed arguments after --args")
+		}
+		entry, _ := command.Flags().GetString("entry")
+		profile, _ := command.Flags().GetString("profile")
+		compiler, _ := command.Flags().GetString("compiler")
+		arch, _ := command.Flags().GetString("arch")
+		runtimeName, _ := command.Flags().GetString("runtime")
+		verify, _ := command.Flags().GetBool("verify-reproducible")
+		skipRun, _ := command.Flags().GetBool("skip-run")
+		bundle, err := exportEDRBundle(args[0], args[1:], argsMode, entry, profile, compiler, arch, runtimeName, verify, skipRun)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "EDR Lab bundle exported\nBundle     %s\nExecute    bofbench-loader.exe\nNext       edrlab artifact %s --target-set <targets.yml>\n", bundle, bundle)
+		return nil
+	}
 	cmd.PreRunE = func(command *cobra.Command, args []string) error {
 		value, err := command.Flags().GetString("for")
 		if err != nil {

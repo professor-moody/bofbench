@@ -49,6 +49,7 @@ type runtimeRunContext struct {
 	sensitiveValues        []string
 	interactiveLab         bool
 	forceLocalLab          bool
+	observe                string
 	progress               func(string)
 	controller             func(lab.RemoteTaskController)
 }
@@ -166,6 +167,19 @@ func (run *runtimeRunContext) detectLab(ctx context.Context) (runtimeadapter.Ava
 	if err != nil {
 		return runtimeadapter.Availability{Detail: err.Error()}, nil
 	}
+	if resolved.Profile.Provider == "operator-lab" {
+		if resolved.Profile.OperatorLab == nil {
+			return runtimeadapter.Availability{Detail: "operator-lab profile configuration is missing"}, nil
+		}
+		client, clientErr := lab.NewOperatorLabClient(*resolved.Profile.OperatorLab)
+		if clientErr != nil {
+			return runtimeadapter.Availability{Detail: clientErr.Error()}, nil
+		}
+		if doctorErr := client.Doctor(ctx); doctorErr != nil {
+			return runtimeadapter.Availability{Detail: doctorErr.Error()}, nil
+		}
+		return runtimeadapter.Availability{Available: true, Version: "operator-lab/v1", Detail: resolved.Profile.OperatorLab.Profile + " (disposable lease)"}, nil
+	}
 	opts, err := lab.ResolveRemoteOptions(ctx, resolved.Name, resolved.Profile)
 	if err != nil {
 		return runtimeadapter.Availability{Detail: err.Error()}, nil
@@ -213,6 +227,12 @@ func (run *runtimeRunContext) labSessions(ctx context.Context) ([]runtimeadapter
 	if err != nil {
 		return nil, err
 	}
+	if resolved.Profile.Provider == "operator-lab" {
+		if resolved.Profile.OperatorLab == nil {
+			return nil, fmt.Errorf("operator-lab settings are missing")
+		}
+		return []runtimeadapter.Session{{ID: resolved.Name, Name: resolved.Name, Host: resolved.Profile.OperatorLab.Profile, OS: "windows", Arch: "x64", Status: "lease-on-run", Selected: true}}, nil
+	}
 	opts, err := lab.ResolveRemoteOptions(ctx, resolved.Name, resolved.Profile)
 	if err != nil {
 		return nil, err
@@ -254,9 +274,58 @@ func (run *runtimeRunContext) executeLab(ctx context.Context, _ runtimeadapter.P
 	if err != nil {
 		return runtimeadapter.Receipt{}, err
 	}
-	remoteOptions, err := lab.ResolveRemoteOptions(ctx, resolvedLab.Name, resolvedLab.Profile)
-	if err != nil {
-		return runtimeadapter.Receipt{}, err
+	var remoteOptions lab.RemoteOptions
+	var operatorClient *lab.OperatorLabClient
+	var operatorLease lab.OperatorLabLease
+	var stopHeartbeat func()
+	var heartbeatErrors <-chan error
+	released := false
+	if resolvedLab.Profile.Provider == "operator-lab" {
+		if resolvedLab.Profile.OperatorLab == nil {
+			return runtimeadapter.Receipt{}, fmt.Errorf("operator-lab settings are missing")
+		}
+		operatorClient, err = lab.NewOperatorLabClient(*resolvedLab.Profile.OperatorLab)
+		if err != nil {
+			return runtimeadapter.Receipt{}, err
+		}
+		ttl := run.transportTimeout
+		if ttl < time.Minute {
+			ttl = time.Hour
+		}
+		operatorLease, err = operatorClient.Acquire(ctx, resolvedLab.Profile.OperatorLab.Profile, ttl)
+		if err != nil {
+			return runtimeadapter.Receipt{}, err
+		}
+		leaseDir, dirErr := runlog.NewDir("operator-lab-" + safeName(resolvedLab.Name))
+		if dirErr != nil {
+			_, _ = operatorClient.Release(context.Background(), operatorLease.ID)
+			return runtimeadapter.Receipt{}, dirErr
+		}
+		remoteOptions, err = lab.OperatorLabRemoteOptions(resolvedLab.Name, resolvedLab.Profile, operatorLease, leaseDir)
+		if err != nil {
+			_, _ = operatorClient.Release(context.Background(), operatorLease.ID)
+			return runtimeadapter.Receipt{}, err
+		}
+		if strings.ToLower(strings.TrimSpace(run.observe)) == "full" {
+			if err = operatorClient.Marker(ctx, operatorLease.ID, "bofbench-execution-start", 1); err != nil {
+				_, _ = operatorClient.Release(context.Background(), operatorLease.ID)
+				return runtimeadapter.Receipt{}, fmt.Errorf("record operator-lab start marker: %w", err)
+			}
+		}
+		stopHeartbeat, heartbeatErrors = operatorClient.StartHeartbeat(ctx, operatorLease.ID)
+		defer func() {
+			if stopHeartbeat != nil {
+				stopHeartbeat()
+			}
+			if !released {
+				_, _ = operatorClient.Release(context.Background(), operatorLease.ID)
+			}
+		}()
+	} else {
+		remoteOptions, err = lab.ResolveRemoteOptions(ctx, resolvedLab.Name, resolvedLab.Profile)
+		if err != nil {
+			return runtimeadapter.Receipt{}, err
+		}
 	}
 	if run.labHost != "" {
 		remoteOptions.Host = run.labHost
@@ -273,12 +342,14 @@ func (run *runtimeRunContext) executeLab(ctx context.Context, _ runtimeadapter.P
 		// that was built, analyzed, and pinned during wave preparation.
 		remoteOptions.BuildMode = "local"
 	}
-	ensured, err := lab.EnsureRuntime(ctx, run.bootstrapMode, lab.BootstrapOptions{ProfileName: resolvedLab.Name, Profile: resolvedLab.Profile})
-	if err != nil {
-		return runtimeadapter.Receipt{}, codedError{code: 1, err: err}
-	}
-	if ensured.Bootstrap != nil {
-		fmt.Fprint(run.stdout, lab.BootstrapText(*ensured.Bootstrap))
+	if resolvedLab.Profile.Provider != "operator-lab" {
+		ensured, ensureErr := lab.EnsureRuntime(ctx, run.bootstrapMode, lab.BootstrapOptions{ProfileName: resolvedLab.Name, Profile: resolvedLab.Profile})
+		if ensureErr != nil {
+			return runtimeadapter.Receipt{}, codedError{code: 1, err: ensureErr}
+		}
+		if ensured.Bootstrap != nil {
+			fmt.Fprint(run.stdout, lab.BootstrapText(*ensured.Bootstrap))
+		}
 	}
 	report, runErr := lab.RemoteRun(ctx, run.input, lab.RemoteRunOptions{
 		RemoteOptions: remoteOptions, Compiler: run.compiler, Arch: run.arch,
@@ -296,6 +367,43 @@ func (run *runtimeRunContext) executeLab(ctx context.Context, _ runtimeadapter.P
 		receipt.TransientOutput = append([]string(nil), report.RemoteResult.Output...)
 	} else if report.RemoteDev != nil && report.RemoteDev.Run != nil {
 		receipt.TransientOutput = append([]string(nil), report.RemoteDev.Run.Output...)
+	}
+	if operatorClient != nil {
+		var markerErr error
+		if strings.ToLower(strings.TrimSpace(run.observe)) == "full" {
+			markerErr = operatorClient.Marker(context.Background(), operatorLease.ID, "bofbench-execution-complete", 2)
+		}
+		if stopHeartbeat != nil {
+			stopHeartbeat()
+			stopHeartbeat = nil
+		}
+		var heartbeatErr error
+		for heartbeatErr = range heartbeatErrors {
+			break
+		}
+		releaseCtx, cancelRelease := context.WithTimeout(context.Background(), 6*time.Minute)
+		releasedLease, releaseErr := operatorClient.Release(releaseCtx, operatorLease.ID)
+		cancelRelease()
+		released = releaseErr == nil
+		leaseRef := &runtimeadapter.LabLeaseReference{Provider: "operator-lab", LeaseID: operatorLease.ID, Profile: operatorLease.Profile, ProfileIdentity: operatorLease.ProfileIdentity, VMID: operatorLease.VMID, SensorSession: operatorLease.SensorSession, Deadline: operatorLease.Deadline.UTC().Format(time.RFC3339Nano), CloneTask: operatorLease.CloneTask}
+		if releaseErr == nil {
+			leaseRef.DestroyTask, leaseRef.DestructionProof, leaseRef.DestructionProved = releasedLease.DestroyTask, releasedLease.DestructionProof, releasedLease.State == "released" && releasedLease.DestructionProof != ""
+		}
+		receipt.LabLease = leaseRef
+		if receipt.ReceiptPath != "" {
+			if persistErr := runtimeadapter.PersistReceipt(receipt); persistErr != nil && runErr == nil {
+				runErr = fmt.Errorf("persist operator-lab destruction receipt: %w", persistErr)
+			}
+		}
+		if markerErr != nil && runErr == nil {
+			runErr = fmt.Errorf("record operator-lab completion marker: %w", markerErr)
+		}
+		if heartbeatErr != nil && runErr == nil {
+			runErr = fmt.Errorf("operator-lab heartbeat failed: %w", heartbeatErr)
+		}
+		if releaseErr != nil {
+			runErr = fmt.Errorf("operator-lab clone destruction failed: %w", releaseErr)
+		}
 	}
 	if runErr != nil {
 		return receipt, codedError{code: 1, err: runErr}

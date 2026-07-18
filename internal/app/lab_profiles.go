@@ -46,6 +46,13 @@ type labProfileFlags struct {
 	ProxmoxBridge          string
 	ProxmoxGuestCIDR       string
 	ProxmoxSSHProxy        string
+	OperatorLabProfile     string
+	OperatorLabEndpoint    string
+	OperatorLabCA          string
+	OperatorLabClientCert  string
+	OperatorLabClientKey   string
+	OperatorLabIdentity    string
+	OperatorLabUser        string
 }
 
 func labAddCommand(stdout io.Writer) *cobra.Command {
@@ -95,7 +102,11 @@ func labAddCommand(stdout io.Writer) *cobra.Command {
 				return err
 			}
 			profile = config.Profiles[name]
-			fmt.Fprintf(stdout, "Lab profile %q saved\nTarget      %s\nTransport   %s\nBuild mode  %s\nConfig      %s\nNext        bofbench lab bootstrap --lab %s\n", name, profileTarget(profile), profile.Transport, profile.BuildMode, absolutePath(profilesPath), name)
+			next := "bofbench lab bootstrap --lab " + name
+			if profile.Provider == "operator-lab" {
+				next = "bofbench run <project> --via lab --lab " + name + " --observe full"
+			}
+			fmt.Fprintf(stdout, "Lab profile %q saved\nTarget      %s\nTransport   %s\nBuild mode  %s\nConfig      %s\nNext        %s\n", name, profileTarget(profile), profile.Transport, profile.BuildMode, absolutePath(profilesPath), next)
 			return nil
 		},
 	}
@@ -110,6 +121,10 @@ func cloneLabProfile(profile lab.Profile) lab.Profile {
 	if profile.Proxmox != nil {
 		proxmox := *profile.Proxmox
 		profile.Proxmox = &proxmox
+	}
+	if profile.OperatorLab != nil {
+		operatorLab := *profile.OperatorLab
+		profile.OperatorLab = &operatorLab
 	}
 	return profile
 }
@@ -187,6 +202,9 @@ func labShowCommand(stdout io.Writer) *cobra.Command {
 			}
 			if profile.Proxmox != nil {
 				fmt.Fprintf(stdout, "Proxmox API    %s\nProxmox node   %s\nProxmox VMID   %d\nProxmox pool   %s\nProxmox bridge %s\nGuest CIDR     %s\nToken source   %s\n", profile.Proxmox.Endpoint, profile.Proxmox.Node, profile.Proxmox.VMID, profile.Proxmox.Pool, profile.Proxmox.Bridge, profile.Proxmox.GuestIPv4CIDR, profile.Proxmox.TokenSecretSource.Kind)
+			}
+			if profile.OperatorLab != nil {
+				fmt.Fprintf(stdout, "Lab API profile %s\nLab API         %s\n", profile.OperatorLab.Profile, emptyText(profile.OperatorLab.Endpoint, "OPERATOR_LAB_URL"))
 			}
 			fmt.Fprintf(stdout, "Profiles file  %s\n", absolutePath(profilesPath))
 			return nil
@@ -362,7 +380,7 @@ func labSetupScriptCommand(stdout io.Writer) *cobra.Command {
 }
 
 func bindLabProfileFlags(cmd *cobra.Command, flags *labProfileFlags) {
-	cmd.Flags().StringVar(&flags.Provider, "provider", flags.Provider, "provider: existing, vagrant, or proxmox")
+	cmd.Flags().StringVar(&flags.Provider, "provider", flags.Provider, "provider: existing, vagrant, proxmox, or operator-lab")
 	cmd.Flags().StringVar(&flags.Topology, "topology", "", "topology: standalone or domain")
 	cmd.Flags().StringVar(&flags.Transport, "transport", "", "transport: ssh or winrm")
 	cmd.Flags().StringVar(&flags.Host, "host", "", "SSH alias, DNS name, or IP address")
@@ -393,6 +411,13 @@ func bindLabProfileFlags(cmd *cobra.Command, flags *labProfileFlags) {
 	cmd.Flags().StringVar(&flags.ProxmoxBridge, "proxmox-bridge", "", "guest lab bridge")
 	cmd.Flags().StringVar(&flags.ProxmoxGuestCIDR, "proxmox-guest-cidr", "", "CIDR used to select the guest-agent address")
 	cmd.Flags().StringVar(&flags.ProxmoxSSHProxy, "proxmox-ssh-proxy", "", "SSH alias used to forward otherwise unreachable Proxmox API traffic")
+	cmd.Flags().StringVar(&flags.OperatorLabProfile, "profile", "", "exact operator-lab machine profile, for example bofbench-dev-x64")
+	cmd.Flags().StringVar(&flags.OperatorLabEndpoint, "operator-lab-url", "", "operator-lab HTTPS API; defaults to OPERATOR_LAB_URL")
+	cmd.Flags().StringVar(&flags.OperatorLabCA, "operator-lab-ca", "", "operator-lab CA file; defaults to OPERATOR_LAB_CA")
+	cmd.Flags().StringVar(&flags.OperatorLabClientCert, "operator-lab-client-cert", "", "mTLS certificate; defaults to OPERATOR_LAB_CLIENT_CERT")
+	cmd.Flags().StringVar(&flags.OperatorLabClientKey, "operator-lab-client-key", "", "mTLS key; defaults to OPERATOR_LAB_CLIENT_KEY")
+	cmd.Flags().StringVar(&flags.OperatorLabIdentity, "operator-lab-identity", "", "SSH key for leased guests; defaults to BOFBENCH_OPERATOR_LAB_SSH_IDENTITY")
+	cmd.Flags().StringVar(&flags.OperatorLabUser, "operator-lab-user", "", "leased Windows SSH user; default bofbench")
 }
 
 func applyProfileFlagChanges(cmd *cobra.Command, profile *lab.Profile, flags labProfileFlags) {
@@ -402,8 +427,38 @@ func applyProfileFlagChanges(cmd *cobra.Command, profile *lab.Profile, flags lab
 		if profile.Provider == "proxmox" && profile.Proxmox == nil {
 			profile.Proxmox = lab.DefaultProfile("proxmox").Proxmox
 		}
+		if profile.Provider == "operator-lab" && profile.OperatorLab == nil {
+			profile.OperatorLab = lab.DefaultProfile("operator-lab").OperatorLab
+		}
 		if !cmd.Flags().Changed("transport") && !strings.EqualFold(previousProvider, flags.Provider) {
 			profile.Transport = lab.DefaultProfile(flags.Provider).Transport
+		}
+	}
+	if profile.Provider == "operator-lab" || profile.OperatorLab != nil {
+		if profile.OperatorLab == nil {
+			profile.OperatorLab = &lab.OperatorLabProfile{}
+		}
+		o := profile.OperatorLab
+		if cmd.Flags().Changed("profile") {
+			o.Profile = flags.OperatorLabProfile
+		}
+		if cmd.Flags().Changed("operator-lab-url") {
+			o.Endpoint = flags.OperatorLabEndpoint
+		}
+		if cmd.Flags().Changed("operator-lab-ca") {
+			o.CAFile = flags.OperatorLabCA
+		}
+		if cmd.Flags().Changed("operator-lab-client-cert") {
+			o.ClientCertificate = flags.OperatorLabClientCert
+		}
+		if cmd.Flags().Changed("operator-lab-client-key") {
+			o.ClientKey = flags.OperatorLabClientKey
+		}
+		if cmd.Flags().Changed("operator-lab-identity") {
+			o.IdentityFile = flags.OperatorLabIdentity
+		}
+		if cmd.Flags().Changed("operator-lab-user") {
+			o.User = flags.OperatorLabUser
 		}
 	}
 	if cmd.Flags().Changed("topology") {
@@ -506,6 +561,9 @@ func applyProfileFlagChanges(cmd *cobra.Command, profile *lab.Profile, flags lab
 }
 
 func profileTarget(profile lab.Profile) string {
+	if profile.Provider == "operator-lab" && profile.OperatorLab != nil {
+		return "operator-lab:" + profile.OperatorLab.Profile
+	}
 	if profile.Provider == "proxmox" && profile.Proxmox != nil {
 		if profile.Host != "" {
 			return profile.Host

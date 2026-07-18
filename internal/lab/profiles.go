@@ -16,8 +16,8 @@ import (
 
 const (
 	ProfilesSchema                = "bofbench.labs"
-	ProfilesSchemaVersion         = 5
-	PreviousProfilesSchemaVersion = 4
+	ProfilesSchemaVersion         = 6
+	PreviousProfilesSchemaVersion = 5
 	SelectionSchema               = "bofbench.lab-selection"
 	SelectionVersion              = 1
 )
@@ -29,21 +29,37 @@ var validSSHProxy = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@:-]*$`)
 // deliberately excluded: SSH uses an agent or identity-file path, and WinRM
 // passwords are resolved at execution time.
 type Profile struct {
-	Provider       string          `json:"provider"`
-	Topology       string          `json:"topology,omitempty"`
-	Transport      string          `json:"transport"`
-	Host           string          `json:"host,omitempty"`
-	User           string          `json:"user,omitempty"`
-	Port           int             `json:"port,omitempty"`
-	IdentityFile   string          `json:"identity_file,omitempty"`
-	KnownHosts     string          `json:"known_hosts,omitempty"`
-	RemoteRoot     string          `json:"remote_root,omitempty"`
-	BuildMode      string          `json:"build_mode,omitempty"`
-	VagrantFile    string          `json:"vagrant_file,omitempty"`
-	VagrantMachine string          `json:"vagrant_machine,omitempty"`
-	SliverSession  string          `json:"sliver_session,omitempty"`
-	WinRMHTTPS     bool            `json:"winrm_https,omitempty"`
-	Proxmox        *ProxmoxProfile `json:"proxmox,omitempty"`
+	Provider       string              `json:"provider"`
+	Topology       string              `json:"topology,omitempty"`
+	Transport      string              `json:"transport"`
+	Host           string              `json:"host,omitempty"`
+	User           string              `json:"user,omitempty"`
+	Port           int                 `json:"port,omitempty"`
+	IdentityFile   string              `json:"identity_file,omitempty"`
+	KnownHosts     string              `json:"known_hosts,omitempty"`
+	RemoteRoot     string              `json:"remote_root,omitempty"`
+	BuildMode      string              `json:"build_mode,omitempty"`
+	VagrantFile    string              `json:"vagrant_file,omitempty"`
+	VagrantMachine string              `json:"vagrant_machine,omitempty"`
+	SliverSession  string              `json:"sliver_session,omitempty"`
+	WinRMHTTPS     bool                `json:"winrm_https,omitempty"`
+	Proxmox        *ProxmoxProfile     `json:"proxmox,omitempty"`
+	OperatorLab    *OperatorLabProfile `json:"operator_lab,omitempty"`
+}
+
+// OperatorLabProfile selects a disposable machine from the neutral lab. The
+// connection fields are optional so a portable profile can resolve them from
+// OPERATOR_LAB_URL, OPERATOR_LAB_CA, OPERATOR_LAB_CLIENT_CERT,
+// OPERATOR_LAB_CLIENT_KEY, and BOFBENCH_OPERATOR_LAB_SSH_IDENTITY at use time.
+// None of those files contains a long-lived guest credential.
+type OperatorLabProfile struct {
+	Profile           string `json:"profile"`
+	Endpoint          string `json:"endpoint,omitempty"`
+	CAFile            string `json:"ca_file,omitempty"`
+	ClientCertificate string `json:"client_certificate,omitempty"`
+	ClientKey         string `json:"client_key,omitempty"`
+	IdentityFile      string `json:"identity_file,omitempty"`
+	User              string `json:"user,omitempty"`
 }
 
 // ProxmoxProfile contains only non-secret provider metadata. Token material is
@@ -184,6 +200,12 @@ func DefaultProfile(provider string) Profile {
 	if provider == "proxmox" {
 		profile.Proxmox = &ProxmoxProfile{CloneMode: "full", GuestAgent: true}
 	}
+	if provider == "operator-lab" {
+		profile.Transport = "ssh"
+		profile.Port = 22
+		profile.BuildMode = "local"
+		profile.OperatorLab = &OperatorLabProfile{User: "bofbench"}
+	}
 	return profile
 }
 
@@ -226,7 +248,7 @@ func LoadProfiles(path string) (ProfilesConfig, error) {
 		return ProfilesConfig{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	migratedFrom := 0
-	if config.Schema == ProfilesSchema && (config.SchemaVersion == 2 || config.SchemaVersion == 3 || config.SchemaVersion == PreviousProfilesSchemaVersion) {
+	if config.Schema == ProfilesSchema && (config.SchemaVersion == 2 || config.SchemaVersion == 3 || config.SchemaVersion == 4 || config.SchemaVersion == PreviousProfilesSchemaVersion) {
 		migratedFrom = config.SchemaVersion
 		config.SchemaVersion = ProfilesSchemaVersion
 		if config.Topologies == nil {
@@ -347,8 +369,8 @@ func ValidateProfile(profile Profile) error {
 	profile.Topology = strings.ToLower(strings.TrimSpace(profile.Topology))
 	profile.Transport = strings.ToLower(strings.TrimSpace(profile.Transport))
 	profile.BuildMode = strings.ToLower(strings.TrimSpace(profile.BuildMode))
-	if profile.Provider != "existing" && profile.Provider != "vagrant" && profile.Provider != "proxmox" {
-		return fmt.Errorf("provider must be existing, vagrant, or proxmox")
+	if profile.Provider != "existing" && profile.Provider != "vagrant" && profile.Provider != "proxmox" && profile.Provider != "operator-lab" {
+		return fmt.Errorf("provider must be existing, vagrant, proxmox, or operator-lab")
 	}
 	if profile.Topology == "" {
 		profile.Topology = "standalone"
@@ -365,11 +387,28 @@ func ValidateProfile(profile Profile) error {
 	if profile.Provider == "proxmox" && profile.Transport != "ssh" && profile.Transport != "winrm" {
 		return fmt.Errorf("proxmox guest transport must be ssh or winrm")
 	}
+	if profile.Provider == "operator-lab" && profile.Transport != "ssh" {
+		return fmt.Errorf("operator-lab profiles use SSH transport")
+	}
 	if profile.Provider == "existing" && strings.TrimSpace(profile.Host) == "" {
 		return fmt.Errorf("existing provider requires host")
 	}
 	if profile.Provider != "proxmox" && profile.Proxmox != nil {
 		return fmt.Errorf("proxmox settings require the proxmox provider")
+	}
+	if profile.Provider != "operator-lab" && profile.OperatorLab != nil {
+		return fmt.Errorf("operator_lab settings require the operator-lab provider")
+	}
+	if profile.Provider == "operator-lab" {
+		if profile.OperatorLab == nil || strings.TrimSpace(profile.OperatorLab.Profile) == "" {
+			return fmt.Errorf("operator-lab provider requires an exact neutral-lab profile")
+		}
+		if err := ValidateProfileName(profile.OperatorLab.Profile); err != nil {
+			return fmt.Errorf("operator-lab profile: %w", err)
+		}
+		if strings.TrimSpace(profile.Host) != "" || strings.TrimSpace(profile.KnownHosts) != "" {
+			return fmt.Errorf("operator-lab host and known_hosts are supplied by each lease")
+		}
 	}
 	if profile.Provider == "proxmox" {
 		if profile.Proxmox == nil {
@@ -450,6 +489,19 @@ func NormalizeProfile(profile Profile) Profile {
 				profile.Proxmox.CloneMode = "full"
 			}
 			profile.Proxmox.TokenSecretSource.Kind = strings.ToLower(strings.TrimSpace(profile.Proxmox.TokenSecretSource.Kind))
+		}
+	}
+	if profile.Provider == "operator-lab" {
+		if profile.OperatorLab == nil {
+			profile.OperatorLab = defaults.OperatorLab
+		}
+		if profile.OperatorLab != nil {
+			profile.OperatorLab.Profile = strings.TrimSpace(profile.OperatorLab.Profile)
+			profile.OperatorLab.Endpoint = strings.TrimRight(strings.TrimSpace(profile.OperatorLab.Endpoint), "/")
+			profile.OperatorLab.User = strings.TrimSpace(profile.OperatorLab.User)
+			if profile.OperatorLab.User == "" {
+				profile.OperatorLab.User = "bofbench"
+			}
 		}
 	}
 	return profile
