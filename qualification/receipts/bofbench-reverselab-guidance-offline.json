@@ -1,0 +1,15 @@
+{
+  "schema": "bofbench.reverselab-guidance/v1",
+  "version": "dev",
+  "collected_at": "2026-07-18T23:29:59Z",
+  "implementation_commit": "3dfb0e590ab7e6cf9b1da84a53734d342cbec079",
+  "documentation_commit": "6d6398a8a9ed5140f13bf1514b02e04ace3f0e52",
+  "checks": [
+    {"command": "go test ./...", "result": "pass"},
+    {"command": "go vet ./...", "result": "pass"},
+    {"control": "explicit selection", "result": "missing or absent observation IDs fail export"},
+    {"control": "artifact immutability", "result": "guidance attachment does not alter BOF, loader, arguments, effect, or cleanup"}
+  ],
+  "live_shared_lab": "not run",
+  "passed": true
+}
