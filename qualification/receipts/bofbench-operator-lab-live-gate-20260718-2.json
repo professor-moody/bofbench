@@ -1,0 +1,21 @@
+{
+  "schema": "bofbench.operator-lab-live-gate/v1",
+  "collected_at": "2026-07-18T22:33:47Z",
+  "status": "unavailable",
+  "supersedes": "bofbench-operator-lab-live-gate.json",
+  "reason": "The bofbench-dev-x64 profile could not be created because shared-host bootstrap key access is unavailable.",
+  "offline_implementation": {
+    "ordered_lease_operation_cleanup_markers": true,
+    "controller_evidence_snapshot": true,
+    "workspace_cleanup_and_destruction_receipt": true,
+    "edr_bundle_live_runner": true,
+    "focused_tests_and_vet_passed": true
+  },
+  "claims_withheld": [
+    "shared-lab BOF execution",
+    "live ordered telemetry and PCAP evidence",
+    "live workspace cleanup and clone destruction",
+    "frozen BOF bundle execution through Defender and Elastic"
+  ],
+  "passed": false
+}

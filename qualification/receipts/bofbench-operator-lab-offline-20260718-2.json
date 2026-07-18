@@ -1,0 +1,26 @@
+{
+  "schema": "bofbench.operator-lab-qualification/v1",
+  "version": "dev",
+  "collected_at": "2026-07-18T22:38:08Z",
+  "implementation_commit": "93b1b0dfbb05709b98f308c5ae218ab728f7ac43",
+  "supersedes": "bofbench-operator-lab-offline.json",
+  "checks": [
+    {"command": "make test", "result": "pass"},
+    {"command": "go test -race ./internal/lab ./internal/runtimeadapter ./internal/app", "result": "pass"},
+    {"command": "go vet ./...", "result": "pass"},
+    {"command": "mkdocs build --strict", "result": "pass"},
+    {"command": "python3 -m py_compile qualification/verify_operator_lab_live.py", "result": "pass"},
+    {"command": "git diff --check", "result": "pass"}
+  ],
+  "capabilities": {
+    "full_observation_marker_lifecycle": "offline-qualified",
+    "controller_evidence_and_pcap_snapshot": "offline-qualified",
+    "workspace_cleanup_before_release": "offline-qualified",
+    "clone_destruction_receipt": "offline-qualified",
+    "edrlab_bundle_export_and_live_verifier": "offline-qualified",
+    "live_shared_lab_execution": "not run"
+  },
+  "live_gate_receipt": "bofbench-operator-lab-live-gate-20260718-2.json",
+  "release_status": "dev-live-unqualified",
+  "passed": true
+}
