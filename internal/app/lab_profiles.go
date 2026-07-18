@@ -568,8 +568,10 @@ Start-Service sshd
 if (-not (Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue)) {
   New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
 }
+New-Item -Path 'HKLM:\SOFTWARE\OpenSSH' -Force | Out-Null
+New-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell -PropertyType String -Value "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Force | Out-Null
 New-Item -ItemType Directory -Force -Path %s | Out-Null
-Write-Host 'OpenSSH is ready. Add your public key to the target account before using BOFBench.'
+Write-Host 'OpenSSH with a PowerShell default shell is ready. Add your public key to the target account before using BOFBench.'
 `
 
 const winRMSetupScript = `$ErrorActionPreference = 'Stop'

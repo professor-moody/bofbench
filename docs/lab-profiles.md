@@ -169,6 +169,8 @@ bofbench lab setup-script --transport winrm
 
 Run the printed block in an elevated PowerShell window on the new Windows host. Then register and bootstrap it:
 
+The SSH block enables OpenSSH and configures Windows PowerShell as its `DefaultShell`, so a newly cloned or freshly installed host can run bootstrap without a separate registry edit.
+
 ```bash
 bofbench lab add fresh \
   --provider existing \

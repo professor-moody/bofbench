@@ -25,6 +25,8 @@ bofbench lab setup-script --transport winrm
 
 Run the printed block in an elevated PowerShell window on Windows, then register the host:
 
+For SSH profiles, the block also sets the Windows OpenSSH `DefaultShell` to Windows PowerShell. This is required because BOFBench sends PowerShell through the selected transport and a stock `cmd.exe` default shell cannot interpret those commands.
+
 ```bash
 bofbench lab add fresh \
   --provider existing \

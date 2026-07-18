@@ -400,7 +400,7 @@ func operationRunCommand(stdout io.Writer, load func() (*operationsvc.Registry, 
 		if err != nil {
 			return err
 		}
-		inputs, err := resolveOperationInputs(item.Document, opts.arguments, nil, false)
+		inputs, err := resolveOperationInputs(item.Document, operationRunInputArguments(opts.arguments, opts.targets), nil, false)
 		if err != nil {
 			return err
 		}
@@ -408,6 +408,18 @@ func operationRunCommand(stdout io.Writer, load func() (*operationsvc.Registry, 
 	}}
 	bindOperationRunFlags(cmd, &opts, true)
 	return cmd
+}
+
+// operationRunInputArguments supplies a temporary value for the conventional
+// targets input so required-input validation can succeed before runOperation
+// resolves the named topology target set to concrete computer identities.
+// runOperation replaces this value before any step is expanded or executed.
+func operationRunInputArguments(arguments []string, targetSet string) []string {
+	result := append([]string(nil), arguments...)
+	if strings.TrimSpace(targetSet) != "" {
+		result = append(result, "targets="+strings.TrimSpace(targetSet))
+	}
+	return result
 }
 
 func operationResumeCommand(stdout io.Writer, load func() (*operationsvc.Registry, error)) *cobra.Command {

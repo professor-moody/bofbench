@@ -1,12 +1,29 @@
 package app
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 
 	"bofbench/internal/lab"
 )
+
+func TestSSHSetupScriptConfiguresPowerShellDefaultShell(t *testing.T) {
+	var output bytes.Buffer
+	cmd := labSetupScriptCommand(&output)
+	cmd.SetArgs([]string{"--transport", "ssh"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, expected := range []string{"HKLM:\\SOFTWARE\\OpenSSH", "DefaultShell", "WindowsPowerShell\\v1.0\\powershell.exe"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("SSH setup script is missing %q:\n%s", expected, text)
+		}
+	}
+}
 
 func TestProfileClonePreservesTransportWhenProviderIsUnchanged(t *testing.T) {
 	flags := labProfileFlags{Provider: "existing"}

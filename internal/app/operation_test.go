@@ -26,6 +26,20 @@ func TestResolveOperationInputsValidatesTypesAndDuplicates(t *testing.T) {
 	}
 }
 
+func TestOperationTargetSetSatisfiesRequiredTargetsBeforeTopologyResolution(t *testing.T) {
+	document := operationsvc.Document{Inputs: []operationsvc.Input{{Name: "targets", Type: "string", Required: true}}}
+	resolved, err := resolveOperationInputs(document, operationRunInputArguments(nil, "windows-targets"), nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved["targets"] != "windows-targets" {
+		t.Fatalf("targets=%q", resolved["targets"])
+	}
+	if _, err := resolveOperationInputs(document, operationRunInputArguments([]string{"targets=manual"}, "windows-targets"), nil, false); err == nil || !strings.Contains(err.Error(), "more than once") {
+		t.Fatalf("expected --arg targets plus --targets to be rejected, got %v", err)
+	}
+}
+
 func TestOperationCancelLeavesTerminalReceiptTerminal(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "operation.json")
 	receipt := operationsvc.Receipt{
