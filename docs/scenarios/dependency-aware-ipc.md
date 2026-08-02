@@ -23,7 +23,7 @@ The `internal/ipc-dependency-matrix` operation:
 - MinGW locally or MSVC on the lab.
 
 ```bash
-bofbench catalog add /Users/keys/Documents/bofbench-packs-internal \
+bofbench catalog add /Users/keys/projects/windows-operator-suite/bofbench-packs-internal \
   --name internal
 bofbench lab status --lab devbox
 bofbench lab target deploy --lab devbox
@@ -57,7 +57,7 @@ Each child contains its own dependencies. For example, the window child must cap
 
 ```bash
 bofbench operation test internal/ipc-dependency-matrix \
-  --catalog /Users/keys/Documents/bofbench-packs-internal \
+  --catalog /Users/keys/projects/windows-operator-suite/bofbench-packs-internal \
   --compiler mingw
 ```
 
@@ -67,7 +67,7 @@ The test validates the v6 graph, builds every unique x64/x86 pack, evaluates ana
 
 ```bash
 bofbench operation prove internal/ipc-dependency-matrix \
-  --catalog /Users/keys/Documents/bofbench-packs-internal \
+  --catalog /Users/keys/projects/windows-operator-suite/bofbench-packs-internal \
   --via lab --lab devbox --arch x64 --parallelism 4
 ```
 
@@ -103,7 +103,7 @@ Then supply values from `lab target status`:
 
 ```bash
 bofbench operation run internal/ipc-dependency-matrix \
-  --catalog /Users/keys/Documents/bofbench-packs-internal \
+  --catalog /Users/keys/projects/windows-operator-suite/bofbench-packs-internal \
   --via lab --lab devbox --arch x64 --parallelism 4 --cleanup \
   --arg holder_pid=<HOLDER_PID> \
   --arg pipe_name='<PIPE_NAME>' \
