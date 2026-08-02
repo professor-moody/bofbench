@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"bofbench/internal/evidence"
-	"bofbench/internal/lab"
-	"bofbench/internal/runlog"
-	"bofbench/internal/runtimeadapter"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/lab"
+	"github.com/professor-moody/bofbench/internal/runlog"
+	"github.com/professor-moody/bofbench/internal/runtimeadapter"
 )
 
 type activeRuntimeTask struct {

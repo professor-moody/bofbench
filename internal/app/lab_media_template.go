@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bofbench/internal/lab"
+	"github.com/professor-moody/bofbench/internal/lab"
 )
 
 func labMediaCommand(stdout io.Writer) *cobra.Command {

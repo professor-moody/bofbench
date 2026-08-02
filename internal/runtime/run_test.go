@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"bofbench/internal/artifact"
-	"bofbench/internal/coff"
-	"bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/artifact"
+	"github.com/professor-moody/bofbench/internal/coff"
+	"github.com/professor-moody/bofbench/internal/evidence"
 )
 
 func TestSelectRuntime(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"bofbench/internal/coff"
+	"github.com/professor-moody/bofbench/internal/coff"
 )
 
 func TestAnalyzeCapabilitiesTrustedSecWhoamiLikeImports(t *testing.T) {

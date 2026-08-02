@@ -1,4 +1,4 @@
-module bofbench
+module github.com/professor-moody/bofbench
 
 go 1.24.0
 
@@ -41,6 +41,7 @@ require (
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
+	github.com/professor-moody/operator-lab/labapi v0.0.0
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/tidwall/transform v0.0.0-20201103190739-32f242e2dbde // indirect
@@ -49,3 +50,5 @@ require (
 	golang.org/x/net v0.21.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
 )
+
+replace github.com/professor-moody/operator-lab/labapi => ../operator-lab/labapi

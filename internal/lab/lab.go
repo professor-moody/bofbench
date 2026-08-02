@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/evidence"
 )
 
 type SmokeOptions struct {

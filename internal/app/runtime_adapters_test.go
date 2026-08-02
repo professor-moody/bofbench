@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"bofbench/internal/runtimeadapter"
+	"github.com/professor-moody/bofbench/internal/runtimeadapter"
 )
 
 func TestRuntimeAdapterRegistry(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	packsvc "bofbench/internal/pack"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
 )
 
 func TestResolveNamedPackArgumentsPreservesContractOrder(t *testing.T) {

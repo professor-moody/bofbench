@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/lab"
+	"github.com/professor-moody/bofbench/internal/lab"
 )
 
 const (

@@ -13,8 +13,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bofbench/internal/lab"
-	"bofbench/internal/runtimeadapter"
+	"github.com/professor-moody/bofbench/internal/lab"
+	"github.com/professor-moody/bofbench/internal/runtimeadapter"
 )
 
 type runtimeTaskView struct {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"bofbench/internal/lab"
+	"github.com/professor-moody/bofbench/internal/lab"
 )
 
 func TestTopologyProviderRoleOrdering(t *testing.T) {

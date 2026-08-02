@@ -12,15 +12,15 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/argpack"
-	"bofbench/internal/buildsys"
-	"bofbench/internal/config"
-	"bofbench/internal/evidence"
-	"bofbench/internal/lab"
-	"bofbench/internal/runlog"
-	runtimesvc "bofbench/internal/runtime"
-	"bofbench/internal/runtimeadapter"
-	"bofbench/internal/stage"
+	"github.com/professor-moody/bofbench/internal/argpack"
+	"github.com/professor-moody/bofbench/internal/buildsys"
+	"github.com/professor-moody/bofbench/internal/config"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/lab"
+	"github.com/professor-moody/bofbench/internal/runlog"
+	runtimesvc "github.com/professor-moody/bofbench/internal/runtime"
+	"github.com/professor-moody/bofbench/internal/runtimeadapter"
+	"github.com/professor-moody/bofbench/internal/stage"
 )
 
 type runtimeRunContext struct {

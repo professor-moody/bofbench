@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"bofbench/internal/capability"
+	"github.com/professor-moody/bofbench/internal/capability"
 )
 
 const (

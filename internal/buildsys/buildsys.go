@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/config"
-	"bofbench/internal/evidence"
-	"bofbench/internal/runlog"
+	"github.com/professor-moody/bofbench/internal/config"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/runlog"
 )
 
 const buildTimeout = 90 * time.Second

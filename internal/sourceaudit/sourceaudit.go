@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/capability"
-	"bofbench/internal/evidence"
-	"bofbench/internal/runlog"
+	"github.com/professor-moody/bofbench/internal/capability"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/runlog"
 )
 
 const (

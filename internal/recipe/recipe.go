@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/evidence"
-	"bofbench/internal/runlog"
-	"bofbench/internal/scaffold"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/runlog"
+	"github.com/professor-moody/bofbench/internal/scaffold"
 )
 
 const (

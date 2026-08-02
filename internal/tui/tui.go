@@ -15,10 +15,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"bofbench/internal/arsenal"
-	"bofbench/internal/lab"
-	operationsvc "bofbench/internal/operation"
-	packsvc "bofbench/internal/pack"
+	"github.com/professor-moody/bofbench/internal/arsenal"
+	"github.com/professor-moody/bofbench/internal/lab"
+	operationsvc "github.com/professor-moody/bofbench/internal/operation"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
 )
 
 type model struct {

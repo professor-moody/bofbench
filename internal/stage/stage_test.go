@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"bofbench/internal/argpack"
-	"bofbench/internal/coff"
-	"bofbench/internal/evidence"
-	"bofbench/internal/recipe"
+	"github.com/professor-moody/bofbench/internal/argpack"
+	"github.com/professor-moody/bofbench/internal/coff"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/recipe"
 )
 
 func TestStageTargets(t *testing.T) {

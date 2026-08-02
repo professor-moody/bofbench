@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/evidence"
 )
 
 func TestRemoteVersionMatchesReleaseAndRejectsUnknownDevelopmentBuilds(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/runlog"
+	"github.com/professor-moody/bofbench/internal/runlog"
 )
 
 const proxmoxGuestReadyTimeout = 5 * time.Minute

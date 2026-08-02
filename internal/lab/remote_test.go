@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	runtimesvc "bofbench/internal/runtime"
+	runtimesvc "github.com/professor-moody/bofbench/internal/runtime"
 )
 
 func TestRemoteEvidenceRedactsSensitiveFieldsAndEventMessages(t *testing.T) {

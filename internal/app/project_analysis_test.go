@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	packsvc "bofbench/internal/pack"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
 )
 
 func TestDeclarativeSignaturesDeduplicateAndQualifyConflicts(t *testing.T) {

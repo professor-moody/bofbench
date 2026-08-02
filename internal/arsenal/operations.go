@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/artifact"
-	"bofbench/internal/evidence"
-	"bofbench/internal/runlog"
+	"github.com/professor-moody/bofbench/internal/artifact"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/runlog"
 )
 
 const LockFileName = "arsenal.lock.json"

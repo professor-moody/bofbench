@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"bofbench/internal/coff"
-	"bofbench/internal/stage"
+	"github.com/professor-moody/bofbench/internal/coff"
+	"github.com/professor-moody/bofbench/internal/stage"
 )
 
 func TestCLIWorkspaceBuildInspectStage(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/evidence"
 )
 
 func TestSmokeArgs(t *testing.T) {

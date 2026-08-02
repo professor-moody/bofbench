@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/argpack"
-	"bofbench/internal/artifact"
-	"bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/argpack"
+	"github.com/professor-moody/bofbench/internal/artifact"
+	"github.com/professor-moody/bofbench/internal/evidence"
 )
 
 const (

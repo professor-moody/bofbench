@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"bofbench/internal/argpack"
-	"bofbench/internal/evidence"
-	"bofbench/internal/recipe"
+	"github.com/professor-moody/bofbench/internal/argpack"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/recipe"
 )
 
 const ArgumentSchema = "bofbench.stage-arguments"

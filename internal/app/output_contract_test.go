@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"bofbench/internal/config"
-	"bofbench/internal/loader"
-	runtimesvc "bofbench/internal/runtime"
+	"github.com/professor-moody/bofbench/internal/config"
+	"github.com/professor-moody/bofbench/internal/loader"
+	runtimesvc "github.com/professor-moody/bofbench/internal/runtime"
 )
 
 func TestApplyOutputChecks(t *testing.T) {

@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/evidence"
 )
 
 const TrustedSecURL = "https://github.com/trustedsec/CS-Situational-Awareness-BOF.git"

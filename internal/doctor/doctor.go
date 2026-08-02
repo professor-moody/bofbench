@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/evidence"
 )
 
 type Status string

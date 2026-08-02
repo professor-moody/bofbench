@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bofbench/internal/lab"
-	"bofbench/internal/runtimecontrol"
+	"github.com/professor-moody/bofbench/internal/lab"
+	"github.com/professor-moody/bofbench/internal/runtimecontrol"
 )
 
 func runtimeControlCommand(stdout io.Writer) *cobra.Command {

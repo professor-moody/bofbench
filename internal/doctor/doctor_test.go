@@ -3,7 +3,7 @@ package doctor
 import (
 	"testing"
 
-	"bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/evidence"
 )
 
 func TestRunReportHasCoreChecks(t *testing.T) {

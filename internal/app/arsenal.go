@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bofbench/internal/arsenal"
-	"bofbench/internal/artifact"
-	packsvc "bofbench/internal/pack"
+	"github.com/professor-moody/bofbench/internal/arsenal"
+	"github.com/professor-moody/bofbench/internal/artifact"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
 )
 
 func arsenalCommand(stdout io.Writer) *cobra.Command {

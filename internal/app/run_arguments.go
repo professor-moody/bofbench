@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"bofbench/internal/argpack"
-	packsvc "bofbench/internal/pack"
+	"github.com/professor-moody/bofbench/internal/argpack"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
 	"golang.org/x/term"
 )
 

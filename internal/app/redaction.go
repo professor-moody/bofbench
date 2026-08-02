@@ -3,10 +3,10 @@ package app
 import (
 	"strings"
 
-	"bofbench/internal/argpack"
-	packsvc "bofbench/internal/pack"
-	runtimesvc "bofbench/internal/runtime"
-	"bofbench/internal/runtimeadapter"
+	"github.com/professor-moody/bofbench/internal/argpack"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
+	runtimesvc "github.com/professor-moody/bofbench/internal/runtime"
+	"github.com/professor-moody/bofbench/internal/runtimeadapter"
 )
 
 func runtimeSensitivity(project string, resolved resolvedRunArguments) (fields, names, values []string) {

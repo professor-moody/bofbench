@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"testing"
 
-	"bofbench/internal/runtimeadapter"
+	"github.com/professor-moody/bofbench/internal/runtimeadapter"
 )
 
 func TestSliverExtensionCommandLineUsesNamedFlags(t *testing.T) {

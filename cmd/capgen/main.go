@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"bofbench/internal/capability"
+	"github.com/professor-moody/bofbench/internal/capability"
 )
 
 func main() {

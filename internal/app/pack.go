@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	packsvc "bofbench/internal/pack"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
 )
 
 func catalogCommand(stdout io.Writer) *cobra.Command {

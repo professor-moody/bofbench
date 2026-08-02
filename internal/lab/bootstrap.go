@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/evidence"
-	"bofbench/internal/runlog"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/runlog"
 )
 
 type BootstrapOptions struct {

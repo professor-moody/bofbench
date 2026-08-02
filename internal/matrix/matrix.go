@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/argpack"
-	"bofbench/internal/artifact"
-	"bofbench/internal/buildsys"
-	"bofbench/internal/config"
-	"bofbench/internal/evidence"
-	"bofbench/internal/runlog"
-	runtimesvc "bofbench/internal/runtime"
+	"github.com/professor-moody/bofbench/internal/argpack"
+	"github.com/professor-moody/bofbench/internal/artifact"
+	"github.com/professor-moody/bofbench/internal/buildsys"
+	"github.com/professor-moody/bofbench/internal/config"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/runlog"
+	runtimesvc "github.com/professor-moody/bofbench/internal/runtime"
 )
 
 const (

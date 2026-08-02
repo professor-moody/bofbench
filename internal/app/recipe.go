@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bofbench/internal/recipe"
-	"bofbench/internal/sourceaudit"
+	"github.com/professor-moody/bofbench/internal/recipe"
+	"github.com/professor-moody/bofbench/internal/sourceaudit"
 )
 
 func recipeCommand(stdout io.Writer) *cobra.Command {

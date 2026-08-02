@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/evidence"
 )
 
 type EnsureResult struct {

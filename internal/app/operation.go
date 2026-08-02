@@ -16,14 +16,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bofbench/internal/argpack"
-	"bofbench/internal/artifact"
-	"bofbench/internal/buildsys"
-	"bofbench/internal/lab"
-	operationsvc "bofbench/internal/operation"
-	packsvc "bofbench/internal/pack"
-	"bofbench/internal/runlog"
-	"bofbench/internal/runtimeadapter"
+	"github.com/professor-moody/bofbench/internal/argpack"
+	"github.com/professor-moody/bofbench/internal/artifact"
+	"github.com/professor-moody/bofbench/internal/buildsys"
+	"github.com/professor-moody/bofbench/internal/lab"
+	operationsvc "github.com/professor-moody/bofbench/internal/operation"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
+	"github.com/professor-moody/bofbench/internal/runlog"
+	"github.com/professor-moody/bofbench/internal/runtimeadapter"
 )
 
 type operationOptions struct {

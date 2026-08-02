@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"bofbench/internal/app"
+	"github.com/professor-moody/bofbench/internal/app"
 )
 
 func main() {

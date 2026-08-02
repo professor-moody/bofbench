@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/argpack"
+	"github.com/professor-moody/bofbench/internal/argpack"
 )
 
 const windowsArtifactBundleSchema = "windows.artifact-bundle/v1"

@@ -16,10 +16,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bofbench/internal/lab"
-	"bofbench/internal/runlog"
-	"bofbench/internal/runtimeadapter"
-	"bofbench/internal/stage"
+	"github.com/professor-moody/bofbench/internal/lab"
+	"github.com/professor-moody/bofbench/internal/runlog"
+	"github.com/professor-moody/bofbench/internal/runtimeadapter"
+	"github.com/professor-moody/bofbench/internal/stage"
 )
 
 type sliverOptions struct {

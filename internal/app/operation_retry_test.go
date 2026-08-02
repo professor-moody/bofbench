@@ -3,9 +3,9 @@ package app
 import (
 	"testing"
 
-	operationsvc "bofbench/internal/operation"
-	packsvc "bofbench/internal/pack"
-	"bofbench/internal/runtimeadapter"
+	operationsvc "github.com/professor-moody/bofbench/internal/operation"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
+	"github.com/professor-moody/bofbench/internal/runtimeadapter"
 )
 
 func retryTestStep() operationsvc.Step {

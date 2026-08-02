@@ -11,8 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bofbench/internal/lab"
-	"bofbench/internal/runlog"
+	"github.com/professor-moody/bofbench/internal/lab"
+	"github.com/professor-moody/bofbench/internal/runlog"
 )
 
 const domainProvisionReceiptSchema = "bofbench.domain-provision-receipt"

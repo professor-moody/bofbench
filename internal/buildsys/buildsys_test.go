@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/evidence"
 )
 
 func TestFindCSourceIgnoresAppleDoubleFiles(t *testing.T) {

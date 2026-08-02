@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"bofbench/internal/artifact"
-	packsvc "bofbench/internal/pack"
+	"github.com/professor-moody/bofbench/internal/artifact"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
 )
 
 func applyProjectPackMetadata(analysis *artifact.Analysis, project string) error {

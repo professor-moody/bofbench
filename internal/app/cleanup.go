@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	packsvc "bofbench/internal/pack"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
 )
 
 // prepareCleanupProject materializes only the cleanup companions selected by a

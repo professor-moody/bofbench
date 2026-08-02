@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"bofbench/internal/pack"
+	"github.com/professor-moody/bofbench/internal/pack"
 )
 
 func TestCompareRequiresExactHashAndHonorsContracts(t *testing.T) {

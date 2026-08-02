@@ -11,16 +11,16 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bofbench/internal/argpack"
-	"bofbench/internal/artifact"
-	"bofbench/internal/buildsys"
-	"bofbench/internal/capability"
-	"bofbench/internal/config"
-	"bofbench/internal/evidence"
-	"bofbench/internal/recipe"
-	"bofbench/internal/runlog"
-	runtimesvc "bofbench/internal/runtime"
-	"bofbench/internal/sourceaudit"
+	"github.com/professor-moody/bofbench/internal/argpack"
+	"github.com/professor-moody/bofbench/internal/artifact"
+	"github.com/professor-moody/bofbench/internal/buildsys"
+	"github.com/professor-moody/bofbench/internal/capability"
+	"github.com/professor-moody/bofbench/internal/config"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/recipe"
+	"github.com/professor-moody/bofbench/internal/runlog"
+	runtimesvc "github.com/professor-moody/bofbench/internal/runtime"
+	"github.com/professor-moody/bofbench/internal/sourceaudit"
 )
 
 type devLoopReport struct {

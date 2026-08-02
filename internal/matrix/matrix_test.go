@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"bofbench/internal/buildsys"
-	"bofbench/internal/config"
-	"bofbench/internal/evidence"
-	runtimesvc "bofbench/internal/runtime"
+	"github.com/professor-moody/bofbench/internal/buildsys"
+	"github.com/professor-moody/bofbench/internal/config"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	runtimesvc "github.com/professor-moody/bofbench/internal/runtime"
 )
 
 func TestNormalizeOptionsBuildsStableMatrix(t *testing.T) {

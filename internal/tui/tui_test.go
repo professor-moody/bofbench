@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"bofbench/internal/arsenal"
+	"github.com/professor-moody/bofbench/internal/arsenal"
 )
 
 func TestFilteredRunsByStatusAndRuntime(t *testing.T) {

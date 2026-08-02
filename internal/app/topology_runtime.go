@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"bofbench/internal/lab"
-	packsvc "bofbench/internal/pack"
+	"github.com/professor-moody/bofbench/internal/lab"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
 )
 
 type resolvedTopologyValues struct {

@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/artifact"
-	"bofbench/internal/capability"
-	"bofbench/internal/evidence"
-	"bofbench/internal/loader"
+	"github.com/professor-moody/bofbench/internal/artifact"
+	"github.com/professor-moody/bofbench/internal/capability"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/loader"
 )
 
 type Request struct {

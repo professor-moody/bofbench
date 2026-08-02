@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"bofbench/internal/coff"
-	"bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/coff"
+	"github.com/professor-moody/bofbench/internal/evidence"
 )
 
 func TestAnalyzeCOFF(t *testing.T) {

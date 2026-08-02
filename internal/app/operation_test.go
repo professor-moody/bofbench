@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	operationsvc "bofbench/internal/operation"
-	packsvc "bofbench/internal/pack"
+	operationsvc "github.com/professor-moody/bofbench/internal/operation"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
 )
 
 func TestResolveOperationInputsValidatesTypesAndDuplicates(t *testing.T) {

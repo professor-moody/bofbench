@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	operationsvc "bofbench/internal/operation"
-	"bofbench/internal/runtimeadapter"
+	operationsvc "github.com/professor-moody/bofbench/internal/operation"
+	"github.com/professor-moody/bofbench/internal/runtimeadapter"
 )
 
 type dagPreparedStep struct {

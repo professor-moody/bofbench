@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	packsvc "bofbench/internal/pack"
-	"bofbench/internal/runtimeadapter"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
+	"github.com/professor-moody/bofbench/internal/runtimeadapter"
 )
 
 func TestValidateReferencesRequireEarlierCaptures(t *testing.T) {

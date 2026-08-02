@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"bofbench/internal/coff"
+	"github.com/professor-moody/bofbench/internal/coff"
 )
 
 type nativeCorpusCase struct {

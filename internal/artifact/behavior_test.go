@@ -8,7 +8,7 @@ import (
 	"slices"
 	"testing"
 
-	"bofbench/internal/coff"
+	"github.com/professor-moody/bofbench/internal/coff"
 )
 
 func TestAnalysisCorrelatesObservedOutputByObjectHash(t *testing.T) {

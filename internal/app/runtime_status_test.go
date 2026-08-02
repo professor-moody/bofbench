@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"bofbench/internal/runtimeadapter"
+	"github.com/professor-moody/bofbench/internal/runtimeadapter"
 )
 
 func TestWaitForRuntimeSessionPollsUntilReady(t *testing.T) {

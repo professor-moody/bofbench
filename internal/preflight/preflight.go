@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/arsenal"
-	"bofbench/internal/artifact"
-	"bofbench/internal/buildsys"
-	"bofbench/internal/capability"
-	"bofbench/internal/config"
-	"bofbench/internal/evidence"
-	"bofbench/internal/runlog"
+	"github.com/professor-moody/bofbench/internal/arsenal"
+	"github.com/professor-moody/bofbench/internal/artifact"
+	"github.com/professor-moody/bofbench/internal/buildsys"
+	"github.com/professor-moody/bofbench/internal/capability"
+	"github.com/professor-moody/bofbench/internal/config"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/runlog"
 )
 
 type Options struct {

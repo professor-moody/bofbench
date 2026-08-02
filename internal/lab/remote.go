@@ -17,11 +17,11 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"bofbench/internal/buildsys"
-	"bofbench/internal/evidence"
-	"bofbench/internal/runlog"
-	runtimesvc "bofbench/internal/runtime"
-	"bofbench/internal/runtimeadapter"
+	"github.com/professor-moody/bofbench/internal/buildsys"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/runlog"
+	runtimesvc "github.com/professor-moody/bofbench/internal/runtime"
+	"github.com/professor-moody/bofbench/internal/runtimeadapter"
 )
 
 type RemoteOptions struct {

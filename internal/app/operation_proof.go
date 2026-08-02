@@ -16,11 +16,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bofbench/internal/evidence"
-	"bofbench/internal/lab"
-	operationsvc "bofbench/internal/operation"
-	packsvc "bofbench/internal/pack"
-	"bofbench/internal/runlog"
+	"github.com/professor-moody/bofbench/internal/evidence"
+	"github.com/professor-moody/bofbench/internal/lab"
+	operationsvc "github.com/professor-moody/bofbench/internal/operation"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
+	"github.com/professor-moody/bofbench/internal/runlog"
 )
 
 type operationTestResult struct {

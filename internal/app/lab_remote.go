@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bofbench/internal/lab"
+	"github.com/professor-moody/bofbench/internal/lab"
 )
 
 type remoteLabFlags struct {

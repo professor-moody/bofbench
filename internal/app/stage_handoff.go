@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	"bofbench/internal/argpack"
-	"bofbench/internal/artifact"
-	"bofbench/internal/config"
-	packsvc "bofbench/internal/pack"
-	"bofbench/internal/sourceaudit"
-	"bofbench/internal/stage"
+	"github.com/professor-moody/bofbench/internal/argpack"
+	"github.com/professor-moody/bofbench/internal/artifact"
+	"github.com/professor-moody/bofbench/internal/config"
+	packsvc "github.com/professor-moody/bofbench/internal/pack"
+	"github.com/professor-moody/bofbench/internal/sourceaudit"
+	"github.com/professor-moody/bofbench/internal/stage"
 )
 
 type stageInputOptions struct {

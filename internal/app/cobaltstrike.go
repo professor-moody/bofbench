@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/argpack"
-	"bofbench/internal/runlog"
-	"bofbench/internal/runtimeadapter"
-	"bofbench/internal/stage"
+	"github.com/professor-moody/bofbench/internal/argpack"
+	"github.com/professor-moody/bofbench/internal/runlog"
+	"github.com/professor-moody/bofbench/internal/runtimeadapter"
+	"github.com/professor-moody/bofbench/internal/stage"
 )
 
 var (

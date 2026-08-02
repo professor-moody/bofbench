@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/pack"
+	"github.com/professor-moody/bofbench/internal/pack"
 )
 
 const (
