@@ -294,3 +294,78 @@ func writeTestJSON(t *testing.T, path string, value any) {
 		t.Fatal(err)
 	}
 }
+
+// testCatalog writes one minimal valid pack into a fresh directory and returns
+// that directory.
+func testCatalog(t *testing.T, id string) string {
+	t.Helper()
+	catalog := t.TempDir()
+	packRoot := filepath.Join(catalog, id)
+	if err := os.MkdirAll(packRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestJSON(t, filepath.Join(packRoot, "pack.json"), Document{
+		Schema: Schema, SchemaVersion: 1, ID: id, Version: "1.0.0", Title: "Operator Note", Summary: "Print a parameter-ready pack marker", Tier: "internal",
+		Capabilities: []string{"operator marker"}, Effects: []string{"reads data"}, Platforms: []string{"windows"}, Architecture: []string{"x64"}, Privilege: "user", Network: "none",
+		Arguments: []Argument{{Name: "message", Type: "string", Required: true}}, Source: Source{HeaderFragments: []string{"operator.h"}, Calls: []string{"bofbench_pack_operator_note()"}},
+		ExpectedAnalysis: []string{"operator marker"}, OutputFields: []string{"message"}, TargetSupport: []string{"native", "sliver"},
+	})
+	if err := os.WriteFile(filepath.Join(packRoot, "operator.h"), []byte(`static void bofbench_pack_operator_note(void) { BeaconPrintf(CALLBACK_OUTPUT, "[operator-note] status=ready"); }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return catalog
+}
+
+// TestLoadCatalogFollowsSymlinkedRoot pins the directory-move case.
+// filepath.WalkDir lstats its root and will not descend a symlink, so a
+// catalog registered before its directory moved resolved to zero packs and made
+// every pack and operation verb fail.
+func TestLoadCatalogFollowsSymlinkedRoot(t *testing.T) {
+	t.Setenv("BOFBENCH_CONFIG_HOME", t.TempDir())
+	real := testCatalog(t, "operator-note")
+	link := filepath.Join(t.TempDir(), "catalog-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := Load(LoadOptions{Project: newProject(t), ExtraCatalogs: []string{link}})
+	if err != nil {
+		t.Fatalf("catalog behind a symlink must resolve: %v", err)
+	}
+	found := false
+	for _, item := range registry.List() {
+		if item.Document.ID == "operator-note" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("pack not found through a symlinked catalog root: %+v", registry.List())
+	}
+}
+
+// TestUnreadableRegisteredCatalogDoesNotAbortGoodCatalogs pins the blast
+// radius. One stale registered catalog previously aborted every pack verb, even
+// when a valid catalog was named explicitly on the command line.
+func TestUnreadableRegisteredCatalogDoesNotAbortGoodCatalogs(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("BOFBENCH_CONFIG_HOME", configHome)
+	good := testCatalog(t, "operator-note")
+	missing := filepath.Join(t.TempDir(), "was-moved-away")
+	// With BOFBENCH_CONFIG_HOME set, catalogs.json sits directly in that root.
+	writeTestJSON(t, filepath.Join(configHome, "catalogs.json"), CatalogConfig{
+		Schema: "bofbench.catalogs", SchemaVersion: 1,
+		Catalogs: []CatalogRef{{Name: "stale", Path: missing, Source: missing}},
+	})
+	registry, err := Load(LoadOptions{Project: newProject(t), ExtraCatalogs: []string{good}})
+	if err != nil {
+		t.Fatalf("a stale registered catalog must not abort an explicit good one: %v", err)
+	}
+	found := false
+	for _, item := range registry.List() {
+		if item.Document.ID == "operator-note" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("explicitly named catalog was not loaded")
+	}
+}

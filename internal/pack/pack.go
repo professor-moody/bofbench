@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"bofbench/internal/recipe"
-	"bofbench/internal/scaffold"
+	"github.com/professor-moody/bofbench/internal/recipe"
+	"github.com/professor-moody/bofbench/internal/scaffold"
 )
 
 const (
@@ -265,9 +265,15 @@ func Load(opts LoadOptions) (*Registry, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A registered catalog is ambient configuration, not part of the command
+	// being run. One unreadable entry previously aborted every pack and
+	// operation verb, including runs that named a good catalog explicitly on
+	// the command line. Record the failure and carry on; if nothing at all
+	// resolves, the deferred errors are reported instead of an empty registry.
+	var catalogFailures []string
 	for _, catalog := range config.Catalogs {
 		if err := loadCatalog(catalog.Path, catalog.Name); err != nil {
-			return nil, fmt.Errorf("catalog %s: %w", catalog.Name, err)
+			catalogFailures = append(catalogFailures, fmt.Sprintf("catalog %s: %v", catalog.Name, err))
 		}
 	}
 	for _, path := range opts.ExtraCatalogs {
@@ -286,6 +292,12 @@ func Load(opts LoadOptions) (*Registry, error) {
 		if err := loadCatalog(resolvedPath, name); err != nil {
 			return nil, err
 		}
+	}
+	if len(r.items) == 0 && len(catalogFailures) > 0 {
+		return nil, errors.New(strings.Join(catalogFailures, "; "))
+	}
+	for _, failure := range catalogFailures {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", failure)
 	}
 	if err := r.validateReferences(); err != nil {
 		return nil, err
@@ -630,6 +642,14 @@ func (r *Registry) loadCatalog(root, catalog string) error {
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return err
+	}
+	// filepath.WalkDir lstats its root and does not descend a symlink, so a
+	// catalog registered at a path that later became a symlink to the real
+	// directory silently yielded zero packs. Registered paths outlive
+	// directory moves, so resolve the root before walking. A dangling link is
+	// left to WalkDir, which reports it with the original path.
+	if resolved, resolveErr := filepath.EvalSymlinks(root); resolveErr == nil {
+		root = resolved
 	}
 	var manifests []string
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {

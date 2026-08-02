@@ -15,49 +15,22 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/professor-moody/operator-lab/labapi"
 )
 
-const operatorLabAPIVersion = "operator-lab/v1"
+const operatorLabAPIVersion = labapi.APIVersion
 
-// OperatorLabLease is the complete short-lived descriptor returned by labd.
-// It intentionally contains a pinned public SSH host key but no guest secret.
-type OperatorLabLease struct {
-	Version          string    `json:"version"`
-	ID               string    `json:"id"`
-	Owner            string    `json:"owner"`
-	Profile          string    `json:"profile"`
-	ProfileIdentity  string    `json:"profile_identity"`
-	VMID             int       `json:"vmid"`
-	CloneName        string    `json:"clone_name"`
-	Address          string    `json:"address"`
-	SSHHostKey       string    `json:"ssh_host_key"`
-	SensorSession    string    `json:"sensor_session"`
-	AcquiredAt       time.Time `json:"acquired_at"`
-	HeartbeatAt      time.Time `json:"heartbeat_at"`
-	Deadline         time.Time `json:"deadline"`
-	State            string    `json:"state"`
-	CloneTask        string    `json:"clone_task,omitempty"`
-	DestroyTask      string    `json:"destroy_task,omitempty"`
-	DestructionProof string    `json:"destruction_proof,omitempty"`
-}
+// OperatorLabLease, OperatorLabEvidence and the doctor response are the
+// operator-lab wire contract, owned by the shared labapi module. The previous
+// hand-mirrored copies had drifted: the doctor copy modelled three of nine
+// fields while do() decodes with DisallowUnknownFields, so the availability
+// probe failed on every call and reported the whole provider unavailable.
+type OperatorLabLease = labapi.Lease
 
-type operatorLabDoctor struct {
-	Version string `json:"version"`
-	Ready   bool   `json:"ready"`
-	Error   string `json:"error,omitempty"`
-}
+type operatorLabDoctor = labapi.Doctor
 
-type OperatorLabEvidence struct {
-	SchemaVersion  string           `json:"schema_version"`
-	LeaseID        string           `json:"lease_id"`
-	SensorSession  string           `json:"sensor_session"`
-	ControllerTime time.Time        `json:"controller_time"`
-	SnapshotDigest string           `json:"snapshot_digest"`
-	PCAPComplete   bool             `json:"pcap_complete"`
-	Limitation     string           `json:"limitation,omitempty"`
-	Markers        []map[string]any `json:"markers"`
-	PCAPFiles      []map[string]any `json:"pcap_files,omitempty"`
-}
+type OperatorLabEvidence = labapi.EvidenceSnapshot
 
 type OperatorLabClient struct {
 	endpoint string
@@ -211,15 +184,14 @@ func OperatorLabRemoteOptions(profileName string, profile Profile, lease Operato
 	if identity == "" {
 		return RemoteOptions{}, fmt.Errorf("operator-lab SSH identity is required through the profile or BOFBENCH_OPERATOR_LAB_SSH_IDENTITY")
 	}
-	key := strings.TrimSpace(lease.SSHHostKey)
-	if !strings.HasPrefix(key, "ssh-") && !strings.HasPrefix(key, "ecdsa-") {
-		return RemoteOptions{}, fmt.Errorf("operator-lab returned an invalid SSH host key")
-	}
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		return RemoteOptions{}, err
 	}
 	knownHosts := filepath.Join(runDir, "known_hosts")
-	line := fmt.Sprintf("[%s]:22 %s\n", lease.Address, key)
+	line, err := labapi.KnownHostsLine(lease.Address, lease.SSHHostKey)
+	if err != nil {
+		return RemoteOptions{}, err
+	}
 	if err := writeFileAtomic(knownHosts, []byte(line), 0o600); err != nil {
 		return RemoteOptions{}, err
 	}
