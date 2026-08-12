@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,5 +100,38 @@ func TestProxmoxTemplateFormAttachesOptionalDriverISO(t *testing.T) {
 	withoutDriver := proxmoxTemplateCreateForm(prep, ProxmoxTemplateSpec{VMID: 4102, ISO: "local:iso/server.iso"})
 	if withoutDriver.Has("ide0") {
 		t.Fatalf("unexpected driver ISO: %q", withoutDriver.Get("ide0"))
+	}
+}
+
+// A linked clone shares the template's disks and has none of its own to place.
+// Proxmox rejects the storage parameter rather than ignoring it, so sending it
+// regardless of clone mode fails every linked clone - the same defect that cost
+// a live clone cycle in two sibling repositories.
+func TestLinkedCloneOmitsStorage(t *testing.T) {
+	for _, mode := range []string{"linked", "full"} {
+		t.Run(mode, func(t *testing.T) {
+			var form url.Values
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = r.ParseForm()
+				if strings.Contains(r.URL.Path, "/clone") {
+					form = r.PostForm
+				}
+				_, _ = w.Write([]byte(`{"data":"UPID:gr9:0:0:0:qmclone:4101:root@pam:"}`))
+			}))
+			defer server.Close()
+
+			provider := &proxmoxProvider{
+				config: ProxmoxProfile{Node: "gr9", VMID: 6140, TemplateVMID: 4101, Storage: "local-lvm", CloneMode: mode},
+				client: &proxmoxClient{endpoint: server.URL, http: server.Client()},
+			}
+			_, _ = provider.Perform(context.Background(), "clone", ProviderActionOptions{Name: "clone"})
+
+			if mode == "linked" && form.Has("storage") {
+				t.Errorf("a linked clone must not send storage; sent %q", form.Get("storage"))
+			}
+			if mode == "full" && form.Get("storage") != "local-lvm" {
+				t.Errorf("a full clone must place its disks; storage = %q", form.Get("storage"))
+			}
+		})
 	}
 }

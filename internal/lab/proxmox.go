@@ -432,7 +432,13 @@ func (p *proxmoxProvider) Perform(ctx context.Context, action string, opts Provi
 		if p.config.Pool != "" {
 			form.Set("pool", p.config.Pool)
 		}
-		if p.config.Storage != "" {
+		// A linked clone shares the template's disks and has no storage of its
+		// own to place, and Proxmox rejects the parameter rather than ignoring
+		// it. Sending it regardless of clone mode fails every linked clone with
+		// a message that names the parameter and never the mode that forbids
+		// it. The same defect cost a live clone cycle in two sibling
+		// repositories before it was found here.
+		if p.config.Storage != "" && p.config.CloneMode == "full" {
 			form.Set("storage", p.config.Storage)
 		}
 	case "template":
