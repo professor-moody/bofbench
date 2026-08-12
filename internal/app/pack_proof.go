@@ -1311,6 +1311,12 @@ func proofStateCheckScript(kind, expect string, parameters map[string]string) (s
 	case "etw_session":
 		probe = `$text=(& logman.exe query ` + q(parameters["name"]) + ` -ets 2>&1 | Out-String); $present=$LASTEXITCODE -eq 0; $matches=$present`
 	case "event_log_record":
+		// The cap is applied before the message filter, so on a busy channel the
+		// event being proved can fall outside the most recent 256 and the proof
+		// reads as absent. A sibling collector reported no detections this way
+		// while the product's own log held them. There is no server-side filter
+		// for free-text message content, so the mitigation is a channel specific
+		// enough that 256 covers the window.
 		probe = `$events=@(Get-WinEvent -LogName ` + q(parameters["channel"]) + ` -MaxEvents 256 -ErrorAction SilentlyContinue | Where-Object {[string]$_.Message -like ('*'+` + q(parameters["message"]) + `+'*')}); $present=$events.Count -gt 0; $matches=$present`
 	case "active_loader_tasks":
 		probe = `$tasks=@(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {$_.Name -like 'bofbench-loader*.exe' -or ($_.Name -ieq 'bofbench.exe' -and [string]$_.CommandLine -match '\btask\s+(run|worker)\b')}); $present=$tasks.Count -gt 0; $matches=$present`
