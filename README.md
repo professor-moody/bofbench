@@ -2,6 +2,8 @@
 
 BOFBench is a capability-first workbench for building, analyzing, running, and exporting Beacon Object Files.
 
+Current stabilization, proof, and release priorities are in [ROADMAP.md](ROADMAP.md).
+
 ```text
 new → add packs → build → analyze → run → export
 ```
