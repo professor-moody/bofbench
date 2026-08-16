@@ -6,6 +6,33 @@ BOFBench exists to compose, analyze, execute, compare, and export BOFs from
 typed capability contracts. Its next phase is stabilization and proof of the
 large surface already built, not another rapid capability tranche.
 
+## Offensive output
+
+**What an operator gets:** a BOF that is proven to compile and execute on real
+Windows, with its emitted output captured — plus the same BOF's behaviour across
+runtimes, so a pack that works under one loader and not another is a known fact
+rather than a surprise on an engagement.
+
+**Why it is offensive:** the artifact itself is the deliverable. Everything else
+in this repository exists so that shipping one is not a guess about whether it
+runs, what it prints, or whether it leaves the host dirty.
+
+**How to get it:**
+
+```
+bofbench lab bootstrap --lab <profile>
+bofbench run bofs/<project> --via lab --lab <profile>
+```
+
+The run reports `PASS`, the observed output lines, and an evidence set including
+the compiled object and build log. Bootstrap proves the guest can compile,
+which is the difference between "the BOF is broken" and "the lab is".
+
+**Feeding EDR Lab:** a bundle exported from a project can be scored by
+`edrlab artifact` for per-product visibility. That answers the second question
+an operator has after "does it run" — namely "who notices" — and no BOF has
+been through that path yet.
+
 ## Next action
 
 Create a canonical `main` line and release candidate from the current
