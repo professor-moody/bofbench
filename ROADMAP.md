@@ -1,6 +1,6 @@
 # BOFBench roadmap
 
-Status: active, reviewed 2026-08-16.
+Status: active, reviewed 2026-08-20.
 
 BOFBench exists to compose, analyze, execute, compare, and export BOFs from
 typed capability contracts. Its next phase is stabilization and proof of the
@@ -46,9 +46,9 @@ static and live coverage report for its supported compiler and runtime matrix.
   packaging are implemented; all Go packages currently pass.
 - The repository has no `main` branch. Work is accumulated on
   `fix/live-proxmox-path` among many historical slice branches.
-- Documentation contains both the earlier brokered Operator Lab provider and the
-  current direct Proxmox/persistent-profile path. July broker live-gate receipts
-  remain unavailable while newer direct-lab work is documented elsewhere.
+- Operator Lab has selected direct Proxmox as the sole production control plane.
+  The unused brokered `operator-lab` provider is retired and should be removed
+  after EDR Lab's artifact port proves the replacement end to end.
 - The public/private catalog sizes and generated references are precise, but no
   current release receipt summarizes which of the 297 packs and 80 operations
   are static-tested, lab-proven, or C2-proven.
@@ -56,8 +56,8 @@ static and live coverage report for its supported compiler and runtime matrix.
 ## Now: stabilize a releasable baseline
 
 1. Establish `main`, preserve useful branch/tag history, and define the branch
-   and release policy. Reconcile the supported lab paths and mark each as
-   canonical, compatibility, experimental, or retired.
+   and release policy. Direct Proxmox is canonical; mark the unused
+   `operator-lab` provider retired rather than compatibility.
 2. Freeze schema versions and totals, run generated-code checks, all Go tests,
    docs checks, full public/private pack tests, operation tests, and release
    packaging from one commit.
@@ -82,6 +82,8 @@ static and live coverage report for its supported compiler and runtime matrix.
   object-hash and terminal-output requirements.
 - Qualify the BOFBench-to-EDR-Lab bundle lane with a stable, benign fixture and
   preserve analysis, runtime, and product evidence as separate layers.
+- Remove the retired Operator Lab provider, mTLS configuration, and neutral-lab
+  live-gate scripts after the target-v2 artifact path has a passing receipt.
 
 ## Later
 
