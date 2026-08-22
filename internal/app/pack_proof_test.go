@@ -141,3 +141,29 @@ func TestMemoryProofStateChecksUseExplicitUIntPtrConstruction(t *testing.T) {
 		}
 	}
 }
+
+func TestProofStateChecksUsePowerShellFiveCompatibleHashing(t *testing.T) {
+	tests := []struct {
+		kind       string
+		expect     string
+		parameters map[string]string
+	}{
+		{"registry_value", "matches", map[string]string{"hive": "HKLM", "path": `Software\BOFBench`, "name": "Canary", "sha256": "abc", "type": "3"}},
+		{"dpapi_file", "matches", map[string]string{"path": `C:\bofbench\proof\blob.bin`, "sha256": "abc"}},
+		{"process_memory", "matches", map[string]string{"pid": "42", "address": "0x1000", "size": "18", "sha256": "abc"}},
+		{"named_pipe_queue", "matches", map[string]string{"holder_pid": "42", "handle": "0x100", "sha256": "abc"}},
+		{"section_payload", "matches", map[string]string{"name": `Global\BOFBench`, "offset": "0", "size": "18", "sha256": "abc"}},
+	}
+	for _, test := range tests {
+		script, err := proofStateCheckScript(test.kind, test.expect, test.parameters)
+		if err != nil {
+			t.Fatalf("%s: %v", test.kind, err)
+		}
+		if strings.Contains(script, "SHA256]::HashData") || strings.Contains(script, "Convert]::ToHexString") {
+			t.Fatalf("%s uses a hashing API unavailable in Windows PowerShell 5.1: %s", test.kind, script)
+		}
+		if !strings.Contains(script, "SHA256]::Create") || !strings.Contains(script, "BitConverter]::ToString") {
+			t.Fatalf("%s does not use the compatible hashing path: %s", test.kind, script)
+		}
+	}
+}
