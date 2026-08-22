@@ -1,6 +1,6 @@
 # BOFBench roadmap
 
-Status: active, reviewed 2026-08-20.
+Status: active, reviewed 2026-08-22.
 
 BOFBench exists to compose, analyze, execute, compare, and export BOFs from
 typed capability contracts. Its next phase is stabilization and proof of the
@@ -35,17 +35,18 @@ been through that path yet.
 
 ## Next action
 
-Create a canonical `main` line and release candidate from the current
-105-public-pack, 192-private-pack, 80-operation workbench, then publish one
-static and live coverage report for its supported compiler and runtime matrix.
+Publish one exact-commit static and live coverage report for the current
+105-public-pack, 192-private-pack, 80-operation workbench across its supported
+compiler and runtime matrix.
 
 ## Current state
 
 - Build, analysis v3, native/lab/Sliver/Cobalt Strike adapters, operation schema
   v11, runtime receipts v6, topology target sets, cleanup, export, and release
   packaging are implemented; all Go packages currently pass.
-- The repository has no `main` branch. Work is accumulated on
-  `fix/live-proxmox-path` among many historical slice branches.
+- `main` is the active canonical line established from `3f6506f`; the obsolete
+  `fix/live-proxmox-path` ref contains no work absent from `main`. Historical
+  slice branches and tags remain available.
 - Operator Lab has selected direct Proxmox as the sole production control plane.
   The unused brokered `operator-lab` provider is retired and should be removed
   after EDR Lab's artifact port proves the replacement end to end.
@@ -55,20 +56,17 @@ static and live coverage report for its supported compiler and runtime matrix.
 
 ## Now: stabilize a releasable baseline
 
-1. Establish `main`, preserve useful branch/tag history, and define the branch
-   and release policy. Direct Proxmox is canonical; mark the unused
-   `operator-lab` provider retired rather than compatibility.
-2. Freeze schema versions and totals, run generated-code checks, all Go tests,
+1. Freeze schema versions and totals, run generated-code checks, all Go tests,
    docs checks, full public/private pack tests, operation tests, and release
    packaging from one commit.
-3. Produce a coverage artifact keyed by pack/operation, architecture, compiler,
+2. Produce a coverage artifact keyed by pack/operation, architecture, compiler,
    runtime, proof status, object hash, and cleanup result. `unavailable` remains
    coverage debt and never becomes a pass.
-4. Prove a representative risk-weighted lane on Windows: x64 and x86 native/lab,
+3. Prove a representative risk-weighted lane on Windows: x64 and x86 native/lab,
    state-changing cleanup, async/cancellation, cross-host/domain operations, and
    complete Sliver tasks. Licensed Cobalt Strike is a separate optional live
    gate; package verification is not live proof.
-5. Cut a versioned release with checksums and embedded commit only after the
+4. Cut a versioned release with checksums and embedded commit only after the
    coverage report and private-catalog compatibility check pass.
 
 ## Next: improve confidence, not surface area
