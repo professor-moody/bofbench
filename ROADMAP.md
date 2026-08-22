@@ -35,9 +35,10 @@ been through that path yet.
 
 ## Next action
 
-Qualify `memory-allocation-roundtrip#secret-roundtrip` through x64 Sliver as an
-independent runtime cell with exact task, object, output, state-check, and
-cleanup evidence.
+Allow the pinned Sliver client with SHA-256
+`3249429f37f55f05ebed2dd97d14593cbf567f3397fcaba3af04249b2fbf6be6`
+through the macOS host security policy, then qualify
+`memory-allocation-roundtrip#secret-roundtrip` through x64 Sliver.
 
 ## Current state
 
@@ -54,10 +55,16 @@ cleanup evidence.
   target removal, clean-lab verification, and provider shutdown. All eight BOF
   object hashes match their `c38791e` static cells exactly; C2 cells remain
   unqualified.
-- The first x64 cell exposed and fixed two proof-harness defects: PowerShell pointer
-  and hashing incompatibilities, plus the unsafe early return that skipped
-  operation cleanup after a failed post-run assertion. Full Go tests and vet pass
-  at `b567497`.
+- The first x64 cell exposed and fixed two proof-harness defects: PowerShell
+  pointer and hashing incompatibilities, plus the unsafe early return that
+  skipped operation cleanup after a failed post-run assertion. Full Go tests
+  and vet pass at `b567497`.
+- The selected x64 Sliver cell is blocked before execution. Both BOFBench-owned
+  VMs started, the Windows worker and target were ready, but macOS killed the
+  configured Sliver client before it generated an implant; the pinned workspace
+  client also exited 137 on `--help`. No implant was generated or uploaded, no
+  operation ran, cleanup found zero artifacts, and VMs 4110 and 4120 returned to
+  stopped. This attempt does not qualify Sliver.
 - `main` is the active canonical line established from `3f6506f`; the obsolete
   `fix/live-proxmox-path` ref contains no work absent from `main`. Historical
   slice branches and tags remain available.
