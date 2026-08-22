@@ -35,30 +35,35 @@ been through that path yet.
 
 ## Next action
 
-Publish one exact-commit static and live coverage report for the current
-105-public-pack, 192-private-pack, 80-operation workbench across its supported
-compiler and runtime matrix.
+Publish one combined exact-commit coverage manifest that joins the completed
+private static receipt with the public static matrix and the first
+risk-weighted Windows live lane.
 
 ## Current state
 
 - Build, analysis v3, native/lab/Sliver/Cobalt Strike adapters, operation schema
   v11, runtime receipts v6, topology target sets, cleanup, export, and release
   packaging are implemented; all Go packages currently pass.
+- The private catalog now has a full static receipt against `c38791e`: all 192
+  packs and 67 operations pass MinGW x64/x86 build and expected-signature
+  analysis, with raw/Sliver/Cobalt Strike exports generated. MSVC and all live,
+  proof, cleanup, and comparison cells remain explicitly unqualified.
 - `main` is the active canonical line established from `3f6506f`; the obsolete
   `fix/live-proxmox-path` ref contains no work absent from `main`. Historical
   slice branches and tags remain available.
 - Operator Lab has selected direct Proxmox as the sole production control plane.
-  The unused brokered `operator-lab` provider is retired and should be removed
-  after EDR Lab's artifact port proves the replacement end to end.
+  EDR Lab's target-v2 artifact receipt proves the replacement end to end, so
+  the unused brokered `operator-lab` provider is now removal debt rather than a
+  supported compatibility path.
 - The public/private catalog sizes and generated references are precise, but no
-  current release receipt summarizes which of the 297 packs and 80 operations
-  are static-tested, lab-proven, or C2-proven.
+  combined release receipt yet summarizes which of the 297 packs and 80
+  operations are static-tested, lab-proven, or C2-proven.
 
 ## Now: stabilize a releasable baseline
 
-1. Freeze schema versions and totals, run generated-code checks, all Go tests,
-   docs checks, full public/private pack tests, operation tests, and release
-   packaging from one commit.
+1. Freeze schema versions and totals, retain the completed private static
+   receipt, then run the public pack/operation matrix and release packaging from
+   the same BOFBench commit.
 2. Produce a coverage artifact keyed by pack/operation, architecture, compiler,
    runtime, proof status, object hash, and cleanup result. `unavailable` remains
    coverage debt and never becomes a pass.
