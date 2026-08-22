@@ -35,9 +35,9 @@ been through that path yet.
 
 ## Next action
 
-Publish one combined `b567497` coverage manifest by running the public/private
-static and release gates at that commit and joining the qualified x64 Windows
-lane through its unchanged exact object hashes.
+Qualify `memory-allocation-roundtrip#secret-roundtrip` through x64 Sliver as an
+independent runtime cell with exact task, object, output, state-check, and
+cleanup evidence.
 
 ## Current state
 
@@ -48,12 +48,13 @@ lane through its unchanged exact object hashes.
   packs and 67 operations pass MinGW x64/x86 build and expected-signature
   analysis, with raw/Sliver/Cobalt Strike exports generated. MSVC and all live,
   proof, cleanup, and comparison cells remain explicitly unqualified.
-- The first private live cell is qualified at harness commit `b567497`:
-  `memory-allocation-roundtrip#secret-roundtrip` passed x64 lab execution, both
-  independent state checks, receipt-bound cleanup, target removal, clean-lab
-  verification, and provider shutdown. All four BOF object hashes match the
-  `c38791e` static report exactly; x86 and C2 cells remain unqualified.
-- That live run exposed and fixed two proof-harness defects: PowerShell pointer
+- The first two private live cells are qualified at harness commit `b567497`:
+  `memory-allocation-roundtrip#secret-roundtrip` passed separate x64 and x86 lab
+  executions, both independent state checks in each cell, receipt-bound cleanup,
+  target removal, clean-lab verification, and provider shutdown. All eight BOF
+  object hashes match their `c38791e` static cells exactly; C2 cells remain
+  unqualified.
+- The first x64 cell exposed and fixed two proof-harness defects: PowerShell pointer
   and hashing incompatibilities, plus the unsafe early return that skipped
   operation cleanup after a failed post-run assertion. Full Go tests and vet pass
   at `b567497`.
