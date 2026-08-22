@@ -225,18 +225,17 @@ func Load(opts LoadOptions) (*Registry, error) {
 	r := &Registry{items: map[string]Resolved{}, unqualified: map[string][]string{}}
 	loadedCatalogs := map[string]bool{}
 	loadCatalog := func(root, name string) error {
-		absolute, err := filepath.Abs(root)
+		canonical, err := CanonicalCatalogRoot(root)
 		if err != nil {
 			return err
 		}
-		absolute = filepath.Clean(absolute)
-		if loadedCatalogs[absolute] {
+		if loadedCatalogs[canonical] {
 			return nil
 		}
-		if err := r.loadCatalog(absolute, name); err != nil {
+		if err := r.loadCatalog(canonical, name); err != nil {
 			return err
 		}
-		loadedCatalogs[absolute] = true
+		loadedCatalogs[canonical] = true
 		return nil
 	}
 	for _, item := range builtins() {
@@ -639,17 +638,9 @@ func (r *Registry) add(item Resolved) error {
 }
 
 func (r *Registry) loadCatalog(root, catalog string) error {
-	root, err := filepath.Abs(root)
+	root, err := CanonicalCatalogRoot(root)
 	if err != nil {
 		return err
-	}
-	// filepath.WalkDir lstats its root and does not descend a symlink, so a
-	// catalog registered at a path that later became a symlink to the real
-	// directory silently yielded zero packs. Registered paths outlive
-	// directory moves, so resolve the root before walking. A dangling link is
-	// left to WalkDir, which reports it with the original path.
-	if resolved, resolveErr := filepath.EvalSymlinks(root); resolveErr == nil {
-		root = resolved
 	}
 	var manifests []string
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -690,6 +681,24 @@ func (r *Registry) loadCatalog(root, catalog string) error {
 		}
 	}
 	return nil
+}
+
+// CanonicalCatalogRoot returns the physical catalog identity used for both
+// traversal and de-duplication. Registered paths can outlive directory moves
+// and become symlinks; comparing only their absolute spelling loads the same
+// manifests twice when a command also supplies the real path.
+func CanonicalCatalogRoot(root string) (string, error) {
+	absolute, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	absolute = filepath.Clean(absolute)
+	// filepath.WalkDir lstats its root and does not descend a symlink. A
+	// dangling link is left to WalkDir, which reports it with the original path.
+	if resolved, resolveErr := filepath.EvalSymlinks(absolute); resolveErr == nil {
+		return filepath.Clean(resolved), nil
+	}
+	return absolute, nil
 }
 
 func builtins() []Resolved {

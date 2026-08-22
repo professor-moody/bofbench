@@ -342,6 +342,36 @@ func TestLoadCatalogFollowsSymlinkedRoot(t *testing.T) {
 	}
 }
 
+// A catalog may remain registered through its old symlink after the checkout
+// moves while a command names the new real path explicitly. Those are one
+// physical catalog and must not produce duplicate qualified pack IDs.
+func TestLoadCatalogDeduplicatesSymlinkAndRealPath(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("BOFBENCH_CONFIG_HOME", configHome)
+	real := testCatalog(t, "operator-note")
+	link := filepath.Join(t.TempDir(), "catalog-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	writeTestJSON(t, filepath.Join(configHome, "catalogs.json"), CatalogConfig{
+		Schema: "bofbench.catalogs", SchemaVersion: 1,
+		Catalogs: []CatalogRef{{Name: "internal", Path: link, Source: link}},
+	})
+	registry, err := Load(LoadOptions{Project: newProject(t), ExtraCatalogs: []string{real}})
+	if err != nil {
+		t.Fatalf("one catalog spelled as a symlink and real path must load once: %v", err)
+	}
+	count := 0
+	for _, item := range registry.List() {
+		if item.Document.ID == "operator-note" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("physical catalog loaded %d times, want once", count)
+	}
+}
+
 // TestUnreadableRegisteredCatalogDoesNotAbortGoodCatalogs pins the blast
 // radius. One stale registered catalog previously aborted every pack verb, even
 // when a valid catalog was named explicitly on the command line.

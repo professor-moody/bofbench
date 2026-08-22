@@ -342,16 +342,15 @@ func Load(opts LoadOptions) (*Registry, error) {
 	}
 	loaded := map[string]bool{}
 	loadRoot := func(root, catalog string) error {
-		absolute, err := filepath.Abs(root)
+		canonical, err := packsvc.CanonicalCatalogRoot(root)
 		if err != nil {
 			return err
 		}
-		absolute = filepath.Clean(absolute)
-		if loaded[absolute] {
+		if loaded[canonical] {
 			return nil
 		}
-		loaded[absolute] = true
-		return registry.loadCatalog(absolute, catalog)
+		loaded[canonical] = true
+		return registry.loadCatalog(canonical, catalog)
 	}
 	if opts.Project != "" {
 		root := filepath.Join(projectDir(opts.Project), ".bofbench", "operations")

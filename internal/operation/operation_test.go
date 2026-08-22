@@ -84,6 +84,59 @@ func TestProjectOperationCollidesWithBuiltinByQualifiedName(t *testing.T) {
 	}
 }
 
+func TestLoadDeduplicatesOperationCatalogSymlinkAndRealPath(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("BOFBENCH_CONFIG_HOME", configHome)
+	packs, err := packsvc.Load(packsvc.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := t.TempDir()
+	root := filepath.Join(real, "operations", "operator-note")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	document := Document{
+		Schema: Schema, SchemaVersion: 1, ID: "operator-note", Version: "1.0.0",
+		Title: "Operator Note", Summary: "Read one host identity", Tier: "internal",
+		Steps: []Step{{ID: "host", Pack: "host-discovery"}},
+	}
+	body, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "operation.json"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "catalog-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	config, err := json.Marshal(packsvc.CatalogConfig{
+		Schema: "bofbench.catalogs", SchemaVersion: 1,
+		Catalogs: []packsvc.CatalogRef{{Name: "internal", Path: link, Source: link}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configHome, "catalogs.json"), config, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := Load(LoadOptions{ExtraCatalogs: []string{real}, PackRegistry: packs})
+	if err != nil {
+		t.Fatalf("one operation catalog spelled as a symlink and real path must load once: %v", err)
+	}
+	count := 0
+	for _, item := range registry.List() {
+		if item.Document.ID == "operator-note" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("physical operation catalog loaded %d times, want once", count)
+	}
+}
+
 func TestResolveValueSupportsInputCaptureStepAndTopology(t *testing.T) {
 	inputs := map[string]string{"pid": "12"}
 	captures := map[string]string{"base": "0x1000"}
