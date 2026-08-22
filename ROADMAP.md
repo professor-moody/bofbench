@@ -35,9 +35,9 @@ been through that path yet.
 
 ## Next action
 
-Publish one combined exact-commit coverage manifest that joins the completed
-private static receipt with the public static matrix and the first
-risk-weighted Windows live lane.
+Publish one combined `b567497` coverage manifest by running the public/private
+static and release gates at that commit and joining the qualified x64 Windows
+lane through its unchanged exact object hashes.
 
 ## Current state
 
@@ -48,6 +48,15 @@ risk-weighted Windows live lane.
   packs and 67 operations pass MinGW x64/x86 build and expected-signature
   analysis, with raw/Sliver/Cobalt Strike exports generated. MSVC and all live,
   proof, cleanup, and comparison cells remain explicitly unqualified.
+- The first private live cell is qualified at harness commit `b567497`:
+  `memory-allocation-roundtrip#secret-roundtrip` passed x64 lab execution, both
+  independent state checks, receipt-bound cleanup, target removal, clean-lab
+  verification, and provider shutdown. All four BOF object hashes match the
+  `c38791e` static report exactly; x86 and C2 cells remain unqualified.
+- That live run exposed and fixed two proof-harness defects: PowerShell pointer
+  and hashing incompatibilities, plus the unsafe early return that skipped
+  operation cleanup after a failed post-run assertion. Full Go tests and vet pass
+  at `b567497`.
 - `main` is the active canonical line established from `3f6506f`; the obsolete
   `fix/live-proxmox-path` ref contains no work absent from `main`. Historical
   slice branches and tags remain available.
@@ -61,9 +70,9 @@ risk-weighted Windows live lane.
 
 ## Now: stabilize a releasable baseline
 
-1. Freeze schema versions and totals, retain the completed private static
-   receipt, then run the public pack/operation matrix and release packaging from
-   the same BOFBench commit.
+1. Freeze schema versions and totals, then rerun public/private pack and
+   operation matrices plus release packaging at `b567497` so the release gate
+   includes the qualified proof-harness fixes.
 2. Produce a coverage artifact keyed by pack/operation, architecture, compiler,
    runtime, proof status, object hash, and cleanup result. `unavailable` remains
    coverage debt and never becomes a pass.
