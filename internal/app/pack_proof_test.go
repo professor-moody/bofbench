@@ -117,3 +117,27 @@ func TestEventingProofStateChecksProduceIndependentProbes(t *testing.T) {
 		}
 	}
 }
+
+func TestMemoryProofStateChecksUseExplicitUIntPtrConstruction(t *testing.T) {
+	tests := []struct {
+		kind       string
+		expect     string
+		parameters map[string]string
+	}{
+		{"process_memory", "matches", map[string]string{"pid": "42", "address": "0x1000", "size": "18", "sha256": "abc"}},
+		{"process_protection", "matches", map[string]string{"pid": "42", "address": "0x1000", "protection": "04"}},
+		{"process_memory_region", "absent", map[string]string{"pid": "42", "address": "0x1000"}},
+	}
+	for _, test := range tests {
+		script, err := proofStateCheckScript(test.kind, test.expect, test.parameters)
+		if err != nil {
+			t.Fatalf("%s: %v", test.kind, err)
+		}
+		if strings.Contains(script, "[UIntPtr]$size") || strings.Contains(script, "[UIntPtr]$bytes") {
+			t.Fatalf("%s retains an unsupported direct Int32-to-UIntPtr cast: %s", test.kind, script)
+		}
+		if !strings.Contains(script, "[UIntPtr]::new([uint64]") {
+			t.Fatalf("%s does not construct UIntPtr from uint64: %s", test.kind, script)
+		}
+	}
+}

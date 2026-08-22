@@ -446,66 +446,37 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 			result.Waves = operationWaveSteps(receipt)
 			result.Steps = operationStepStates(receipt)
 			result.Attempts, result.RetryReasons = operationRetryResults(receipt)
+			var proofErrors []string
 			if err := matchOperationProofCaptures(proof.ExpectCaptures, receipt.Captures, placeholders); err != nil {
-				result.Status, result.Error = "fail", err.Error()
-				report.Failed++
-				report.Results = append(report.Results, result)
-				continue
+				proofErrors = append(proofErrors, err.Error())
 			}
 			if err := matchOperationProofPath(proof.ExpectPath, receipt.ActualPath); err != nil {
-				result.Status, result.Error = "fail", err.Error()
-				report.Failed++
-				report.Results = append(report.Results, result)
-				continue
+				proofErrors = append(proofErrors, err.Error())
 			}
 			if err := matchOperationProofPath(proof.ExpectExpandedPath, receipt.ExpandedPath); err != nil {
-				result.Status, result.Error = "fail", err.Error()
-				report.Failed++
-				report.Results = append(report.Results, result)
-				continue
+				proofErrors = append(proofErrors, err.Error())
 			}
 			if err := matchOperationProofParallel(proof.ExpectParallel, result.Parallel); err != nil {
-				result.Status, result.Error = "fail", err.Error()
-				report.Failed++
-				report.Results = append(report.Results, result)
-				continue
+				proofErrors = append(proofErrors, err.Error())
 			}
 			if err := matchOperationProofFanOut(proof.ExpectFanOut, result.FanOut); err != nil {
-				result.Status, result.Error = "fail", err.Error()
-				report.Failed++
-				report.Results = append(report.Results, result)
-				continue
+				proofErrors = append(proofErrors, err.Error())
 			}
 			if err := matchOperationProofWaves(proof.ExpectWaves, result.Waves); err != nil {
-				result.Status, result.Error = "fail", err.Error()
-				report.Failed++
-				report.Results = append(report.Results, result)
-				continue
+				proofErrors = append(proofErrors, err.Error())
 			}
 			if err := matchOperationProofSteps(proof.ExpectSteps, result.Steps); err != nil {
-				result.Status, result.Error = "fail", err.Error()
-				report.Failed++
-				report.Results = append(report.Results, result)
-				continue
+				proofErrors = append(proofErrors, err.Error())
 			}
 			if err := matchOperationProofAttempts(proof.ExpectAttempts, result.Attempts); err != nil {
-				result.Status, result.Error = "fail", err.Error()
-				report.Failed++
-				report.Results = append(report.Results, result)
-				continue
+				proofErrors = append(proofErrors, err.Error())
 			}
 			if err := matchOperationProofRetryReasons(proof.ExpectRetryReasons, result.RetryReasons); err != nil {
-				result.Status, result.Error = "fail", err.Error()
-				report.Failed++
-				report.Results = append(report.Results, result)
-				continue
+				proofErrors = append(proofErrors, err.Error())
 			}
 			checks := resolveOperationStateChecks(proof.StateChecks, receipt.Captures)
 			if count, checkErr := verifyProofStateChecks(ctx, via, labName, topology, checks, "after_run", placeholders); checkErr != nil {
-				result.Status, result.Error = "fail", "state verification: "+checkErr.Error()
-				report.Failed++
-				report.Results = append(report.Results, result)
-				continue
+				proofErrors = append(proofErrors, "state verification: "+checkErr.Error())
 			} else {
 				result.StateChecks += count
 			}
@@ -517,21 +488,22 @@ func proveOperations(ctx context.Context, stdout io.Writer, registry *operations
 				cleanupArgs = append(cleanupArgs, "cleanup", result.Receipt)
 				var cleanup bytes.Buffer
 				if cleanupErr := Run(cleanupArgs, &cleanup, &cleanup); cleanupErr != nil {
-					result.Status, result.Error = "fail", "cleanup: "+cleanupErr.Error()
-					report.Failed++
-					report.Results = append(report.Results, result)
-					continue
+					proofErrors = append(proofErrors, "cleanup: "+cleanupErr.Error())
+				} else {
+					result.CleanupState = "completed"
 				}
 				result.Output = append(result.Output, nonemptyLines(cleanup.String())...)
-				result.CleanupState = "completed"
 				if count, checkErr := verifyProofStateChecks(ctx, via, labName, topology, checks, "after_cleanup", placeholders); checkErr != nil {
-					result.Status, result.Error = "fail", "cleanup verification: "+checkErr.Error()
-					report.Failed++
-					report.Results = append(report.Results, result)
-					continue
+					proofErrors = append(proofErrors, "cleanup verification: "+checkErr.Error())
 				} else {
 					result.StateChecks += count
 				}
+			}
+			if len(proofErrors) > 0 {
+				result.Status, result.Error = "fail", strings.Join(proofErrors, "; ")
+				report.Failed++
+				report.Results = append(report.Results, result)
+				continue
 			}
 			report.Passed++
 			report.Results = append(report.Results, result)
