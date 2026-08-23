@@ -35,11 +35,9 @@ been through that path yet.
 
 ## Next action
 
-Resolve the measured context mismatch in the frozen x64 Sliver cell: the
-remote-client lane and callback now pass, but the Administrator user session
-receives `OpenProcess error=5` against the LocalSystem proof target. Either
-declare the cell a SYSTEM-context proof or select a user-owned target; do not
-silently change the frozen selection.
+Freeze and execute a distinct x86 Sliver SYSTEM-context cell for
+`memory-allocation-roundtrip#secret-roundtrip`; the x64 SYSTEM cell is now
+qualified, but no architecture inherits another architecture's live result.
 
 ## Current state
 
@@ -48,14 +46,14 @@ silently change the frozen selection.
   packaging are implemented; all Go packages currently pass.
 - The private catalog now has a full static receipt against `c38791e`: all 192
   packs and 67 operations pass MinGW x64/x86 build and expected-signature
-  analysis, with raw/Sliver/Cobalt Strike exports generated. MSVC and all live,
-  proof, cleanup, and comparison cells remain explicitly unqualified.
+  analysis, with raw/Sliver/Cobalt Strike exports generated. MSVC remains
+  unavailable, and the static gate does not qualify live, cleanup, or comparison
+  cells by itself.
 - The first two private live cells are qualified at harness commit `b567497`:
   `memory-allocation-roundtrip#secret-roundtrip` passed separate x64 and x86 lab
   executions, both independent state checks in each cell, receipt-bound cleanup,
   target removal, clean-lab verification, and provider shutdown. All eight BOF
-  object hashes match their `c38791e` static cells exactly; C2 cells remain
-  unqualified.
+  object hashes match their `c38791e` static cells exactly.
 - The first x64 cell exposed and fixed two proof-harness defects: PowerShell
   pointer and hashing incompatibilities, plus the unsafe early return that
   skipped operation cleanup after a failed post-run assertion. Full Go tests
@@ -66,11 +64,16 @@ silently change the frozen selection.
   Linux, verified extensions stage remotely, and generated implants copy
   directly VM-to-VM. The Mac receives session/task output and receipts without
   storing or executing Sliver material.
-- The first remote-client callback reached session `6262b3a1`; the Sliver
-  adapter completed `process-memory-allocate` with full output and an exact
-  object hash. The frozen user-context operation then failed its semantic
-  contract because `OpenProcess` returned access denied against the LocalSystem
-  target. This is executed coverage, not a qualified operation pass.
+- The frozen x64 user-context Sliver cell remains an executed non-qualification:
+  `OpenProcess` returned access denied against the LocalSystem target. A separate
+  SYSTEM-context cell is qualified at controller `36795d1`. Session `4a968e17`
+  completed allocate, remote-file write, read, both independent state checks,
+  exact cleanup, session removal, clean-lab verification, and shutdown of VMs
+  4110 and 4120. All four object hashes match the frozen static boundary.
+- The first SYSTEM attempt exposed a missing cross-host file-argument path after
+  allocation succeeded. `36795d1` stages only `file`-typed arguments in an
+  owner-only control-VM directory and also fixes release builds so embedded
+  commit metadata no longer reports `unknown`.
 - `main` is the active canonical line established from `3f6506f`; the obsolete
   `fix/live-proxmox-path` ref contains no work absent from `main`. Historical
   slice branches and tags remain available.
@@ -85,8 +88,8 @@ silently change the frozen selection.
 ## Now: stabilize a releasable baseline
 
 1. Freeze schema versions and totals, then rerun public/private pack and
-   operation matrices plus release packaging at `b567497` so the release gate
-   includes the qualified proof-harness fixes.
+   operation matrices plus release packaging at `36795d1` so the release gate
+   includes the qualified Sliver transport fixes.
 2. Produce a coverage artifact keyed by pack/operation, architecture, compiler,
    runtime, proof status, object hash, and cleanup result. `unavailable` remains
    coverage debt and never becomes a pass.
