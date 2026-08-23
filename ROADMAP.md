@@ -35,9 +35,9 @@ been through that path yet.
 
 ## Next action
 
-Freeze and execute a distinct x86 Sliver SYSTEM-context cell for
-`memory-allocation-roundtrip#secret-roundtrip`; the x64 SYSTEM cell is now
-qualified, but no architecture inherits another architecture's live result.
+Produce one versioned aggregate coverage and release-gate receipt at the latest
+canonical BOFBench commit, including embedded commit metadata, checksums, public
+and private catalog compatibility, and every qualified live cell.
 
 ## Current state
 
@@ -74,6 +74,11 @@ qualified, but no architecture inherits another architecture's live result.
   allocation succeeded. `36795d1` stages only `file`-typed arguments in an
   owner-only control-VM directory and also fixes release builds so embedded
   commit metadata no longer reports `unknown`.
+- The distinct x86 SYSTEM-context Sliver cell is also qualified. Session
+  `dad9be0b` completed the unchanged 18-byte allocate/write/read/cleanup proof
+  against the x86 LocalSystem target, passed both independent state checks, and
+  matched all four frozen x86 object hashes. Session cleanup, clean-lab
+  verification, and shutdown of VMs 4110 and 4120 all passed.
 - `main` is the active canonical line established from `3f6506f`; the obsolete
   `fix/live-proxmox-path` ref contains no work absent from `main`. Historical
   slice branches and tags remain available.
@@ -93,10 +98,10 @@ qualified, but no architecture inherits another architecture's live result.
 2. Produce a coverage artifact keyed by pack/operation, architecture, compiler,
    runtime, proof status, object hash, and cleanup result. `unavailable` remains
    coverage debt and never becomes a pass.
-3. Prove a representative risk-weighted lane on Windows: x64 and x86 native/lab,
-   state-changing cleanup, async/cancellation, cross-host/domain operations, and
-   complete Sliver tasks. Licensed Cobalt Strike is a separate optional live
-   gate; package verification is not live proof.
+3. Continue representative risk-weighted Windows proof beyond the now-qualified
+   x64/x86 native-lab and Sliver process-memory cells: persistence,
+   async/cancellation, cross-host/domain operations, and cleanup. Licensed
+   Cobalt Strike remains a separate optional live gate.
 4. Cut a versioned release with checksums and embedded commit only after the
    coverage report and private-catalog compatibility check pass.
 
