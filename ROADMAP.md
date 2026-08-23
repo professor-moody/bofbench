@@ -35,10 +35,9 @@ been through that path yet.
 
 ## Next action
 
-Freeze and execute a distinct x64 SYSTEM-context Sliver
-`service-transition-observe#fixture-service-transition` cell, preserving the
-background readiness boundary, service result, four state checks, session
-cleanup, and shutdown of both VMs.
+Freeze and execute the existing x64 SYSTEM-context Sliver
+`service-execution#fixture-service` pack proof, preserving service creation,
+presence, exact cleanup, session removal, and shutdown of both VMs.
 
 ## Current state
 
@@ -104,13 +103,25 @@ cleanup, and shutdown of both VMs.
   watcher/trigger DAG, service Running check, service/process/task cleanup,
   target removal, zero-artifact verification, and VM 4110 shutdown on the first
   run.
+- The matching SYSTEM-context Sliver operation was measured and did not
+  qualify. Session `dd9f0ad1` accepted the exact watcher BOF, but Sliver 1.7.3
+  buffers session-extension output until the BOF returns. BOFBench could not
+  observe `status=ready` while the watcher remained active; the implant request
+  expired after 32 seconds and the service trigger correctly stayed blocked.
+  Cleanup found no service, fixture process, or loader task; target/session
+  removal, zero-artifact verification, and shutdown of VMs 4110/4120 passed.
+- Task submission is not accepted as a substitute for the declared readiness
+  output. The next Sliver service lane uses the existing sequential
+  `service-execution#fixture-service` pack proof instead, so no catalog surface
+  or weaker async contract is introduced.
 
 ## Now: stabilize a releasable baseline
 
-1. Repeat the service-transition case through a distinct x64 SYSTEM-context
-   Sliver session now that its native fixture and cleanup boundary pass.
-2. Preserve remote readiness, output completeness, cleanup, session removal,
-   zero-artifact verification, and shutdown of both disposable VMs.
+1. Qualify the existing `service-execution#fixture-service` pack proof through
+   a distinct x64 SYSTEM-context Sliver session.
+2. Preserve complete service-creation output, presence and cleanup checks,
+   session removal, zero-artifact verification, and shutdown of both disposable
+   VMs.
 3. Continue representative risk-weighted proof through cross-host/domain and
    cancellation paths. Licensed Cobalt Strike remains a separate optional live
    gate.
