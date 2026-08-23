@@ -35,10 +35,10 @@ been through that path yet.
 
 ## Next action
 
-Qualify x64 SYSTEM-context Sliver cancellation for
-`named-timer-lifecycle#holder-timer`, preserving exact object hashes, terminal
-cancel output, independent timer-state and absence checks, target/session
-removal, zero residual artifacts, and shutdown of VMs 4110 and 4120.
+Export one stable benign x64 MinGW BOF as an EDR Lab target-v2 bundle and score
+it across the available Defender and Elastic targets. Preserve BOFBench
+build/runtime evidence separately from product detection evidence so the suite
+has its first reproducible producer-to-detection result.
 
 ## Current state
 
@@ -80,12 +80,13 @@ removal, zero residual artifacts, and shutdown of VMs 4110 and 4120.
   against the x86 LocalSystem target, passed both independent state checks, and
   matched all four frozen x86 object hashes. Session cleanup, clean-lab
   verification, and shutdown of VMs 4110 and 4120 all passed.
-- Release gate `catalog-2026.08.23.3` now qualifies the declared compatibility
-  floor at canonical BOFBench commit `4829b51`. Fresh reports cover all 297
+- Release gate `catalog-2026.08.23.4` now qualifies the declared compatibility
+  floor at canonical BOFBench commit `c922a23`. Fresh reports cover all 297
   packs and 80 operations and partition exactly into 105/13 public and 192/67
-  private results. The private static matrix is identical to its earlier
-  baseline after removing only volatile run provenance. Five operation cells
-  plus one pack cell and all six cleanup cells validate by exact receipt digest.
+  private results. The private static matrix is identical to the `c38791e`
+  compatibility floor after removing only volatile run provenance. Six
+  operation cells plus one pack cell and all seven cleanup cells validate by
+  exact receipt digest.
 - The gate remains honestly `pass_with_unavailable`: MSVC x64/x86, remaining
   pack proof and cleanup cells, comparison contracts, other operation proof
   cases, and live Cobalt Strike execution are not qualified.
@@ -121,6 +122,16 @@ removal, zero residual artifacts, and shutdown of VMs 4110 and 4120.
   `a0febdcd`. Service creation, two independent state checks, both frozen BOF
   hashes, exact cleanup, session removal, zero-artifact verification, and
   shutdown of VMs 4110/4120 all passed.
+- X64 SYSTEM-context Sliver cancellation is now qualified at `c922a23` through
+  session `886cd1c5`. The accepted timer lifecycle completed create, set, wait,
+  query, terminal cancel, independent signaled/absent checks, and exact
+  handle-close cleanup with all frozen object hashes. Five rejected attempts
+  preserve the import, UTF-16, and SYSTEM DACL defects that were fixed; target
+  and session removal, zero-artifact verification, and both VM shutdowns passed.
+- Historical live receipts remain tied to the commits that produced them. The
+  release gate now accepts an older controller/catalog boundary only when it is
+  a verified ancestor and current static rebuilding produces identical object
+  hashes, avoiding both evidence rewriting and accidental stale-proof reuse.
 - Local release `0.1.0` is built and independently verified from clean commit
   `e77a897`. Darwin amd64/arm64, Linux amd64, Windows amd64, and docs-site
   archives pass `SHA256SUMS`; every CLI embeds the same version, commit, and
@@ -128,22 +139,24 @@ removal, zero residual artifacts, and shutdown of VMs 4110 and 4120.
   accepted rebuild. The receipt is `docs/evidence/release-0.1.0-local.json`;
   no tag, push, or publication has occurred.
 
-## Now: stabilize a releasable baseline
+## Now: connect execution evidence to detection evidence
 
-1. Freeze the already-declared x64 MinGW
-   `named-timer-lifecycle#holder-timer` proof at the current compatibility and
-   controller boundary. This cell is sequential and Sliver-safe; it requires no
-   new capability or schema.
-2. Run it through one fresh SYSTEM-context Sliver session and require the
-   declared cancel result, after-run signaled state, receipt-bound handle close,
-   after-cleanup object absence, target/session removal, clean-lab proof, and
-   both VM shutdowns.
-3. Join only an accepted receipt into the private proof-debt inventory and
-   paired release gate. Keep the local `0.1.0` packages unpublished until that
-   boundary is recorded.
+1. Select a benign, deterministic, no-persistence x64 pack with no unstable
+   target identity requirements; freeze its source, object, packed arguments,
+   loader, and BOFBench commit.
+2. Export exactly that object in EDR Lab bundle format, validate the bundle
+   locally, and execute it through the target-v2 artifact path on disposable
+   Defender and Elastic targets.
+3. Join the build, runtime, cleanup, and per-product detection receipts by
+   immutable digests. A product negative is a valid measured result; missing or
+   incomplete telemetry is not.
+4. Return every disposable target to its declared clean/stopped state and add
+   the accepted cross-tool receipt to Operator Lab's aggregate view.
 
 ## Next: improve confidence, not surface area
 
+- Close x86 parity for the newly qualified named-timer cancellation cell before
+  selecting another kernel-object family.
 - Build a labeled third-party-object evaluation corpus for analyzer precision,
   unsupported cases, architecture differences, and cross-function explanations.
 - Add compatibility tests for every supported prior schema and publish removal
