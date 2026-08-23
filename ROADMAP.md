@@ -35,8 +35,10 @@ been through that path yet.
 
 ## Next action
 
-Select and freeze the next existing cross-host or cancellation proof cell;
-do not add a new capability or schema first.
+Qualify x64 SYSTEM-context Sliver cancellation for
+`named-timer-lifecycle#holder-timer`, preserving exact object hashes, terminal
+cancel output, independent timer-state and absence checks, target/session
+removal, zero residual artifacts, and shutdown of VMs 4110 and 4120.
 
 ## Current state
 
@@ -128,9 +130,17 @@ do not add a new capability or schema first.
 
 ## Now: stabilize a releasable baseline
 
-1. Continue representative risk-weighted proof through cross-host/domain and
-   cancellation paths. Licensed Cobalt Strike remains a separate optional live
-   gate.
+1. Freeze the already-declared x64 MinGW
+   `named-timer-lifecycle#holder-timer` proof at the current compatibility and
+   controller boundary. This cell is sequential and Sliver-safe; it requires no
+   new capability or schema.
+2. Run it through one fresh SYSTEM-context Sliver session and require the
+   declared cancel result, after-run signaled state, receipt-bound handle close,
+   after-cleanup object absence, target/session removal, clean-lab proof, and
+   both VM shutdowns.
+3. Join only an accepted receipt into the private proof-debt inventory and
+   paired release gate. Keep the local `0.1.0` packages unpublished until that
+   boundary is recorded.
 
 ## Next: improve confidence, not surface area
 
@@ -143,6 +153,10 @@ do not add a new capability or schema first.
   object-hash and terminal-output requirements.
 - Qualify the BOFBench-to-EDR-Lab bundle lane with a stable, benign fixture and
   preserve analysis, runtime, and product evidence as separate layers.
+- Define a bounded proof case for the existing cross-host operation matrix only
+  after both host identities, credentials, reversible effects, and cleanup
+  checks are frozen; the current matrix declaration alone is not executable
+  qualification evidence.
 - Remove the retired Operator Lab provider, mTLS configuration, and neutral-lab
   live-gate scripts after the target-v2 artifact path has a passing receipt.
 
@@ -155,7 +169,7 @@ do not add a new capability or schema first.
 ## Not now
 
 Do not add another operation-schema version or broad capability tranche before
-the current proof matrix, branch policy, and first release are complete.
+the selected proof matrix and first publication decision are complete.
 
 ## Update rule
 
