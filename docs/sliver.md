@@ -12,8 +12,13 @@ BOFBench can manage the lifecycle of an isolated, BOFBench-owned Sliver control 
 bofbench runtime control add sliver-lab \
   --runtime sliver --provider proxmox \
   --proxmox-prep ~/.config/bofbench/proxmox-lab.json \
-  --vmid 4120 --template-vmid 4104
+  --vmid 4120 --template-vmid 4104 \
+  --client-transport ssh --client-user bofbench \
+  --client-identity ~/.ssh/bofbench_proxmox_ed25519 \
+  --client-known-hosts ~/.config/bofbench/sliver-lab-known_hosts
 bofbench runtime control up sliver-lab
+bofbench runtime control trust-client sliver-lab
+bofbench sliver setup --control sliver-lab --lab proxmox-dev --install
 
 bofbench sliver lab-session start \
   --control sliver-lab --lab proxmox-dev --arch x64 --context user
@@ -27,6 +32,24 @@ bofbench runtime control down sliver-lab
 ```
 
 `lab-session start` waits for a profile-matching live session and writes a secret-free receipt. It does not manufacture success when no session checks in.
+
+The Linux client is the default for a configured active Sliver control. The
+Mac runs only BOFBench and OpenSSH: verified extensions are staged in a fresh
+owner-only directory on the control VM, generated implants move directly from
+the Linux VM to the Windows VM with remote-to-remote SCP, and temporary files
+are removed. No Sliver executable, implant, or operator credential is written
+to macOS.
+
+Payload callbacks terminate on the isolated Sliver listener in the Linux VM.
+The remote client returns their session/task output to the Mac, where BOFBench
+persists the normal redacted receipts. This provides callback visibility and
+operator control on the Mac without weakening its malware protections or
+exposing the listener outside the lab network.
+
+A successful start publishes an owner-only active-session record for the named
+lab. Later `run`, `operation`, comparison, refresh, and cleanup commands resolve
+that exact session automatically. `lab-session stop` removes the record after
+it proves the Windows task, process, and files are gone.
 
 ## Bind a session to a lab profile
 

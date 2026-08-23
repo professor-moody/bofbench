@@ -115,8 +115,13 @@ Sliver and licensed Cobalt Strike infrastructure are modeled separately from Win
 bofbench runtime control add sliver-lab \
   --runtime sliver --provider proxmox \
   --proxmox-prep ~/.config/bofbench/proxmox-lab.json \
-  --vmid 4120 --template-vmid 4104
+  --vmid 4120 --template-vmid 4104 \
+  --client-transport ssh --client-user bofbench \
+  --client-identity ~/.ssh/bofbench_proxmox_ed25519 \
+  --client-known-hosts ~/.config/bofbench/sliver-lab-known_hosts
 bofbench runtime control up sliver-lab
+bofbench runtime control trust-client sliver-lab
+bofbench sliver setup --control sliver-lab --lab proxmox-dev --install
 bofbench runtime control status sliver-lab
 ```
 

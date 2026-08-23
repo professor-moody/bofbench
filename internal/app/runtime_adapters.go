@@ -44,6 +44,8 @@ type runtimeRunContext struct {
 	bootstrapMode          string
 	sliverClient           string
 	sliverSession          string
+	sliverControl          string
+	runtimeControls        string
 	sensitiveOutputFields  []string
 	sensitiveArgumentNames []string
 	sensitiveValues        []string
@@ -126,7 +128,7 @@ func (run *runtimeRunContext) refreshRuntimeReceipt(ctx context.Context, receipt
 		}
 		return runtimeadapter.NormalizeReceipt(updated)
 	case "sliver":
-		return refreshSliverRuntimeReceipt(ctx, normalized, sliverOptions{Client: run.sliverClient, SessionFilter: normalized.Session, Lab: run.labName, Profiles: run.labProfiles, ProfileName: normalized.Profile, RemoteHost: normalized.RemoteHost})
+		return refreshSliverRuntimeReceipt(ctx, normalized, sliverOptions{Client: run.sliverClient, SessionFilter: normalized.Session, Lab: run.labName, Profiles: run.labProfiles, Control: run.sliverControl, Controls: run.runtimeControls, ProfileName: normalized.Profile, RemoteHost: normalized.RemoteHost})
 	case "cobaltstrike":
 		return refreshCobaltStrikeRuntimeReceipt(ctx, normalized)
 	default:
@@ -187,19 +189,26 @@ func (run *runtimeRunContext) detectLab(ctx context.Context) (runtimeadapter.Ava
 	return runtimeadapter.Availability{Available: true, Detail: opts.Transport + "://" + opts.Host}, nil
 }
 
-func (run *runtimeRunContext) detectSliver(context.Context) (runtimeadapter.Availability, error) {
-	client := run.sliverClient
-	if client == "" {
-		var err error
-		client, err = discoverSliverClient()
-		if err != nil {
+func (run *runtimeRunContext) detectSliver(ctx context.Context) (runtimeadapter.Availability, error) {
+	opts, err := resolveSliverOptions(ctx, sliverOptions{Client: run.sliverClient, Lab: run.labName, Profiles: run.labProfiles, Control: run.sliverControl, Controls: run.runtimeControls}, run.input, false)
+	if err != nil {
+		return runtimeadapter.Availability{Detail: err.Error()}, nil
+	}
+	loaderPath := filepath.Join(sliverClientHome(), "extensions", "coff-loader", "extension.json")
+	detail := opts.Client
+	if opts.RemoteClient != nil {
+		if err := sliverRemotePreflight(ctx, opts.RemoteClient); err != nil {
 			return runtimeadapter.Availability{Detail: err.Error()}, nil
 		}
-	}
-	if _, err := os.Stat(filepath.Join(sliverClientHome(), "extensions", "coff-loader", "extension.json")); err != nil {
+		loaderPath = filepath.Join(opts.RemoteClient.Home, "extensions", "coff-loader", "extension.json")
+		detail = fmt.Sprintf("ssh://%s@%s (%s)", opts.RemoteClient.User, opts.RemoteClient.Host, opts.Control)
+		if !sliverRemoteFileExists(ctx, opts.RemoteClient, loaderPath) {
+			return runtimeadapter.Availability{Detail: "coff-loader is not installed on remote control " + opts.Control}, nil
+		}
+	} else if _, err := os.Stat(loaderPath); err != nil {
 		return runtimeadapter.Availability{Detail: "coff-loader is not installed"}, nil
 	}
-	return runtimeadapter.Availability{Available: true, Detail: client}, nil
+	return runtimeadapter.Availability{Available: true, Detail: detail}, nil
 }
 
 func (run *runtimeRunContext) detectCobaltStrike(context.Context) (runtimeadapter.Availability, error) {
@@ -240,9 +249,9 @@ func (run *runtimeRunContext) labSessions(ctx context.Context) ([]runtimeadapter
 	return []runtimeadapter.Session{{ID: resolved.Name, Name: resolved.Name, Host: opts.Host, OS: "windows", Status: "configured", Selected: true}}, nil
 }
 
-func (run *runtimeRunContext) sliverSessions(context.Context) ([]runtimeadapter.Session, error) {
-	opts := sliverOptions{Client: run.sliverClient, SessionFilter: run.sliverSession, Lab: run.labName, Profiles: run.labProfiles}
-	resolved, err := resolveSliverOptions(opts, run.input, true)
+func (run *runtimeRunContext) sliverSessions(ctx context.Context) ([]runtimeadapter.Session, error) {
+	opts := sliverOptions{Client: run.sliverClient, SessionFilter: run.sliverSession, Lab: run.labName, Profiles: run.labProfiles, Control: run.sliverControl, Controls: run.runtimeControls}
+	resolved, err := resolveSliverOptions(ctx, opts, run.input, true)
 	if err != nil {
 		return nil, err
 	}
@@ -445,35 +454,19 @@ func (run *runtimeRunContext) executeLab(ctx context.Context, _ runtimeadapter.P
 }
 
 func (run *runtimeRunContext) executeSliver(ctx context.Context, _ runtimeadapter.Prepared) (runtimeadapter.Receipt, error) {
-	profileName, remoteHost := "", ""
-	selector := run.sliverSession
-	if run.labName != "" || selector == "" {
-		resolvedLab, resolveErr := lab.ResolveProfile(run.labName, run.input, run.labProfiles)
-		if resolveErr != nil {
-			if selector == "" {
-				return runtimeadapter.Receipt{}, resolveErr
-			}
-		} else {
-			if selector == "" {
-				selector = resolvedLab.Profile.SliverSession
-			}
-			profileName = resolvedLab.Name
+	resolvedOptions, err := resolveSliverOptions(ctx, sliverOptions{
+		Client: run.sliverClient, SessionFilter: run.sliverSession,
+		Lab: run.labName, Profiles: run.labProfiles,
+		Control: run.sliverControl, Controls: run.runtimeControls,
+	}, run.input, true)
+	if err != nil {
+		return runtimeadapter.Receipt{}, err
+	}
+	if resolvedOptions.ProfileName != "" {
+		if resolvedLab, resolveErr := lab.ResolveProfile(resolvedOptions.ProfileName, run.input, run.labProfiles); resolveErr == nil {
 			if remote, remoteErr := lab.ResolveRemoteOptions(ctx, resolvedLab.Name, resolvedLab.Profile); remoteErr == nil {
-				remoteHost = remote.Host
-			} else {
-				remoteHost = resolvedLab.Profile.Host
+				resolvedOptions.RemoteHost = remote.Host
 			}
-		}
-	}
-	if selector == "" {
-		return runtimeadapter.Receipt{}, fmt.Errorf("Sliver session selector is required; set --session or sliver_session in the selected lab profile")
-	}
-	client := run.sliverClient
-	if client == "" {
-		var err error
-		client, err = discoverSliverClient()
-		if err != nil {
-			return runtimeadapter.Receipt{}, err
 		}
 	}
 	options, err := prepareStageOptions(stageInputOptions{
@@ -488,7 +481,10 @@ func (run *runtimeRunContext) executeSliver(ctx context.Context, _ runtimeadapte
 	if err != nil {
 		return runtimeadapter.Receipt{}, err
 	}
-	return executeSliverExtension(run.stdout, sliverOptions{Client: client, SessionFilter: selector, ProfileName: profileName, RemoteHost: remoteHost, SensitiveOutputFields: run.sensitiveOutputFields, SensitiveArgumentNames: run.sensitiveArgumentNames, SensitiveValues: run.sensitiveValues}, result.Output, "", run.resolved.CLIValues)
+	resolvedOptions.SensitiveOutputFields = run.sensitiveOutputFields
+	resolvedOptions.SensitiveArgumentNames = run.sensitiveArgumentNames
+	resolvedOptions.SensitiveValues = run.sensitiveValues
+	return executeSliverExtension(run.stdout, resolvedOptions, result.Output, "", run.resolved.CLIValues)
 }
 
 func (run *runtimeRunContext) executeCobaltStrike(ctx context.Context, _ runtimeadapter.Prepared) (runtimeadapter.Receipt, error) {

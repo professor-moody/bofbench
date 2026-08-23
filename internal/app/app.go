@@ -1000,6 +1000,8 @@ func runCommand(stdout io.Writer) *cobra.Command {
 	var arch string
 	var sliverClient string
 	var sliverSession string
+	var sliverControl string
+	var runtimeControls string
 	var labName string
 	var labProfiles string
 	var labHost string
@@ -1072,6 +1074,7 @@ func runCommand(stdout io.Writer) *cobra.Command {
 				runtimeName: runtimeName, compiler: compiler, arch: arch, resolved: resolved, packed: packed, items: items,
 				labName: labName, labProfiles: labProfiles, labHost: labHost, labRoot: labRoot, labExecutable: labExecutable,
 				transportTimeout: transportTimeout, bootstrapMode: bootstrapMode, sliverClient: sliverClient, sliverSession: sliverSession,
+				sliverControl: sliverControl, runtimeControls: runtimeControls,
 				interactiveLab: requiresInteractiveLabSession(args[0]),
 				observe:        observe,
 			}
@@ -1125,6 +1128,8 @@ func runCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&arch, "arch", "x64", "project build architecture: x64 or x86")
 	cmd.Flags().StringVar(&sliverClient, "sliver-client", "", "Sliver client binary; discovered automatically when omitted")
 	cmd.Flags().StringVar(&sliverSession, "session", "", "Sliver session ID, name, or filter; defaults to the selected lab profile")
+	cmd.Flags().StringVar(&sliverControl, "sliver-control", "", "remote Sliver runtime control; defaults to the active control")
+	cmd.Flags().StringVar(&runtimeControls, "runtime-controls", "", "runtime control profiles file")
 	cmd.Flags().StringVar(&labName, "lab", "", "named lab profile for lab or Sliver execution")
 	cmd.Flags().StringVar(&topologyName, "topology", "", "named multi-host topology; its execution role selects the lab")
 	cmd.Flags().StringVar(&labProfiles, "profiles", lab.ProfilesPath(), "global lab profiles file")

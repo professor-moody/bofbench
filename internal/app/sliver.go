@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/professor-moody/bofbench/internal/lab"
 	"github.com/professor-moody/bofbench/internal/runlog"
 	"github.com/professor-moody/bofbench/internal/runtimeadapter"
+	"github.com/professor-moody/bofbench/internal/runtimecontrol"
 	"github.com/professor-moody/bofbench/internal/stage"
 )
 
@@ -27,8 +29,12 @@ type sliverOptions struct {
 	SessionFilter          string
 	Lab                    string
 	Profiles               string
+	Control                string
+	Controls               string
 	ProfileName            string
 	RemoteHost             string
+	ControlHost            string
+	RemoteClient           *sliverRemoteClient
 	SensitiveOutputFields  []string
 	SensitiveArgumentNames []string
 	SensitiveValues        []string
@@ -52,7 +58,7 @@ var (
 )
 
 func sliverCommand(stdout io.Writer) *cobra.Command {
-	opts := sliverOptions{Profiles: lab.ProfilesPath()}
+	opts := sliverOptions{Profiles: lab.ProfilesPath(), Controls: runtimecontrol.Path()}
 	cmd := &cobra.Command{
 		Use:   "sliver",
 		Short: "Load and run verified BOFBench extensions through Sliver",
@@ -61,6 +67,8 @@ func sliverCommand(stdout io.Writer) *cobra.Command {
 	cmd.PersistentFlags().StringVar(&opts.SessionFilter, "session", "", "live session selector; defaults to the selected lab profile")
 	cmd.PersistentFlags().StringVar(&opts.Lab, "lab", "", "named lab profile")
 	cmd.PersistentFlags().StringVar(&opts.Profiles, "profiles", opts.Profiles, "global lab profiles file")
+	cmd.PersistentFlags().StringVar(&opts.Control, "control", "", "remote Sliver runtime control; defaults to BOFBENCH_SLIVER_CONTROL or the active control")
+	cmd.PersistentFlags().StringVar(&opts.Controls, "controls", opts.Controls, "runtime control profiles file")
 	cmd.AddCommand(sliverSetupCommand(stdout, &opts), sliverSessionsCommand(stdout, &opts), sliverRunCommand(stdout, &opts), sliverLabSessionCommand(stdout, &opts))
 	return cmd
 }
@@ -71,7 +79,7 @@ func sliverSessionsCommand(stdout io.Writer, opts *sliverOptions) *cobra.Command
 		Short: "Find the live Sliver session selected for BOF execution",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolved, err := resolveSliverOptions(*opts, ".", true)
+			resolved, err := resolveSliverOptions(cmd.Context(), *opts, ".", true)
 			if err != nil {
 				return err
 			}
@@ -92,7 +100,7 @@ func sliverRunCommand(stdout io.Writer, opts *sliverOptions) *cobra.Command {
 		Short: "Verify, load, and execute a staged Sliver BOF extension",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolved, err := resolveSliverOptions(*opts, args[0], true)
+			resolved, err := resolveSliverOptions(cmd.Context(), *opts, args[0], true)
 			if err != nil {
 				return err
 			}
@@ -108,28 +116,57 @@ func sliverSetupCommand(stdout io.Writer, opts *sliverOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "setup", Short: "Verify the Sliver client, config, and coff-loader for a lab profile", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolved, err := resolveSliverOptions(*opts, ".", false)
+			resolved, err := resolveSliverOptions(cmd.Context(), *opts, ".", false)
 			if err != nil {
 				return err
 			}
-			configs := discoverSliverConfigs()
-			if len(configs) == 0 {
-				return fmt.Errorf("no Sliver client config found; set BOFBENCH_SLIVER_CONFIG or place a config in ~/.sliver-client/configs")
+			configPath := ""
+			loaderPath := ""
+			if resolved.RemoteClient != nil {
+				if err := sliverRemotePreflight(cmd.Context(), resolved.RemoteClient); err != nil {
+					return err
+				}
+				configPath = resolved.RemoteClient.ConfigPath
+				loaderPath = filepath.Join(resolved.RemoteClient.Home, "extensions", "coff-loader", "extension.json")
+			} else {
+				configs := discoverSliverConfigs()
+				if len(configs) == 0 {
+					return fmt.Errorf("no Sliver client config found; set BOFBENCH_SLIVER_CONFIG or place a config in ~/.sliver-client/configs")
+				}
+				configPath = configs[0]
+				loaderPath = filepath.Join(sliverClientHome(), "extensions", "coff-loader", "extension.json")
 			}
-			loaderPath := filepath.Join(sliverClientHome(), "extensions", "coff-loader", "extension.json")
-			if _, err := os.Stat(loaderPath); err != nil && install {
-				output, installErr := runSliverRC(resolved.Client, "armory install coff-loader\nexit\n")
+			loaderReady := false
+			if resolved.RemoteClient != nil {
+				loaderReady = sliverRemoteFileExists(cmd.Context(), resolved.RemoteClient, loaderPath)
+			} else {
+				_, statErr := os.Stat(loaderPath)
+				loaderReady = statErr == nil
+			}
+			installOutput := ""
+			if !loaderReady && install {
+				output, installErr := runSliverRC(resolved, "armory install coff-loader\nexit\n")
 				if installErr != nil {
 					return fmt.Errorf("install coff-loader: %w", installErr)
 				}
-				if !strings.Contains(strings.ToLower(stripANSI(output)), "coff") {
-					return fmt.Errorf("Sliver did not confirm coff-loader installation")
-				}
+				installOutput = strings.TrimSpace(stripANSI(output))
 			}
-			if _, err := os.Stat(loaderPath); err != nil {
+			if resolved.RemoteClient != nil {
+				loaderReady = sliverRemoteFileExists(cmd.Context(), resolved.RemoteClient, loaderPath)
+			} else {
+				_, statErr := os.Stat(loaderPath)
+				loaderReady = statErr == nil
+			}
+			if !loaderReady {
+				if installOutput != "" {
+					return fmt.Errorf("coff-loader is not installed at %s after install request: %s", loaderPath, installOutput)
+				}
 				return fmt.Errorf("coff-loader is not installed at %s; rerun with --install", loaderPath)
 			}
-			fmt.Fprintf(stdout, "Sliver support ready\nClient      %s\nConfig      %s\ncoff-loader %s\n", resolved.Client, configs[0], loaderPath)
+			fmt.Fprintf(stdout, "Sliver support ready\nClient      %s\nConfig      %s\ncoff-loader %s\n", resolved.Client, configPath, loaderPath)
+			if resolved.RemoteClient != nil {
+				fmt.Fprintf(stdout, "Transport   ssh://%s@%s\nControl     %s\n", resolved.RemoteClient.User, resolved.RemoteClient.Host, resolved.Control)
+			}
 			if resolved.SessionFilter != "" {
 				fmt.Fprintf(stdout, "Session     %s\n", resolved.SessionFilter)
 			}
@@ -146,7 +183,11 @@ func runSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath, com
 }
 
 func executeSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath, commandOverride string, commandArgs []string) (runtimeadapter.Receipt, error) {
-	if _, err := os.Stat(opts.Client); err != nil {
+	if opts.RemoteClient != nil {
+		if err := sliverRemotePreflight(context.Background(), opts.RemoteClient); err != nil {
+			return runtimeadapter.Receipt{}, err
+		}
+	} else if _, err := os.Stat(opts.Client); err != nil {
 		return runtimeadapter.Receipt{}, fmt.Errorf("Sliver client %s: %w", opts.Client, err)
 	}
 	verification := stage.Verify(extensionPath)
@@ -188,10 +229,19 @@ func executeSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath,
 	if err != nil {
 		return runtimeadapter.Receipt{}, err
 	}
-	quotedExtension, _ := sliverConsoleQuote(absolute)
+	clientExtension := absolute
+	cleanupExtension := func() {}
+	if opts.RemoteClient != nil {
+		clientExtension, cleanupExtension, err = stageSliverRemoteExtension(context.Background(), opts.RemoteClient, absolute)
+		if err != nil {
+			return runtimeadapter.Receipt{}, err
+		}
+	}
+	defer cleanupExtension()
+	quotedExtension, _ := sliverConsoleQuote(clientExtension)
 	rc := fmt.Sprintf("extensions load %s\nuse %s\n%s\nexit\n", quotedExtension, session, commandLine)
 	started := time.Now()
-	output, runErr := runSliverRC(opts.Client, rc)
+	output, runErr := runSliverRC(opts, rc)
 	clean := stripANSI(output)
 	if runErr == nil && !strings.Contains(clean, "Successfully executed") {
 		runErr = fmt.Errorf("Sliver did not report successful execution")
@@ -202,7 +252,7 @@ func executeSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath,
 	}
 	receipt := runtimeadapter.Receipt{
 		Schema: runtimeadapter.ReceiptSchema, SchemaVersion: runtimeadapter.ReceiptSchemaVersion, Runtime: "sliver", Status: "fail", ExecutionState: "failed", Profile: opts.ProfileName,
-		Transport: "sliver", RemoteHost: opts.RemoteHost, Session: session, Entrypoint: "go", TimeoutMS: 90000, StartedAt: started.UTC().Format(time.RFC3339Nano),
+		Transport: sliverTransportName(opts), RemoteHost: opts.RemoteHost, Session: session, Entrypoint: "go", TimeoutMS: 90000, StartedAt: started.UTC().Format(time.RFC3339Nano),
 		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), DurationMS: time.Since(started).Milliseconds(),
 		ReceiptPath: filepath.Join(runDir, "result.json"),
 	}
@@ -269,11 +319,11 @@ func refreshSliverRuntimeReceipt(ctx context.Context, receipt runtimeadapter.Rec
 		return receipt, fmt.Errorf("Sliver receipt has no persisted task ID")
 	}
 	if opts.Client == "" {
-		client, err := discoverSliverClient()
+		resolved, err := resolveSliverOptions(ctx, opts, ".", false)
 		if err != nil {
 			return receipt, err
 		}
-		opts.Client = client
+		opts = resolved
 	}
 	session := strings.TrimSpace(receipt.Session)
 	if session == "" {
@@ -292,7 +342,7 @@ func refreshSliverRuntimeReceipt(ctx context.Context, receipt runtimeadapter.Rec
 		return receipt, ctx.Err()
 	default:
 	}
-	output, runErr := runSliverRCContext(ctx, opts.Client, fmt.Sprintf("use %s\ntasks fetch %s\nexit\n", quotedSession, quotedTask))
+	output, runErr := runSliverRCContext(ctx, opts, fmt.Sprintf("use %s\ntasks fetch %s\nexit\n", quotedSession, quotedTask))
 	now := time.Now().UTC()
 	receipt.LastRefreshAt = now.Format(time.RFC3339Nano)
 	receipt.CompletionSource = "sliver-task-store"
@@ -384,13 +434,9 @@ func sliverExtensionCommandLine(commandName string, extension sliverExtension, c
 	return commandLine, nil
 }
 
-func resolveSliverOptions(opts sliverOptions, project string, requireSession bool) (sliverOptions, error) {
-	if opts.Client == "" {
-		client, err := discoverSliverClient()
-		if err != nil {
-			return opts, err
-		}
-		opts.Client = client
+func resolveSliverOptions(ctx context.Context, opts sliverOptions, project string, requireSession bool) (sliverOptions, error) {
+	if strings.TrimSpace(opts.Client) != "" && strings.TrimSpace(opts.Control) != "" {
+		return opts, fmt.Errorf("set either a local Sliver client or a remote runtime control, not both")
 	}
 	if opts.Lab != "" || opts.SessionFilter == "" {
 		resolved, err := lab.ResolveProfile(opts.Lab, project, opts.Profiles)
@@ -404,10 +450,39 @@ func resolveSliverOptions(opts sliverOptions, project string, requireSession boo
 		if err == nil {
 			opts.ProfileName = resolved.Name
 			opts.RemoteHost = resolved.Profile.Host
+			if opts.SessionFilter == "" {
+				opts.SessionFilter = strings.TrimSpace(os.Getenv("BOFBENCH_SLIVER_SESSION"))
+			}
+			if opts.SessionFilter == "" {
+				active, activeErr := loadActiveSliverSession(resolved.Name)
+				if activeErr == nil {
+					opts.SessionFilter = active.Session
+					if opts.Control == "" {
+						opts.Control = active.Control
+					}
+				} else if !errors.Is(activeErr, os.ErrNotExist) {
+					return opts, activeErr
+				}
+			}
 		}
 	}
 	if requireSession && opts.SessionFilter == "" {
 		return opts, fmt.Errorf("Sliver session selector is required; set --session or sliver_session in the selected lab profile")
+	}
+	if opts.Client == "" {
+		resolved, remote, err := resolveRemoteSliverClient(ctx, opts)
+		if err != nil {
+			return opts, err
+		}
+		if remote {
+			opts = resolved
+		} else {
+			client, err := discoverSliverClient()
+			if err != nil {
+				return opts, err
+			}
+			opts.Client = client
+		}
 	}
 	return opts, nil
 }
@@ -508,7 +583,7 @@ func loadSliverExtension(extensionPath string) (sliverExtension, error) {
 }
 
 func findSliverSession(opts sliverOptions) (string, error) {
-	output, err := runSliverRC(opts.Client, fmt.Sprintf("sessions -f %s\nexit\n", opts.SessionFilter))
+	output, err := runSliverRC(opts, fmt.Sprintf("sessions -f %s\nexit\n", opts.SessionFilter))
 	if err != nil {
 		return "", err
 	}
@@ -521,13 +596,16 @@ func findSliverSession(opts sliverOptions) (string, error) {
 	return "", fmt.Errorf("no live Sliver session matched %q", opts.SessionFilter)
 }
 
-func runSliverRC(client, body string) (string, error) {
+func runSliverRC(opts sliverOptions, body string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	return runSliverRCContext(ctx, client, body)
+	return runSliverRCContext(ctx, opts, body)
 }
 
-func runSliverRCContext(ctx context.Context, client, body string) (string, error) {
+func runSliverRCContext(ctx context.Context, opts sliverOptions, body string) (string, error) {
+	if opts.RemoteClient != nil {
+		return runRemoteSliverRCContext(ctx, opts.RemoteClient, body)
+	}
 	file, err := os.CreateTemp("", "bofbench-sliver-*.rc")
 	if err != nil {
 		return "", err
@@ -541,7 +619,7 @@ func runSliverRCContext(ctx context.Context, client, body string) (string, error
 	if err := file.Close(); err != nil {
 		return "", err
 	}
-	command := exec.CommandContext(ctx, client, "console", "--rc", path)
+	command := exec.CommandContext(ctx, opts.Client, "console", "--rc", path)
 	command.Stdin = strings.NewReader(sliverClientSelection() + "\n")
 	output, err := command.CombinedOutput()
 	if ctx.Err() != nil {
@@ -551,6 +629,13 @@ func runSliverRCContext(ctx context.Context, client, body string) (string, error
 		return string(output), fmt.Errorf("Sliver console failed: %w\n%s", err, stripANSI(string(output)))
 	}
 	return string(output), nil
+}
+
+func sliverTransportName(opts sliverOptions) string {
+	if opts.RemoteClient != nil {
+		return "sliver+ssh"
+	}
+	return "sliver"
 }
 
 // sliverClientSelection returns the one-based profile number used by the

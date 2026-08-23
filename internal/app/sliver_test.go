@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
+	"github.com/professor-moody/bofbench/internal/lab"
 	"github.com/professor-moody/bofbench/internal/runtimeadapter"
 )
 
@@ -31,6 +33,35 @@ func TestSliverExtensionCommandLineUsesNamedFlags(t *testing.T) {
 	}
 	if want := `survey -- --process_filter lsass --result_limit 5`; got != want {
 		t.Fatalf("command line = %q, want %q", got, want)
+	}
+}
+
+func TestSliverTransferSSHConfigKeepsHostPoliciesSeparate(t *testing.T) {
+	previous := resolveSliverJumpHost
+	resolveSliverJumpHost = func(name string) (sliverSSHHost, error) {
+		if name != "lab-jump" {
+			t.Fatalf("unexpected jump host %q", name)
+		}
+		return sliverSSHHost{HostName: "192.0.2.10", User: "root", Port: 22, IdentityFile: "/keys/jump"}, nil
+	}
+	t.Cleanup(func() { resolveSliverJumpHost = previous })
+	remote := &sliverRemoteClient{Host: "10.12.90.121", User: "bofbench", Port: 22, IdentityFile: "/keys/sliver", KnownHosts: "/keys/sliver-known", JumpHost: "lab-jump"}
+	target := lab.RemoteOptions{Transport: "ssh", Host: "10.12.90.100", User: "Administrator", Port: 22, IdentityFile: "/keys/windows", JumpHost: "lab-jump"}
+	config, err := sliverTransferSSHConfig(remote, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Host bofbench-jump-1", "HostName 192.0.2.10", "IdentityFile \"/keys/jump\"",
+		"Host bofbench-sliver-source", "IdentityFile \"/keys/sliver\"", "UserKnownHostsFile \"/keys/sliver-known\"",
+		"Host bofbench-windows-target", "IdentityFile \"/keys/windows\"", "StrictHostKeyChecking yes", "ProxyJump bofbench-jump-1",
+	} {
+		if !strings.Contains(config, want) {
+			t.Fatalf("config does not contain %q:\n%s", want, config)
+		}
+	}
+	if strings.Count(config, "Host bofbench-jump-") != 1 {
+		t.Fatalf("shared jump host should be resolved once:\n%s", config)
 	}
 }
 
@@ -158,5 +189,26 @@ func TestRefreshSliverRuntimeReceiptFromPersistedTaskOutput(t *testing.T) {
 	}
 	if refreshed.CompletionSource != "sliver-task-store" || len(refreshed.OutputChunks) != 1 || !refreshed.OutputChunks[0].Final {
 		t.Fatalf("refresh metadata = %+v", refreshed)
+	}
+}
+
+func TestActiveSliverSessionRoundTrip(t *testing.T) {
+	t.Setenv("BOFBENCH_CONFIG_HOME", t.TempDir())
+	state := activeSliverSession{Lab: "proxmox-dev", Control: "sliver-lab", Session: "0123abcd", ControlHost: "10.12.90.121", ReceiptPath: "runs/session.json"}
+	if err := saveActiveSliverSession(state); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadActiveSliverSession("proxmox-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Session != state.Session || loaded.Control != state.Control || loaded.Schema != activeSliverSessionSchema {
+		t.Fatalf("unexpected active session: %#v", loaded)
+	}
+	if err := removeActiveSliverSession("proxmox-dev"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadActiveSliverSession("proxmox-dev"); !os.IsNotExist(err) {
+		t.Fatalf("expected removed session state, got %v", err)
 	}
 }

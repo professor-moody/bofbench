@@ -26,11 +26,11 @@ import (
 )
 
 type runtimeCompareOptions struct {
-	via, arguments                         []string
-	lab, profiles, arch, compiler, entry   string
-	sliverClient, sliverSession, bootstrap string
-	timeout                                int
-	format                                 string
+	via, arguments                                                         []string
+	lab, profiles, arch, compiler, entry                                   string
+	sliverClient, sliverSession, sliverControl, runtimeControls, bootstrap string
+	timeout                                                                int
+	format                                                                 string
 }
 
 func runtimeCompareCommand(stdout io.Writer) *cobra.Command {
@@ -50,6 +50,8 @@ func runtimeCompareCommand(stdout io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&opts.entry, "entry", opts.entry, "BOF entrypoint")
 	cmd.Flags().StringVar(&opts.sliverClient, "sliver-client", "", "Sliver client path")
 	cmd.Flags().StringVar(&opts.sliverSession, "session", "", "Sliver session selector")
+	cmd.Flags().StringVar(&opts.sliverControl, "sliver-control", "", "remote Sliver runtime control; defaults to the active control")
+	cmd.Flags().StringVar(&opts.runtimeControls, "runtime-controls", "", "runtime control profiles file")
 	cmd.Flags().StringVar(&opts.bootstrap, "bootstrap", opts.bootstrap, "lab bootstrap mode: auto, always, or never")
 	cmd.Flags().IntVar(&opts.timeout, "timeout", opts.timeout, "per-runtime timeout in milliseconds")
 	cmd.Flags().StringVar(&opts.format, "format", opts.format, "output format: text or json")
@@ -98,6 +100,7 @@ func executeComparisonRuntime(ctx context.Context, project, runtimeName string, 
 		compiler: opts.compiler, arch: opts.arch, runtimeName: "windows-coff", resolved: resolved, packed: packed, items: items,
 		labName: opts.lab, labProfiles: opts.profiles, bootstrapMode: opts.bootstrap,
 		sliverClient: opts.sliverClient, sliverSession: opts.sliverSession,
+		sliverControl: opts.sliverControl, runtimeControls: opts.runtimeControls,
 		// A runtime comparison is meaningful only when every lane executes the
 		// same object. Force the lab adapter to build locally and upload instead
 		// of allowing a remote compiler to produce an equivalent-but-different

@@ -20,17 +20,33 @@ const (
 )
 
 var validName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var validSSHUser = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9._-]*[$]?$`)
+
+// Client describes how the BOFBench CLI reaches a runtime client that lives
+// inside the isolated control plane. It contains paths and SSH routing only;
+// the Sliver operator credential remains in ConfigPath on the remote guest.
+type Client struct {
+	Transport    string `json:"transport"`
+	User         string `json:"user"`
+	Port         int    `json:"port,omitempty"`
+	IdentityFile string `json:"identity_file"`
+	KnownHosts   string `json:"known_hosts"`
+	Path         string `json:"path"`
+	Home         string `json:"home"`
+	ConfigPath   string `json:"config_path"`
+}
 
 // Control describes one runtime control plane without storing credentials.
 // Provider authentication is resolved through the referenced preparation file.
 type Control struct {
-	Runtime      string `json:"runtime"`
-	Provider     string `json:"provider"`
-	ProxmoxPrep  string `json:"proxmox_preparation"`
-	VMID         int    `json:"vmid"`
-	TemplateVMID int    `json:"template_vmid,omitempty"`
-	CloneMode    string `json:"clone_mode,omitempty"`
-	Name         string `json:"guest_name,omitempty"`
+	Runtime      string  `json:"runtime"`
+	Provider     string  `json:"provider"`
+	ProxmoxPrep  string  `json:"proxmox_preparation"`
+	VMID         int     `json:"vmid"`
+	TemplateVMID int     `json:"template_vmid,omitempty"`
+	CloneMode    string  `json:"clone_mode,omitempty"`
+	Name         string  `json:"guest_name,omitempty"`
+	Client       *Client `json:"client,omitempty"`
 }
 
 type Config struct {
@@ -172,6 +188,51 @@ func ValidateControl(control Control) error {
 	if control.Name != "" && !validName.MatchString(control.Name) {
 		return fmt.Errorf("invalid guest name %q", control.Name)
 	}
+	if control.Client != nil {
+		if err := ValidateClient(*control.Client); err != nil {
+			return fmt.Errorf("client: %w", err)
+		}
+	}
+	return nil
+}
+
+func ValidateClient(client Client) error {
+	if strings.ToLower(strings.TrimSpace(client.Transport)) != "ssh" {
+		return fmt.Errorf("transport must be ssh")
+	}
+	if !validSSHUser.MatchString(strings.TrimSpace(client.User)) {
+		return fmt.Errorf("invalid SSH user %q", client.User)
+	}
+	if client.Port < 1 || client.Port > 65535 {
+		return fmt.Errorf("SSH port must be between 1 and 65535")
+	}
+	for label, path := range map[string]string{
+		"identity_file": client.IdentityFile,
+		"known_hosts":   client.KnownHosts,
+		"path":          client.Path,
+		"home":          client.Home,
+		"config_path":   client.ConfigPath,
+	} {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return fmt.Errorf("%s is required", label)
+		}
+		if strings.ContainsAny(path, "\x00\r\n") {
+			return fmt.Errorf("%s contains control characters", label)
+		}
+		if !filepath.IsAbs(path) {
+			return fmt.Errorf("%s must be an absolute path", label)
+		}
+	}
+	home := strings.TrimSuffix(filepath.Clean(client.Home), string(filepath.Separator))
+	if filepath.Base(home) != ".sliver-client" {
+		return fmt.Errorf("home must end in .sliver-client so the pinned Sliver client uses the dedicated location")
+	}
+	config := filepath.Clean(client.ConfigPath)
+	wantPrefix := filepath.Join(home, "configs") + string(filepath.Separator)
+	if !strings.HasPrefix(config, wantPrefix) {
+		return fmt.Errorf("config_path must be beneath %s", filepath.Join(home, "configs"))
+	}
 	return nil
 }
 
@@ -196,6 +257,17 @@ func Add(config *Config, name string, control Control, replace bool) error {
 	}
 	if control.Name == "" {
 		control.Name = name
+	}
+	if control.Client != nil {
+		client := *control.Client
+		client.Transport = strings.ToLower(strings.TrimSpace(client.Transport))
+		client.User = strings.TrimSpace(client.User)
+		client.IdentityFile = filepath.Clean(client.IdentityFile)
+		client.KnownHosts = filepath.Clean(client.KnownHosts)
+		client.Path = filepath.Clean(client.Path)
+		client.Home = filepath.Clean(client.Home)
+		client.ConfigPath = filepath.Clean(client.ConfigPath)
+		control.Client = &client
 	}
 	config.Controls[name] = control
 	if config.Active == "" {

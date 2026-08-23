@@ -1,6 +1,6 @@
 # BOFBench roadmap
 
-Status: active, reviewed 2026-08-22.
+Status: active, reviewed 2026-08-23.
 
 BOFBench exists to compose, analyze, execute, compare, and export BOFs from
 typed capability contracts. Its next phase is stabilization and proof of the
@@ -35,10 +35,11 @@ been through that path yet.
 
 ## Next action
 
-Allow the pinned Sliver client with SHA-256
-`3249429f37f55f05ebed2dd97d14593cbf567f3397fcaba3af04249b2fbf6be6`
-through the macOS host security policy, then qualify
-`memory-allocation-roundtrip#secret-roundtrip` through x64 Sliver.
+Resolve the measured context mismatch in the frozen x64 Sliver cell: the
+remote-client lane and callback now pass, but the Administrator user session
+receives `OpenProcess error=5` against the LocalSystem proof target. Either
+declare the cell a SYSTEM-context proof or select a user-owned target; do not
+silently change the frozen selection.
 
 ## Current state
 
@@ -59,12 +60,17 @@ through the macOS host security policy, then qualify
   pointer and hashing incompatibilities, plus the unsafe early return that
   skipped operation cleanup after a failed post-run assertion. Full Go tests
   and vet pass at `b567497`.
-- The selected x64 Sliver cell is blocked before execution. Both BOFBench-owned
-  VMs started, the Windows worker and target were ready, but macOS killed the
-  configured Sliver client before it generated an implant; the pinned workspace
-  client also exited 137 on `--help`. No implant was generated or uploaded, no
-  operation ran, cleanup found zero artifacts, and VMs 4110 and 4120 returned to
-  stopped. This attempt does not qualify Sliver.
+- Sliver control now runs the pinned Linux amd64 client (`1.7.3`, SHA-256
+  `b0e328a131e4d679e9b268552db99ca2d46051b9205a67f9b7f7c1628983daae`)
+  inside VM 4120. SSH host trust is pinned, the operator credential remains on
+  Linux, verified extensions stage remotely, and generated implants copy
+  directly VM-to-VM. The Mac receives session/task output and receipts without
+  storing or executing Sliver material.
+- The first remote-client callback reached session `6262b3a1`; the Sliver
+  adapter completed `process-memory-allocate` with full output and an exact
+  object hash. The frozen user-context operation then failed its semantic
+  contract because `OpenProcess` returned access denied against the LocalSystem
+  target. This is executed coverage, not a qualified operation pass.
 - `main` is the active canonical line established from `3f6506f`; the obsolete
   `fix/live-proxmox-path` ref contains no work absent from `main`. Historical
   slice branches and tags remain available.

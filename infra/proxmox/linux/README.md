@@ -12,7 +12,8 @@ Template preparation:
    authentication for the lab administrator.
 3. Copy this directory to `/opt/bofbench`.
 4. Run `sudo /opt/bofbench/sliver-control-install.sh`.
-5. Verify `/var/lib/sliver/receipts/install.json`, shut down, and convert VMID
+5. Verify `/var/lib/sliver/receipts/install.json`, including both pinned binary
+   hashes, shut down, and convert VMID
    `4104` to a template.
 
 After cloning VMID `4120`, create `/etc/bofbench/sliver.env` with the isolated
@@ -29,6 +30,27 @@ Operator configuration is generated into an external, mode-0600 location and
 referenced by BOFBench; it is never stored in a project or runtime-control
 profile.
 
-The pinned release is Sliver `1.7.3`. The server SHA-256 is checked before
-installation and recorded again in the local install receipt. Updating it is a
-deliberate source change followed by a fresh template and acceptance run.
+```bash
+sudo systemctl start sliver-server.service
+sudo bofbench-sliver-operator-configure
+```
+
+The operator setup is idempotent: it preserves an existing non-empty profile,
+rejects multiple profiles, and writes only a secret-free receipt under
+`/var/lib/sliver/receipts/operator.json`.
+
+The runtime client uses the dedicated `bofbench` account and exactly one
+operator profile at
+`/home/bofbench/.sliver-client/configs/bofbench.cfg`. BOFBench reaches that
+client over SSH, stages each verified extension beneath a fresh owner-only
+`/tmp/bofbench-sliver-*` directory, captures the complete console result, and
+removes the staging directory. The Mac never stores or executes a Sliver
+binary or operator credential.
+
+The pinned release is Sliver `1.7.3`. The server SHA-256 is
+`e3216ecd12f6e7e97cb4588bb6d85c70eca3bdfad8b0818ffd53ccb2e357ccc8` and
+the Linux amd64 client SHA-256 is
+`b0e328a131e4d679e9b268552db99ca2d46051b9205a67f9b7f7c1628983daae`.
+Both are checked before installation and recorded again in the local install
+receipt. Updating either is a deliberate source change followed by a fresh
+template and acceptance run.
