@@ -35,10 +35,10 @@ been through that path yet.
 
 ## Next action
 
-Freeze and execute the x64 native-lab
-`service-transition-observe#fixture-service-transition` cell as the first
-distinct persistence/async qualification, including running-service proof,
-service/process/task cleanup checks, target removal, and provider shutdown.
+Freeze and execute a distinct x64 SYSTEM-context Sliver
+`service-transition-observe#fixture-service-transition` cell, preserving the
+background readiness boundary, service result, four state checks, session
+cleanup, and shutdown of both VMs.
 
 ## Current state
 
@@ -80,12 +80,12 @@ service/process/task cleanup checks, target removal, and provider shutdown.
   against the x86 LocalSystem target, passed both independent state checks, and
   matched all four frozen x86 object hashes. Session cleanup, clean-lab
   verification, and shutdown of VMs 4110 and 4120 all passed.
-- Release gate `catalog-2026.08.23.1` now qualifies the declared compatibility
+- Release gate `catalog-2026.08.23.2` now qualifies the declared compatibility
   floor at canonical BOFBench commit `189412c`. Fresh reports cover all 297
   packs and 80 operations and partition exactly into 105/13 public and 192/67
   private results. The private static matrix is identical to its earlier
-  baseline after removing only volatile run provenance, and all four live plus
-  four cleanup cells validate by exact receipt digest.
+  baseline after removing only volatile run provenance, and all five live plus
+  five cleanup cells validate by exact receipt digest.
 - The gate remains honestly `pass_with_unavailable`: MSVC x64/x86, pack proof
   and cleanup cells, comparison contracts, other operation proof cases, and
   live Cobalt Strike execution are not qualified.
@@ -99,13 +99,18 @@ service/process/task cleanup checks, target removal, and provider shutdown.
 - The release gate is deterministic and part of the private catalog's strict
   documentation check; source-report, manifest, compatibility, inventory, or
   accepted-live-receipt drift makes it fail.
+- The first non-memory cell is qualified. X64 native-lab
+  `service-transition-observe#fixture-service-transition` passed its two-wave
+  watcher/trigger DAG, service Running check, service/process/task cleanup,
+  target removal, zero-artifact verification, and VM 4110 shutdown on the first
+  run.
 
 ## Now: stabilize a releasable baseline
 
-1. Qualify the reversible x64 native-lab service-transition cell, including its
-   background readiness contract and four independent state/cleanup checks.
-2. Repeat that cell through a distinct x64 SYSTEM-context Sliver session only
-   after the native fixture and cleanup boundary pass.
+1. Repeat the service-transition case through a distinct x64 SYSTEM-context
+   Sliver session now that its native fixture and cleanup boundary pass.
+2. Preserve remote readiness, output completeness, cleanup, session removal,
+   zero-artifact verification, and shutdown of both disposable VMs.
 3. Continue representative risk-weighted proof through cross-host/domain and
    cancellation paths. Licensed Cobalt Strike remains a separate optional live
    gate.
