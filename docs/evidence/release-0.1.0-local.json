@@ -1,0 +1,65 @@
+{
+  "schema": "bofbench.local-release-receipt",
+  "schema_version": 1,
+  "status": "pass",
+  "version": "0.1.0",
+  "source": {
+    "commit": "e77a897e1f53eb5ba840c7c90efa4c96ea3690b8",
+    "embedded_commit": "e77a897e1f53",
+    "build_time": "2026-08-23T18:56:42Z",
+    "working_tree_clean": true
+  },
+  "compatibility": {
+    "catalog_release": "catalog-2026.08.23.3",
+    "catalog_commit": "e261054cd0e83bdec5a0202cdcd82af54d67f198"
+  },
+  "artifacts": [
+    {
+      "path": "dist/release/bofbench_0.1.0_darwin_amd64.tar.gz",
+      "bytes": 10135417,
+      "sha256": "c10e116b3aba407c4edc495ed89227b97248dbe357f85d8e18674b18e1711c37"
+    },
+    {
+      "path": "dist/release/bofbench_0.1.0_darwin_arm64.tar.gz",
+      "bytes": 9717812,
+      "sha256": "061e64437ea4c32da64a054d34ceb34cc3b7ccdca4875fc7bc64beabc87c1d09"
+    },
+    {
+      "path": "dist/release/bofbench_0.1.0_linux_amd64.tar.gz",
+      "bytes": 10061811,
+      "sha256": "75ec03511ab6350213d84b72320ba1b5a5e49f473f1ce62245c2dbfaedf2e5bb"
+    },
+    {
+      "path": "dist/release/bofbench_0.1.0_windows_amd64.tar.gz",
+      "bytes": 10325072,
+      "sha256": "7af8fcf1cf67abedf7c713e2cb4304e7893b14d2d39f465258567af3335a3c68"
+    },
+    {
+      "path": "dist/release/bofbench_0.1.0_docs-site.tar.gz",
+      "bytes": 5637217,
+      "sha256": "619a17a2d21a78ad1c4deadaad0f31ad8cf1abb31b36108001400e96106dc301"
+    }
+  ],
+  "checksums": {
+    "path": "dist/release/SHA256SUMS",
+    "bytes": 502,
+    "sha256": "f3d4153742cd8947bed3f9132a24f59782bda6fb3e9bd7d68c9ac6e0b1815934",
+    "verified": true
+  },
+  "verification": {
+    "generated_capabilities": "pass",
+    "go_tests": "pass",
+    "strict_docs": "pass",
+    "export_directory_and_zip_smoke": "pass",
+    "archive_path_safety": "pass",
+    "macos_metadata_absent": true,
+    "darwin_arm64_version_readback": "pass",
+    "darwin_amd64_version_readback": "pass",
+    "all_platform_embedded_provenance": "pass"
+  },
+  "distribution": {
+    "tag_created": false,
+    "published": false,
+    "pushed": false
+  }
+}

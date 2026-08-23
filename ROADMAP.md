@@ -35,8 +35,8 @@ been through that path yet.
 
 ## Next action
 
-Cut the first versioned BOFBench product release while internal compatibility
-gate `catalog-2026.08.23.3` remains current.
+Select and freeze the next existing cross-host or cancellation proof cell;
+do not add a new capability or schema first.
 
 ## Current state
 
@@ -119,12 +119,16 @@ gate `catalog-2026.08.23.3` remains current.
   `a0febdcd`. Service creation, two independent state checks, both frozen BOF
   hashes, exact cleanup, session removal, zero-artifact verification, and
   shutdown of VMs 4110/4120 all passed.
+- Local release `0.1.0` is built and independently verified from clean commit
+  `e77a897`. Darwin amd64/arm64, Linux amd64, Windows amd64, and docs-site
+  archives pass `SHA256SUMS`; every CLI embeds the same version, commit, and
+  build time. Archive inspection found and fixed a `.DS_Store` leak before the
+  accepted rebuild. The receipt is `docs/evidence/release-0.1.0-local.json`;
+  no tag, push, or publication has occurred.
 
 ## Now: stabilize a releasable baseline
 
-1. Cut a versioned product release with archive checksums and embedded commit
-   metadata while the catalog release gate remains current.
-2. Continue representative risk-weighted proof through cross-host/domain and
+1. Continue representative risk-weighted proof through cross-host/domain and
    cancellation paths. Licensed Cobalt Strike remains a separate optional live
    gate.
 
