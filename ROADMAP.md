@@ -80,12 +80,12 @@ has its first reproducible producer-to-detection result.
   against the x86 LocalSystem target, passed both independent state checks, and
   matched all four frozen x86 object hashes. Session cleanup, clean-lab
   verification, and shutdown of VMs 4110 and 4120 all passed.
-- Release gate `catalog-2026.08.23.4` now qualifies the declared compatibility
+- Release gate `catalog-2026.08.23.5` now qualifies the declared compatibility
   floor at canonical BOFBench commit `c922a23`. Fresh reports cover all 297
   packs and 80 operations and partition exactly into 105/13 public and 192/67
   private results. The private static matrix is identical to the `c38791e`
-  compatibility floor after removing only volatile run provenance. Six
-  operation cells plus one pack cell and all seven cleanup cells validate by
+  compatibility floor after removing only volatile run provenance. Seven
+  operation cells plus one pack cell and all eight cleanup cells validate by
   exact receipt digest.
 - The gate remains honestly `pass_with_unavailable`: MSVC x64/x86, remaining
   pack proof and cleanup cells, comparison contracts, other operation proof
@@ -128,6 +128,12 @@ has its first reproducible producer-to-detection result.
   handle-close cleanup with all frozen object hashes. Five rejected attempts
   preserve the import, UTF-16, and SYSTEM DACL defects that were fixed; target
   and session removal, zero-artifact verification, and both VM shutdowns passed.
+- X86 SYSTEM-context Sliver cancellation is independently qualified through
+  session `bc0ed4bf`. The exact x86 create, control, and cleanup objects passed
+  the five-step timer path and both state checks on the first attempt. The
+  session and BOF objects are x86 while the operation intentionally retains its
+  handle in the main LocalSystem target service; that identity boundary is
+  explicit in the receipt. Teardown again returned VMs 4110/4120 to stopped.
 - Historical live receipts remain tied to the commits that produced them. The
   release gate now accepts an older controller/catalog boundary only when it is
   a verified ancestor and current static rebuilding produces identical object
@@ -155,7 +161,7 @@ has its first reproducible producer-to-detection result.
 
 ## Next: improve confidence, not surface area
 
-- Close x86 parity for the newly qualified named-timer cancellation cell before
+- Measure the adjacent named-event lifecycle through x64 SYSTEM Sliver before
   selecting another kernel-object family.
 - Build a labeled third-party-object evaluation corpus for analyzer precision,
   unsupported cases, architecture differences, and cross-function explanations.
