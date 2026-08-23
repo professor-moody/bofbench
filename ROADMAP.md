@@ -35,9 +35,10 @@ been through that path yet.
 
 ## Next action
 
-Produce one versioned aggregate coverage and release-gate receipt at the latest
-canonical BOFBench commit, including embedded commit metadata, checksums, public
-and private catalog compatibility, and every qualified live cell.
+Freeze and execute the x64 native-lab
+`service-transition-observe#fixture-service-transition` cell as the first
+distinct persistence/async qualification, including running-service proof,
+service/process/task cleanup checks, target removal, and provider shutdown.
 
 ## Current state
 
@@ -79,6 +80,15 @@ and private catalog compatibility, and every qualified live cell.
   against the x86 LocalSystem target, passed both independent state checks, and
   matched all four frozen x86 object hashes. Session cleanup, clean-lab
   verification, and shutdown of VMs 4110 and 4120 all passed.
+- Release gate `catalog-2026.08.23.1` now qualifies the declared compatibility
+  floor at canonical BOFBench commit `189412c`. Fresh reports cover all 297
+  packs and 80 operations and partition exactly into 105/13 public and 192/67
+  private results. The private static matrix is identical to its earlier
+  baseline after removing only volatile run provenance, and all four live plus
+  four cleanup cells validate by exact receipt digest.
+- The gate remains honestly `pass_with_unavailable`: MSVC x64/x86, pack proof
+  and cleanup cells, comparison contracts, other operation proof cases, and
+  live Cobalt Strike execution are not qualified.
 - `main` is the active canonical line established from `3f6506f`; the obsolete
   `fix/live-proxmox-path` ref contains no work absent from `main`. Historical
   slice branches and tags remain available.
@@ -86,24 +96,21 @@ and private catalog compatibility, and every qualified live cell.
   EDR Lab's target-v2 artifact receipt proves the replacement end to end, so
   the unused brokered `operator-lab` provider is now removal debt rather than a
   supported compatibility path.
-- The public/private catalog sizes and generated references are precise, but no
-  combined release receipt yet summarizes which of the 297 packs and 80
-  operations are static-tested, lab-proven, or C2-proven.
+- The release gate is deterministic and part of the private catalog's strict
+  documentation check; source-report, manifest, compatibility, inventory, or
+  accepted-live-receipt drift makes it fail.
 
 ## Now: stabilize a releasable baseline
 
-1. Freeze schema versions and totals, then rerun public/private pack and
-   operation matrices plus release packaging at `36795d1` so the release gate
-   includes the qualified Sliver transport fixes.
-2. Produce a coverage artifact keyed by pack/operation, architecture, compiler,
-   runtime, proof status, object hash, and cleanup result. `unavailable` remains
-   coverage debt and never becomes a pass.
-3. Continue representative risk-weighted Windows proof beyond the now-qualified
-   x64/x86 native-lab and Sliver process-memory cells: persistence,
-   async/cancellation, cross-host/domain operations, and cleanup. Licensed
-   Cobalt Strike remains a separate optional live gate.
-4. Cut a versioned release with checksums and embedded commit only after the
-   coverage report and private-catalog compatibility check pass.
+1. Qualify the reversible x64 native-lab service-transition cell, including its
+   background readiness contract and four independent state/cleanup checks.
+2. Repeat that cell through a distinct x64 SYSTEM-context Sliver session only
+   after the native fixture and cleanup boundary pass.
+3. Continue representative risk-weighted proof through cross-host/domain and
+   cancellation paths. Licensed Cobalt Strike remains a separate optional live
+   gate.
+4. Cut a versioned product release with archive checksums and embedded commit
+   metadata while the catalog release gate remains current.
 
 ## Next: improve confidence, not surface area
 
