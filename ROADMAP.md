@@ -80,12 +80,12 @@ has its first reproducible producer-to-detection result.
   against the x86 LocalSystem target, passed both independent state checks, and
   matched all four frozen x86 object hashes. Session cleanup, clean-lab
   verification, and shutdown of VMs 4110 and 4120 all passed.
-- Release gate `catalog-2026.08.23.5` now qualifies the declared compatibility
+- Release gate `catalog-2026.08.23.6` now qualifies the declared compatibility
   floor at canonical BOFBench commit `c922a23`. Fresh reports cover all 297
   packs and 80 operations and partition exactly into 105/13 public and 192/67
   private results. The private static matrix is identical to the `c38791e`
-  compatibility floor after removing only volatile run provenance. Seven
-  operation cells plus one pack cell and all eight cleanup cells validate by
+  compatibility floor after removing only volatile run provenance. Eight
+  operation cells plus one pack cell and all nine cleanup cells validate by
   exact receipt digest.
 - The gate remains honestly `pass_with_unavailable`: MSVC x64/x86, remaining
   pack proof and cleanup cells, comparison contracts, other operation proof
@@ -134,6 +134,13 @@ has its first reproducible producer-to-detection result.
   session and BOF objects are x86 while the operation intentionally retains its
   handle in the main LocalSystem target service; that identity boundary is
   explicit in the receipt. Teardown again returned VMs 4110/4120 to stopped.
+- X64 SYSTEM-context Sliver named-event lifecycle is qualified through session
+  `ff280a98`. Static preflight fixed the event imports, bounded UTF-16 handling,
+  and narrow SYSTEM/Administrators descriptor before the first live attempt.
+  The exact create, control, and cleanup objects passed query, signal, wait,
+  reset, independent final nonsignaled/absent checks, and retained-handle close;
+  target/session removal, zero-artifact verification, and shutdown of VMs
+  4110/4120 also passed.
 - Historical live receipts remain tied to the commits that produced them. The
   release gate now accepts an older controller/catalog boundary only when it is
   a verified ancestor and current static rebuilding produces identical object
@@ -161,8 +168,8 @@ has its first reproducible producer-to-detection result.
 
 ## Next: improve confidence, not surface area
 
-- Measure the adjacent named-event lifecycle through x64 SYSTEM Sliver before
-  selecting another kernel-object family.
+- Close x86 SYSTEM Sliver parity for the named-event lifecycle before selecting
+  another kernel-object family.
 - Build a labeled third-party-object evaluation corpus for analyzer precision,
   unsupported cases, architecture differences, and cross-function explanations.
 - Add compatibility tests for every supported prior schema and publish removal
