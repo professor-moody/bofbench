@@ -7,7 +7,7 @@ OUT="$ROOT/dist/release"
 TMP="$ROOT/work/release"
 GIT_COMMIT="$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-LDFLAGS="-s -w -X bofbench/internal/evidence.Version=$VERSION -X bofbench/internal/evidence.Commit=$GIT_COMMIT -X bofbench/internal/evidence.BuildTime=$BUILD_TIME"
+LDFLAGS="-s -w -X github.com/professor-moody/bofbench/internal/evidence.Version=$VERSION -X github.com/professor-moody/bofbench/internal/evidence.Commit=$GIT_COMMIT -X github.com/professor-moody/bofbench/internal/evidence.BuildTime=$BUILD_TIME"
 export COPYFILE_DISABLE=1
 
 rm -rf "$OUT" "$TMP"

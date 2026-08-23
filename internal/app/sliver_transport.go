@@ -37,7 +37,7 @@ type sliverSSHHost struct {
 	KnownHosts   string
 }
 
-var safeSliverRemoteTemp = regexp.MustCompile(`^/tmp/bofbench-sliver-(?:rc|extension|implant)\.[A-Za-z0-9]+$`)
+var safeSliverRemoteTemp = regexp.MustCompile(`^/tmp/bofbench-sliver-(?:rc|extension|implant|argument)\.[A-Za-z0-9]+$`)
 
 func resolveRemoteSliverClient(ctx context.Context, opts sliverOptions) (sliverOptions, bool, error) {
 	controlsPath := strings.TrimSpace(opts.Controls)
@@ -188,7 +188,7 @@ func sliverRemotePreflight(ctx context.Context, remote *sliverRemoteClient) erro
 }
 
 func sliverRemoteTempDir(ctx context.Context, remote *sliverRemoteClient, kind string) (string, error) {
-	if kind != "rc" && kind != "extension" && kind != "implant" {
+	if kind != "rc" && kind != "extension" && kind != "implant" && kind != "argument" {
 		return "", fmt.Errorf("unsupported Sliver remote temporary kind %q", kind)
 	}
 	output, err := sliverRemoteCommand(ctx, remote, nil, "umask 077; mktemp -d /tmp/bofbench-sliver-"+kind+".XXXXXXXXXX")
@@ -262,6 +262,66 @@ func stageSliverRemoteExtension(ctx context.Context, remote *sliverRemoteClient,
 		return "", nil, fmt.Errorf("stage Sliver extension on control %s: %w: %s", remote.Control, err, strings.TrimSpace(string(output)))
 	}
 	return remoteExtension, cleanup, nil
+}
+
+func stageSliverRemoteFileArguments(ctx context.Context, remote *sliverRemoteClient, extension sliverExtension, commandArgs []string) ([]string, func(), error) {
+	indexes := sliverFileArgumentIndexes(extension, len(commandArgs))
+	staged := append([]string(nil), commandArgs...)
+	if len(indexes) == 0 {
+		return staged, func() {}, nil
+	}
+	temporary, err := sliverRemoteTempDir(ctx, remote, "argument")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() { cleanupSliverRemoteTemp(remote, temporary) }
+	for _, index := range indexes {
+		localPath, err := filepath.Abs(commandArgs[index])
+		if err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		info, err := os.Lstat(localPath)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("read Sliver file argument %s: %w", extension.Arguments[index].Name, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			cleanup()
+			return nil, nil, fmt.Errorf("Sliver file argument %s must be a regular non-symlink file", extension.Arguments[index].Name)
+		}
+		remotePath := fmt.Sprintf("%s/argument-%d", temporary, index+1)
+		args := append(sliverRemoteSCPArgs(remote), localPath, sliverRemoteTarget(remote)+":"+remotePath)
+		command := exec.CommandContext(ctx, "scp", args...)
+		output, copyErr := command.CombinedOutput()
+		if ctx.Err() != nil {
+			cleanup()
+			return nil, nil, ctx.Err()
+		}
+		if copyErr != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("stage Sliver file argument %s on control %s: %w: %s", extension.Arguments[index].Name, remote.Control, copyErr, strings.TrimSpace(string(output)))
+		}
+		if _, err := sliverRemoteCommand(ctx, remote, nil, "chmod 0600 -- "+posixShellQuote(remotePath)); err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		staged[index] = remotePath
+	}
+	return staged, cleanup, nil
+}
+
+func sliverFileArgumentIndexes(extension sliverExtension, argumentCount int) []int {
+	var indexes []int
+	for index, argument := range extension.Arguments {
+		if index >= argumentCount {
+			break
+		}
+		if strings.EqualFold(strings.TrimSpace(argument.Type), "file") {
+			indexes = append(indexes, index)
+		}
+	}
+	return indexes
 }
 
 func rejectSliverStageSymlinks(root string) error {

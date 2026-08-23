@@ -36,6 +36,31 @@ func TestSliverExtensionCommandLineUsesNamedFlags(t *testing.T) {
 	}
 }
 
+func TestSliverFileArgumentIndexes(t *testing.T) {
+	extension := sliverExtension{}
+	extension.Arguments = append(extension.Arguments,
+		struct {
+			Name     string `json:"name"`
+			Type     string `json:"type"`
+			Optional bool   `json:"optional"`
+		}{Name: "target_pid", Type: "int"},
+		struct {
+			Name     string `json:"name"`
+			Type     string `json:"type"`
+			Optional bool   `json:"optional"`
+		}{Name: "content", Type: "file"},
+		struct {
+			Name     string `json:"name"`
+			Type     string `json:"type"`
+			Optional bool   `json:"optional"`
+		}{Name: "optional_backup", Type: "FILE", Optional: true},
+	)
+	indexes := sliverFileArgumentIndexes(extension, 2)
+	if len(indexes) != 1 || indexes[0] != 1 {
+		t.Fatalf("indexes = %#v, want [1]", indexes)
+	}
+}
+
 func TestSliverTransferSSHConfigKeepsHostPoliciesSeparate(t *testing.T) {
 	previous := resolveSliverJumpHost
 	resolveSliverJumpHost = func(name string) (sliverSSHHost, error) {

@@ -225,19 +225,26 @@ func executeSliverExtension(stdout io.Writer, opts sliverOptions, extensionPath,
 	if err != nil {
 		return runtimeadapter.Receipt{}, err
 	}
-	commandLine, err := sliverExtensionCommandLine(commandName, extension, commandArgs)
-	if err != nil {
-		return runtimeadapter.Receipt{}, err
-	}
 	clientExtension := absolute
 	cleanupExtension := func() {}
+	clientArgs := append([]string(nil), commandArgs...)
+	cleanupArguments := func() {}
 	if opts.RemoteClient != nil {
 		clientExtension, cleanupExtension, err = stageSliverRemoteExtension(context.Background(), opts.RemoteClient, absolute)
 		if err != nil {
 			return runtimeadapter.Receipt{}, err
 		}
+		defer cleanupExtension()
+		clientArgs, cleanupArguments, err = stageSliverRemoteFileArguments(context.Background(), opts.RemoteClient, extension, commandArgs)
+		if err != nil {
+			return runtimeadapter.Receipt{}, err
+		}
+		defer cleanupArguments()
 	}
-	defer cleanupExtension()
+	commandLine, err := sliverExtensionCommandLine(commandName, extension, clientArgs)
+	if err != nil {
+		return runtimeadapter.Receipt{}, err
+	}
 	quotedExtension, _ := sliverConsoleQuote(clientExtension)
 	rc := fmt.Sprintf("extensions load %s\nuse %s\n%s\nexit\n", quotedExtension, session, commandLine)
 	started := time.Now()
