@@ -77,6 +77,7 @@ build_cli linux amd64 ""
 build_cli windows amd64 ".exe"
 
 echo "[release] packaging docs site"
+find "$ROOT/site" -name .DS_Store -delete
 tar -czf "$OUT/bofbench_${VERSION}_docs-site.tar.gz" -C "$ROOT/site" .
 
 echo "[release] checksums"
