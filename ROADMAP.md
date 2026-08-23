@@ -35,9 +35,8 @@ been through that path yet.
 
 ## Next action
 
-Freeze and execute the existing x64 SYSTEM-context Sliver
-`service-execution#fixture-service` pack proof, preserving service creation,
-presence, exact cleanup, session removal, and shutdown of both VMs.
+Cut the first versioned BOFBench product release while internal compatibility
+gate `catalog-2026.08.23.3` remains current.
 
 ## Current state
 
@@ -79,15 +78,15 @@ presence, exact cleanup, session removal, and shutdown of both VMs.
   against the x86 LocalSystem target, passed both independent state checks, and
   matched all four frozen x86 object hashes. Session cleanup, clean-lab
   verification, and shutdown of VMs 4110 and 4120 all passed.
-- Release gate `catalog-2026.08.23.2` now qualifies the declared compatibility
-  floor at canonical BOFBench commit `189412c`. Fresh reports cover all 297
+- Release gate `catalog-2026.08.23.3` now qualifies the declared compatibility
+  floor at canonical BOFBench commit `4829b51`. Fresh reports cover all 297
   packs and 80 operations and partition exactly into 105/13 public and 192/67
   private results. The private static matrix is identical to its earlier
-  baseline after removing only volatile run provenance, and all five live plus
-  five cleanup cells validate by exact receipt digest.
-- The gate remains honestly `pass_with_unavailable`: MSVC x64/x86, pack proof
-  and cleanup cells, comparison contracts, other operation proof cases, and
-  live Cobalt Strike execution are not qualified.
+  baseline after removing only volatile run provenance. Five operation cells
+  plus one pack cell and all six cleanup cells validate by exact receipt digest.
+- The gate remains honestly `pass_with_unavailable`: MSVC x64/x86, remaining
+  pack proof and cleanup cells, comparison contracts, other operation proof
+  cases, and live Cobalt Strike execution are not qualified.
 - `main` is the active canonical line established from `3f6506f`; the obsolete
   `fix/live-proxmox-path` ref contains no work absent from `main`. Historical
   slice branches and tags remain available.
@@ -114,19 +113,20 @@ presence, exact cleanup, session removal, and shutdown of both VMs.
   output. The next Sliver service lane uses the existing sequential
   `service-execution#fixture-service` pack proof instead, so no catalog surface
   or weaker async contract is introduced.
+- The sequential pack lane is now qualified at `4829b51`. After preserving an
+  exact-cleanup retry that failed only the restarted VM's worker-provenance
+  boundary, a final run deployed the versioned worker and used SYSTEM session
+  `a0febdcd`. Service creation, two independent state checks, both frozen BOF
+  hashes, exact cleanup, session removal, zero-artifact verification, and
+  shutdown of VMs 4110/4120 all passed.
 
 ## Now: stabilize a releasable baseline
 
-1. Qualify the existing `service-execution#fixture-service` pack proof through
-   a distinct x64 SYSTEM-context Sliver session.
-2. Preserve complete service-creation output, presence and cleanup checks,
-   session removal, zero-artifact verification, and shutdown of both disposable
-   VMs.
-3. Continue representative risk-weighted proof through cross-host/domain and
+1. Cut a versioned product release with archive checksums and embedded commit
+   metadata while the catalog release gate remains current.
+2. Continue representative risk-weighted proof through cross-host/domain and
    cancellation paths. Licensed Cobalt Strike remains a separate optional live
    gate.
-4. Cut a versioned product release with archive checksums and embedded commit
-   metadata while the catalog release gate remains current.
 
 ## Next: improve confidence, not surface area
 
