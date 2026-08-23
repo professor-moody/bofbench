@@ -44,7 +44,7 @@ func TestPrepareCleanupProjectLeavesActionProjectUnchanged(t *testing.T) {
 	if strings.Join(packs, ",") != "builtin/active-cleanup" {
 		t.Fatalf("cleanup packs = %v", packs)
 	}
-	cleanupSource, err := os.ReadFile(filepath.Join(cleanupProject, "cleanup.c"))
+	cleanupSource, err := os.ReadFile(filepath.Join(cleanupProject, "proof-active-cleanup.c"))
 	if err != nil {
 		t.Fatal(err)
 	}

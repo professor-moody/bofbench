@@ -42,6 +42,17 @@ func prepareCleanupProject(project string) (string, []string, func(), error) {
 	}
 	remove := func() { _ = os.RemoveAll(root) }
 	name := "cleanup"
+	if len(cleanupPacks) == 1 {
+		packID := cleanupPacks[0]
+		if index := strings.LastIndex(packID, "/"); index >= 0 {
+			packID = packID[index+1:]
+		}
+		// A single declared cleanup companion must materialize under the same
+		// stable project name used by pack test. This keeps live cleanup bound
+		// to the exact statically tested object instead of an equivalent
+		// one-off wrapper named only "cleanup".
+		name = safeName("proof-" + packID)
+	}
 	tpl, err := templateFor("hello", name)
 	if err != nil {
 		remove()
