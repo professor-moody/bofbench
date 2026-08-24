@@ -34,7 +34,7 @@ effect, or cleanup automatically.
 ```text
 edrlab artifact export/portable-survey-edrlab/windows-artifact-bundle.json \
   --target-set targets/private/artifact-set-v2.yml \
-  --products defender,elastic --litterbox --unscored
+  --unscored
 ```
 
 BOFBench does not import EDR Lab and cannot label the run prevented, alerted,
