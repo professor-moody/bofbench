@@ -1,0 +1,246 @@
+{
+  "schema": "bofbench.analysis",
+  "schema_version": 3,
+  "run_id": "20260824-001320-analysis-demo-x64",
+  "tool": {
+    "name": "bofbench",
+    "version": "dev",
+    "commit": "unknown"
+  },
+  "host": {
+    "os": "darwin",
+    "arch": "arm64",
+    "go_version": "go1.26.4"
+  },
+  "path": "dist/demo.x64.o",
+  "kind": "coff",
+  "arch": "x64",
+  "format": "COFF",
+  "toolchain": {
+    "family": "mingw-gcc",
+    "compiler": "GCC: (GNU) 16.1.0",
+    "confidence": "reported",
+    "evidence": [
+      "compiler string"
+    ]
+  },
+  "entrypoint": "go",
+  "entrypoint_symbol": "go",
+  "entrypoint_section": ".text",
+  "entrypoint_ok": true,
+  "entrypoint_executable": true,
+  "size": 857,
+  "sha256": "0901c34bfa44b0408f5dc707e6af825ff1064e58ffe6bce23384ea20c7d24671",
+  "sections": [
+    {
+      "name": ".text",
+      "size": 48,
+      "relocations": 2,
+      "flags": "R-X",
+      "alignment": 16
+    },
+    {
+      "name": ".data",
+      "size": 0,
+      "relocations": 0,
+      "flags": "RW-",
+      "alignment": 16
+    },
+    {
+      "name": ".bss",
+      "size": 0,
+      "relocations": 0,
+      "flags": "RW-",
+      "alignment": 16,
+      "uninitialized": true
+    },
+    {
+      "name": ".rdata",
+      "size": 16,
+      "relocations": 0,
+      "flags": "R--",
+      "alignment": 16
+    },
+    {
+      "name": ".xdata",
+      "size": 12,
+      "relocations": 0,
+      "flags": "R--",
+      "alignment": 4
+    },
+    {
+      "name": ".pdata",
+      "size": 12,
+      "relocations": 3,
+      "flags": "R--",
+      "alignment": 4
+    },
+    {
+      "name": ".rdata$zzz",
+      "size": 32,
+      "relocations": 0,
+      "flags": "R--",
+      "alignment": 16
+    }
+  ],
+  "symbols": [
+    {
+      "name": ".file"
+    },
+    {
+      "name": "go",
+      "section": ".text",
+      "function": true,
+      "external": true
+    },
+    {
+      "name": ".text",
+      "section": ".text"
+    },
+    {
+      "name": ".data",
+      "section": ".data"
+    },
+    {
+      "name": ".bss",
+      "section": ".bss"
+    },
+    {
+      "name": ".rdata",
+      "section": ".rdata"
+    },
+    {
+      "name": ".xdata",
+      "section": ".xdata"
+    },
+    {
+      "name": ".pdata",
+      "section": ".pdata"
+    },
+    {
+      "name": ".rdata$zzz",
+      "section": ".rdata$zzz"
+    },
+    {
+      "name": "__imp_BeaconPrintf",
+      "undefined": true,
+      "external": true
+    }
+  ],
+  "unresolved": [
+    "__imp_BeaconPrintf"
+  ],
+  "imports": [
+    {
+      "symbol": "__imp_BeaconPrintf",
+      "api": "BeaconPrintf",
+      "category": "beacon_api"
+    }
+  ],
+  "strings": [
+    {
+      "value": "hello from demo",
+      "category": "visible"
+    },
+    {
+      "value": "GCC: (GNU) 16.1.0",
+      "category": "toolchain"
+    },
+    {
+      "value": "demo.c",
+      "category": "source_file"
+    },
+    {
+      "value": "__imp_BeaconPrintf",
+      "category": "visible"
+    }
+  ],
+  "requirements": {
+    "platform": [
+      "windows-x64"
+    ],
+    "privilege": [
+      "current user"
+    ]
+  },
+  "works_with": [
+    "cobaltstrike",
+    "lab",
+    "native",
+    "sliver"
+  ],
+  "source_and_version": {
+    "ref": "refs/heads/main",
+    "commit": "14c0e0d9d5744710829807d63f5fe8804b462b01",
+    "object_sha256": "0901c34bfa44b0408f5dc707e6af825ff1064e58ffe6bce23384ea20c7d24671"
+  },
+  "finding_summary": {
+    "active": 0,
+    "suppressed": 0,
+    "total": 0
+  },
+  "relocations": 5,
+  "relocation_details": [
+    {
+      "section": ".text",
+      "offset": 18,
+      "type": "REL32",
+      "code": 4,
+      "symbol": ".rdata",
+      "function": "go"
+    },
+    {
+      "section": ".text",
+      "offset": 33,
+      "type": "REL32",
+      "code": 4,
+      "symbol": "__imp_BeaconPrintf",
+      "function": "go"
+    },
+    {
+      "section": ".pdata",
+      "offset": 0,
+      "type": "ADDR32NB",
+      "code": 3,
+      "symbol": ".text"
+    },
+    {
+      "section": ".pdata",
+      "offset": 4,
+      "type": "ADDR32NB",
+      "code": 3,
+      "symbol": ".text"
+    },
+    {
+      "section": ".pdata",
+      "offset": 8,
+      "type": "ADDR32NB",
+      "code": 3,
+      "symbol": ".xdata"
+    }
+  ],
+  "loader_compatibility": {
+    "schema": "bofbench.loader-capabilities",
+    "schema_version": 1,
+    "catalog_version": "windows-coff-x64/v4",
+    "runtime": "windows-coff",
+    "status": "compatible",
+    "compatible": true
+  },
+  "runtime_compatibility": {
+    "runtime": "windows-coff",
+    "status": "requires_windows_amd64",
+    "can_run": false,
+    "required_os": "windows",
+    "required_arch": "amd64",
+    "host_os": "darwin",
+    "host_arch": "arm64",
+    "run_command": "bofbench run dist/demo.x64.o --runtime windows-coff",
+    "test_command": "bofbench test dist/demo.x64.o --runtime windows-coff",
+    "note": "copy or sync the artifact to a compatible Windows lab and run the displayed command"
+  },
+  "generated_at": "2026-08-24T00:13:19Z",
+  "analyzer_notes": [
+    "Windows COFF execution requires windows-coff runtime"
+  ]
+}

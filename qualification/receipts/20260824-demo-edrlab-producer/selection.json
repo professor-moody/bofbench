@@ -1,0 +1,59 @@
+{
+  "schema": "bofbench.edrlab-producer-selection/v1",
+  "selected_at": "2026-08-24T00:13:20Z",
+  "status": "selected_exported",
+  "producer": {
+    "repository_commit": "14c0e0d9d5744710829807d63f5fe8804b462b01",
+    "binary_sha256": "sha256:2334656aed3efe26e737b30b6c290f1996a665eb29f1b2e6184d0d02baef3fd1",
+    "project": "bofs/demo",
+    "source_sha256": "sha256:44f8ddc8f42e181b11b907c7dc782b419913c5c6629b0e89e94f432deaa20936",
+    "config_sha256": "sha256:17a4b68a88786a49480add4a4c550161360a2c69e4a82ce071ff52454d02522a"
+  },
+  "build": {
+    "architecture": "x64",
+    "compiler": "mingw",
+    "compiler_sha256": "sha256:57d931010c32c84bc8ffae63af16becef866b53c527b3781b9998212de428bb6",
+    "reproducibility": "double_compile_identical",
+    "object_sha256": "sha256:0901c34bfa44b0408f5dc707e6af825ff1064e58ffe6bce23384ea20c7d24671",
+    "arguments": [],
+    "entrypoint": "go"
+  },
+  "bundle": {
+    "schema": "windows.artifact-bundle/v1",
+    "path": "export/demo-edrlab/windows-artifact-bundle.json",
+    "sha256": "sha256:43ce923e4f4deda4c1c05ca28bb2cdbddaf3bb63efb1b9460b7759b4b77f6dc4",
+    "loader_sha256": "sha256:c1086abf0354b3ecb41972594d73ced78c1fbed7644d5920e9e9c586af6b9dcb",
+    "runner_sha256": "sha256:fdc070958e888054284e890bbe4a748bc98deb2056ccf389490cd8ca35624be8",
+    "packed_arguments_sha256": "sha256:df3f619804a92fdb4057192dc43dd748ea778adc52bc498ce80524c014b81119",
+    "effect": "run-scoped file containing the immutable EDR Lab run ID",
+    "cleanup": "remove the exact run-scoped effect file and verify it absent"
+  },
+  "evidence": {
+    "source": {
+      "path": "qualification/receipts/20260824-demo-edrlab-producer/source.json",
+      "sha256": "sha256:e3d35d0544616818f718ac2aa7b5dea71f4d029ed2119c833ce6094ec5d142d6"
+    },
+    "build": {
+      "path": "qualification/receipts/20260824-demo-edrlab-producer/build.json",
+      "sha256": "sha256:bf905c696e9a67261046f42ac5590bb0b4b93877e0511e008df7a955f6a01553"
+    },
+    "analysis": {
+      "path": "qualification/receipts/20260824-demo-edrlab-producer/analysis.json",
+      "sha256": "sha256:481b1f1af53143724a2de0adeb53599b03be1c95ad382614655e1e956290146d"
+    }
+  },
+  "selection_rationale": [
+    "The BOF has no arguments, external target, persistence, or state-changing effect.",
+    "Its only BOF behavior is one fixed Beacon output call followed by return.",
+    "The MinGW x64 object is reproducible across two independent compilations.",
+    "The wrapper writes the effect only after the loader's final non-protocol result reports pass."
+  ],
+  "consumer": {
+    "status": "pending",
+    "target_set": "EDR Lab direct Proxmox target v2",
+    "products": [
+      "microsoft-defender",
+      "elastic-defend"
+    ]
+  }
+}
