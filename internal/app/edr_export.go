@@ -240,9 +240,15 @@ const edrRunnerPowerShell = `param(
   [Parameter(Mandatory=$true)][string]$RunID
 )
 $ErrorActionPreference = 'Stop'
-$raw = & $Loader --object $Object --entry $Entry --arg-hex $ArgHex | Out-String
-$result = $raw | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0 -or $result.status -ne 'pass') { exit 3 }
+$lines = @(& $Loader --object $Object --entry $Entry --arg-hex $ArgHex)
+$loaderExit = $LASTEXITCODE
+$result = $null
+for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+  try { $candidate = ([string]$lines[$i]) | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+  if ($candidate.protocol_event) { continue }
+  if ($candidate.status -and $candidate.exit_state) { $result = $candidate; break }
+}
+if ($loaderExit -ne 0 -or $null -eq $result -or $result.status -ne 'pass') { exit 3 }
 $record = [ordered]@{schema='bofbench.edr-effect/v1';run_id=$RunID;object=$result.object;entry=$result.entry;status=$result.status;exit_state=$result.exit_state}
 $record | ConvertTo-Json -Compress | Set-Content -NoNewline -Encoding UTF8 -LiteralPath $Effect
 exit 0

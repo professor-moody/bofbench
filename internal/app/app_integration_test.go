@@ -69,6 +69,15 @@ func TestCLIExportsRepositoryNeutralEDRBundle(t *testing.T) {
 	if bundle.Schema != "windows.artifact-bundle/v1" || len(bundle.Artifacts) != 3 || len(bundle.Modes) != 1 || bundle.Modes[0].LoaderID != "loader" || bundle.Effect.Contains != "{{run_id}}" {
 		t.Fatalf("bundle = %+v", bundle)
 	}
+	runner, err := os.ReadFile(filepath.Join(tmp, "export", "edr-export-edrlab", "artifacts", "bofbench-edr-runner.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"$lines = @(& $Loader", "$loaderExit = $LASTEXITCODE", "for ($i = $lines.Count - 1", "if ($candidate.protocol_event)", "$result = $candidate"} {
+		if !strings.Contains(string(runner), want) {
+			t.Fatalf("EDR runner does not select the final non-protocol loader result; missing %q", want)
+		}
+	}
 }
 
 func TestCLIOperationCatalogSurface(t *testing.T) {
