@@ -36,10 +36,9 @@ Lab's product evidence; numeric scoring is withheld on target v2.
 
 ## Next action
 
-Publish one BOFBench qualification manifest that binds local release `0.1.0`,
-catalog gate `catalog-2026.08.23.6`, the selected live cells, and the qualified
-EDR consumer result. Make the tag/publication decision only against that exact
-manifest.
+Make the explicit tag/publication decision for local release `0.1.0` against
+`qualification/release-manifest-0.1.0.json` only. Do not infer qualification
+for any cell that the manifest records as withheld or unavailable.
 
 ## Current state
 
@@ -165,18 +164,23 @@ manifest.
   build time. Archive inspection found and fixed a `.DS_Store` leak before the
   accepted rebuild. The receipt is `docs/evidence/release-0.1.0-local.json`;
   no tag, push, or publication has occurred.
+- `qualification/release-manifest-0.1.0.json` now binds that release receipt,
+  catalog gate `.6`, all nine selected live/cleanup receipts, and the qualified
+  3+3 EDR consumer result by path, historical commit, and SHA-256. Its strict
+  verifier rejects receipt drift, expanded coverage, unknown status values,
+  path traversal, missing cleanup/destruction proof, and any mismatch between
+  the declared cells and their source gates. Six broader cells remain withheld
+  and four MSVC static cells remain unavailable.
 
-## Now: publish one release boundary
+## Now: decide the release boundary
 
-1. Publish one machine-readable manifest for the exact `0.1.0` release
-   boundary. Bind its checksums to catalog gate `.6`, every selected live
-   receipt, and the BOFBench-to-EDR-Lab consumer receipt.
-2. Represent every declared cell as passed, withheld, or unavailable. Do not
-   let the full static catalog or a successful package build imply broader live
-   runtime coverage.
-3. Verify the manifest from a clean checkout and make the tag/publication
-   decision against that immutable result. Publication remains a separate,
-   explicit action.
+1. Verify `qualification/release-manifest-0.1.0.json` from clean sibling
+   checkouts with `python3 scripts/verify-release-manifest.py --require-clean`.
+2. Decide explicitly whether the bound `0.1.0` candidate should be tagged and
+   published. A verified manifest does not itself authorize either action.
+3. If publication is declined or deferred, retain the manifest as the frozen
+   local release boundary and proceed to x86 named-event parity without
+   changing its claims.
 
 ## Next: improve confidence, not surface area
 

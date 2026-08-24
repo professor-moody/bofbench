@@ -1,7 +1,7 @@
 BIN := work/bin/bofbench
 WINBIN := work/bin/bofbench.exe
 
-.PHONY: generate verify-generated test build build-windows native-loader docs docs-check docs-media doctor release clean
+.PHONY: generate verify-generated test build build-windows native-loader docs docs-check docs-media doctor verify-release-manifest release clean
 
 generate:
 	go generate ./internal/capability
@@ -38,6 +38,9 @@ docs-media:
 
 doctor: build
 	$(BIN) doctor
+
+verify-release-manifest:
+	python3 scripts/verify-release-manifest.py
 
 release:
 	scripts/release.sh
