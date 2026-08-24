@@ -28,17 +28,18 @@ The run reports `PASS`, the observed output lines, and an evidence set including
 the compiled object and build log. Bootstrap proves the guest can compile,
 which is the difference between "the BOF is broken" and "the lab is".
 
-**Feeding EDR Lab:** a bundle exported from a project can be scored by
-`edrlab artifact` for per-product visibility. That answers the second question
-an operator has after "does it run" — namely "who notices" — and no BOF has
-been through that path yet.
+**Feeding EDR Lab:** a bundle exported from a project can be classified by
+`edrlab artifact` against each product. That answers the second question an
+operator has after "does it run" — namely "who notices". The first qualified BOF
+result now preserves BOFBench source/build/analysis evidence separately from EDR
+Lab's product evidence; numeric scoring is withheld on target v2.
 
 ## Next action
 
-Export one stable benign x64 MinGW BOF as an EDR Lab target-v2 bundle and score
-it across the available Defender and Elastic targets. Preserve BOFBench
-build/runtime evidence separately from product detection evidence so the suite
-has its first reproducible producer-to-detection result.
+Publish one BOFBench qualification manifest that binds local release `0.1.0`,
+catalog gate `catalog-2026.08.23.6`, the selected live cells, and the qualified
+EDR consumer result. Make the tag/publication decision only against that exact
+manifest.
 
 ## Current state
 
@@ -141,6 +142,20 @@ has its first reproducible producer-to-detection result.
   reset, independent final nonsignaled/absent checks, and retained-handle close;
   target/session removal, zero-artifact verification, and shutdown of VMs
   4110/4120 also passed.
+- The first BOFBench-to-EDR-Lab lane is qualified. The argument-free x64 MinGW
+  `bofs/demo` object is reproducible, has no arguments or persistence, and was
+  exported with exact object, loader, wrapper, effect, and cleanup digests.
+  Defender completed it with its effect observed and no product action in 3/3
+  runs; Elastic prevented the same bytes before effect in 3/3. Collector
+  liveness, all six cleanups, and all six clone destructions passed.
+- The live lane exposed three boundary defects before qualification: EDR Lab
+  did not translate producer `{{run_dir}}`, the BOFBench wrapper did not isolate
+  the loader's final result, and cleanup did not bind the exact effect path.
+  The rejected attempts and fixes remain preserved rather than overwritten.
+- `qualification/receipts/20260824-demo-edrlab-producer/consumer.json` joins the
+  immutable producer selection to EDR Lab receipt `72018730...` without moving
+  product semantics into BOFBench. Numeric visibility and stealth scores remain
+  withheld because target v2 lacks the required LitterBox evidence.
 - Historical live receipts remain tied to the commits that produced them. The
   release gate now accepts an older controller/catalog boundary only when it is
   a verified ancestor and current static rebuilding produces identical object
@@ -152,19 +167,17 @@ has its first reproducible producer-to-detection result.
   accepted rebuild. The receipt is `docs/evidence/release-0.1.0-local.json`;
   no tag, push, or publication has occurred.
 
-## Now: connect execution evidence to detection evidence
+## Now: publish one release boundary
 
-1. Select a benign, deterministic, no-persistence x64 pack with no unstable
-   target identity requirements; freeze its source, object, packed arguments,
-   loader, and BOFBench commit.
-2. Export exactly that object in EDR Lab bundle format, validate the bundle
-   locally, and execute it through the target-v2 artifact path on disposable
-   Defender and Elastic targets.
-3. Join the build, runtime, cleanup, and per-product detection receipts by
-   immutable digests. A product negative is a valid measured result; missing or
-   incomplete telemetry is not.
-4. Return every disposable target to its declared clean/stopped state and add
-   the accepted cross-tool receipt to Operator Lab's aggregate view.
+1. Publish one machine-readable manifest for the exact `0.1.0` release
+   boundary. Bind its checksums to catalog gate `.6`, every selected live
+   receipt, and the BOFBench-to-EDR-Lab consumer receipt.
+2. Represent every declared cell as passed, withheld, or unavailable. Do not
+   let the full static catalog or a successful package build imply broader live
+   runtime coverage.
+3. Verify the manifest from a clean checkout and make the tag/publication
+   decision against that immutable result. Publication remains a separate,
+   explicit action.
 
 ## Next: improve confidence, not surface area
 
@@ -177,14 +190,13 @@ has its first reproducible producer-to-detection result.
   commands.
 - Make runtime comparison reports easy to aggregate without weakening exact
   object-hash and terminal-output requirements.
-- Qualify the BOFBench-to-EDR-Lab bundle lane with a stable, benign fixture and
-  preserve analysis, runtime, and product evidence as separate layers.
 - Define a bounded proof case for the existing cross-host operation matrix only
   after both host identities, credentials, reversible effects, and cleanup
   checks are frozen; the current matrix declaration alone is not executable
   qualification evidence.
 - Remove the retired Operator Lab provider, mTLS configuration, and neutral-lab
-  live-gate scripts after the target-v2 artifact path has a passing receipt.
+  live-gate scripts in the suite's retirement phase; target v2 now has the
+  passing receipt that permits that cleanup.
 
 ## Later
 

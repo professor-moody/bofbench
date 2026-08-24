@@ -1,0 +1,35 @@
+{
+  "schema": "bofbench.edrlab-consumer-result/v1",
+  "recorded_at": "2026-08-24T01:12:00Z",
+  "status": "qualified",
+  "producer_selection": {
+    "path": "qualification/receipts/20260824-demo-edrlab-producer/selection.json",
+    "sha256": "sha256:98a2fd895388d8e46486502d6f941fa1768e6e8ca63f77d6c513fb45a6ed2ee1"
+  },
+  "consumer": {
+    "repository": "edrlab",
+    "receipt_commit": "e02e3435d97a7dc265659e21eab4ad175dcacb39",
+    "receipt_path": "qualification/receipts/edrlab-bofbench-demo-artifact-qualified-20260824.json",
+    "receipt_sha256": "sha256:72018730dc398fdbebdaeaa034c932773bdc998f6e1559780b5083a2a0689619",
+    "control_plane": "direct-proxmox-target-v2",
+    "observation_window_seconds": 240
+  },
+  "immutable_boundary": {
+    "bundle_sha256": "sha256:f0b4036e34be46682b0d38834585edaed680fb338eddcaebd7adcc53fe1c3020",
+    "object_sha256": "sha256:0901c34bfa44b0408f5dc707e6af825ff1064e58ffe6bce23384ea20c7d24671",
+    "loader_sha256": "sha256:c1086abf0354b3ecb41972594d73ced78c1fbed7644d5920e9e9c586af6b9dcb",
+    "runner_sha256": "sha256:fdc070958e888054284e890bbe4a748bc98deb2056ccf389490cd8ca35624be8"
+  },
+  "product_outcomes": {
+    "defender": "completed-no-product-action in 3/3 with effect and collector liveness confirmed",
+    "elastic": "prevented-before-effect in 3/3 with collector liveness confirmed",
+    "cleanup_verified": "6/6",
+    "clone_destruction_proved": "6/6"
+  },
+  "scoring": {
+    "visibility_score": "withheld",
+    "stealth_score": "withheld",
+    "reason": "EDR Lab target v2 does not yet provide the LitterBox inputs required for numeric scoring."
+  },
+  "evidence_boundary": "BOFBench owns source, build, analysis, export, and cleanup-contract evidence. EDR Lab owns product liveness and outcome classification. This record joins those layers only by immutable digests."
+}
