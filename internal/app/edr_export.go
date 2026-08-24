@@ -141,9 +141,10 @@ func exportEDRBundle(input string, argumentTokens []string, argumentsExplicit bo
 		Arguments  []string `json:"arguments,omitempty"`
 		Command    []string `json:"command"`
 	}{"bof-native-loader", "coff-native-loader", "bof", "loader", options.Entrypoint, edrArgumentTypes(options.Arguments), command})
-	bundle.Effect.Type, bundle.Effect.Path, bundle.Effect.Contains = "file_contains", `{{run_dir}}\bofbench-effect.json`, `{{run_id}}`
-	bundle.Cleanup.Command = []string{"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `Remove-Item -Force -LiteralPath $args[0] -ErrorAction SilentlyContinue`, `{{run_dir}}\bofbench-effect.json`}
-	bundle.Cleanup.VerifyAbsent = `{{run_dir}}\bofbench-effect.json`
+	effectPath := `{{run_dir}}\bofbench-effect.json`
+	bundle.Effect.Type, bundle.Effect.Path, bundle.Effect.Contains = "file_contains", effectPath, `{{run_id}}`
+	bundle.Cleanup.Command = []string{"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `Remove-Item -Force -LiteralPath '` + effectPath + `' -ErrorAction SilentlyContinue`}
+	bundle.Cleanup.VerifyAbsent = effectPath
 	data, err := json.MarshalIndent(bundle, "", "  ")
 	if err != nil {
 		return "", err

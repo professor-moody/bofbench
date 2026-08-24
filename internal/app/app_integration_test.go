@@ -62,12 +62,19 @@ func TestCLIExportsRepositoryNeutralEDRBundle(t *testing.T) {
 		Effect struct {
 			Contains string `json:"contains"`
 		} `json:"effect"`
+		Cleanup struct {
+			Command      []string `json:"command"`
+			VerifyAbsent string   `json:"verify_absent"`
+		} `json:"cleanup"`
 	}
 	if err := json.Unmarshal(data, &bundle); err != nil {
 		t.Fatal(err)
 	}
 	if bundle.Schema != "windows.artifact-bundle/v1" || len(bundle.Artifacts) != 3 || len(bundle.Modes) != 1 || bundle.Modes[0].LoaderID != "loader" || bundle.Effect.Contains != "{{run_id}}" {
 		t.Fatalf("bundle = %+v", bundle)
+	}
+	if len(bundle.Cleanup.Command) != 6 || !strings.Contains(bundle.Cleanup.Command[5], `-LiteralPath '{{run_dir}}\bofbench-effect.json'`) || strings.Contains(bundle.Cleanup.Command[5], "$args") || bundle.Cleanup.VerifyAbsent != `{{run_dir}}\bofbench-effect.json` {
+		t.Fatalf("cleanup does not bind and verify the exact effect path: %+v", bundle.Cleanup)
 	}
 	runner, err := os.ReadFile(filepath.Join(tmp, "export", "edr-export-edrlab", "artifacts", "bofbench-edr-runner.ps1"))
 	if err != nil {
