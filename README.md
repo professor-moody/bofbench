@@ -51,18 +51,17 @@ work/bin/bofbench export bofs/portable-survey --for cobaltstrike
 work/bin/bofbench export bofs/portable-survey --for edrlab
 ```
 
-Use the shared neutral lab without granting BOFBench control of Proxmox:
+Use a direct Proxmox profile for the shared lab:
 
 ```bash
-work/bin/bofbench lab add shared-x64 \
-  --provider operator-lab --profile bofbench-dev-x64
+work/bin/bofbench lab status --lab proxmox-dev
 work/bin/bofbench run bofs/portable-survey \
-  --via lab --lab shared-x64 --observe full
+  --via lab --lab proxmox-dev --observe full
 ```
 
-The run receipt binds the disposable lease, sensor session, clone task, and
-destruction proof. The EDR export is a repository-neutral
-`windows.artifact-bundle/v1`; EDR Lab owns product classification.
+The run receipt binds BOFBench's direct target and runtime evidence. The EDR
+export is a repository-neutral `windows.artifact-bundle/v1`; EDR Lab owns its
+fresh target-v2 lifecycle and product classification.
 
 ## Capability packs
 

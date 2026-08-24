@@ -141,6 +141,10 @@ func TestLegacyProjectConfigMigratesAndRetainsBackup(t *testing.T) {
 }
 
 func TestProfileValidationRejectsSecretsAndBadValues(t *testing.T) {
+	retired := DefaultProfile("operator-lab")
+	if err := ValidateProfile(retired); err == nil || !strings.Contains(err.Error(), "provider must be existing, vagrant, or proxmox") {
+		t.Fatalf("retired provider error = %v", err)
+	}
 	profile := DefaultProfile("existing")
 	if err := ValidateProfile(profile); err == nil || !strings.Contains(err.Error(), "requires host") {
 		t.Fatalf("missing host error = %v", err)

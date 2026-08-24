@@ -95,9 +95,8 @@ manifest.
   `fix/live-proxmox-path` ref contains no work absent from `main`. Historical
   slice branches and tags remain available.
 - Operator Lab has selected direct Proxmox as the sole production control plane.
-  EDR Lab's target-v2 artifact receipt proves the replacement end to end, so
-  the unused brokered `operator-lab` provider is now removal debt rather than a
-  supported compatibility path.
+  EDR Lab's target-v2 artifact receipt proves the replacement end to end, and
+  BOFBench's unused brokered provider and `labapi` dependency have been removed.
 - The release gate is deterministic and part of the private catalog's strict
   documentation check; source-report, manifest, compatibility, inventory, or
   accepted-live-receipt drift makes it fail.
