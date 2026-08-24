@@ -1,8 +1,8 @@
 {
   "schema": "bofbench.build",
   "schema_version": 1,
-  "run_id": "20260824-001319-build-demo",
-  "parent_run_id": "20260824-001319-dev-demo",
+  "run_id": "20260824-002842-build-demo",
+  "parent_run_id": "20260824-002842-dev-demo",
   "tool": {
     "name": "bofbench",
     "version": "dev",
@@ -80,8 +80,8 @@
       "sha256": "0901c34bfa44b0408f5dc707e6af825ff1064e58ffe6bce23384ea20c7d24671"
     }
   },
-  "log_path": "runs/20260824-001319-build-demo/build.log",
-  "evidence_path": "runs/20260824-001319-build-demo/build.json",
+  "log_path": "runs/20260824-002842-build-demo/build.log",
+  "evidence_path": "runs/20260824-002842-build-demo/build.json",
   "status": "built",
-  "duration": "45.394583ms"
+  "duration": "46.644959ms"
 }

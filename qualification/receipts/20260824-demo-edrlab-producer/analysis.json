@@ -1,7 +1,7 @@
 {
   "schema": "bofbench.analysis",
   "schema_version": 3,
-  "run_id": "20260824-001320-analysis-demo-x64",
+  "run_id": "20260824-002842-analysis-demo-x64",
   "tool": {
     "name": "bofbench",
     "version": "dev",
@@ -171,7 +171,7 @@
   ],
   "source_and_version": {
     "ref": "refs/heads/main",
-    "commit": "14c0e0d9d5744710829807d63f5fe8804b462b01",
+    "commit": "51efa206187cc5512e32d2508b8d2f1b26588cbf",
     "object_sha256": "0901c34bfa44b0408f5dc707e6af825ff1064e58ffe6bce23384ea20c7d24671"
   },
   "finding_summary": {
@@ -239,7 +239,7 @@
     "test_command": "bofbench test dist/demo.x64.o --runtime windows-coff",
     "note": "copy or sync the artifact to a compatible Windows lab and run the displayed command"
   },
-  "generated_at": "2026-08-24T00:13:19Z",
+  "generated_at": "2026-08-24T00:28:42Z",
   "analyzer_notes": [
     "Windows COFF execution requires windows-coff runtime"
   ]
