@@ -36,10 +36,9 @@ Lab's product evidence; numeric scoring is withheld on target v2.
 
 ## Next action
 
-Close x86 SYSTEM-context Sliver parity for
-`named-event-lifecycle#manual-event`. Advance the gate only if the exact x86
-create, control, and handle-close objects satisfy query, signal, wait, reset,
-independent nonsignaled/absent checks, cleanup, and two-VM teardown.
+Build the first labeled third-party-object analyzer corpus. Freeze provenance,
+architecture, expected support class, and review labels before measuring
+precision, unsupported cases, and cross-function explanations.
 
 ## Current state
 
@@ -141,6 +140,13 @@ independent nonsignaled/absent checks, cleanup, and two-VM teardown.
   reset, independent final nonsignaled/absent checks, and retained-handle close;
   target/session removal, zero-artifact verification, and shutdown of VMs
   4110/4120 also passed.
+- X86 SYSTEM-context Sliver named-event parity is qualified through session
+  `676d46e0` on the first live attempt. The published 0.1.0 controller reproduced
+  the frozen x86 create, control, and handle-close objects, then completed query,
+  signal, wait, reset, independent nonsignaled/absent checks, exact cleanup,
+  session removal, zero-artifact verification, and shutdown of VMs 4110/4120.
+  This post-release cell advances internal catalog gate
+  `catalog-2026.08.25.7`; it does not rewrite the immutable 0.1.0 manifest.
 - The first BOFBench-to-EDR-Lab lane is qualified. The argument-free x64 MinGW
   `bofs/demo` object is reproducible, has no arguments or persistence, and was
   exported with exact object, loader, wrapper, effect, and cleanup digests.
@@ -193,8 +199,6 @@ independent nonsignaled/absent checks, cleanup, and two-VM teardown.
 
 ## Next: improve confidence, not surface area
 
-- Close x86 SYSTEM Sliver parity for the named-event lifecycle before selecting
-  another kernel-object family.
 - Build a labeled third-party-object evaluation corpus for analyzer precision,
   unsupported cases, architecture differences, and cross-function explanations.
 - Add compatibility tests for every supported prior schema and publish removal
@@ -219,7 +223,7 @@ independent nonsignaled/absent checks, cleanup, and two-VM teardown.
 ## Not now
 
 Do not add another operation-schema version or broad capability tranche before
-x86 named-event parity closes or records a bounded unavailable result.
+the labeled analyzer corpus has a frozen provenance and review contract.
 
 ## Update rule
 
