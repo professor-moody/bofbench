@@ -41,7 +41,8 @@ func TestCLIExportsRepositoryNeutralEDRBundle(t *testing.T) {
 	runOK(t, tmp, bin, "new", "edr-export")
 	output := runOK(t, tmp, bin, "export", filepath.Join("bofs", "edr-export"), "--for", "edrlab", "--skip-run")
 	bundlePath := filepath.Join(tmp, "export", "edr-export-edrlab", "windows-artifact-bundle.json")
-	if !strings.Contains(output, bundlePath) && !strings.Contains(output, filepath.ToSlash(filepath.Join("export", "edr-export-edrlab"))) {
+	normalizedOutput := filepath.ToSlash(output)
+	if !strings.Contains(normalizedOutput, filepath.ToSlash(bundlePath)) && !strings.Contains(normalizedOutput, "export/edr-export-edrlab/windows-artifact-bundle.json") {
 		t.Fatalf("export output did not identify bundle: %s", output)
 	}
 	data, err := os.ReadFile(bundlePath)
