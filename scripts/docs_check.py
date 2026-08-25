@@ -152,6 +152,12 @@ def main() -> int:
     check_media(root, errors)
 
     known_output_tags = public_ids | {"host", "environment-value"}
+    # The public handbook demonstrates one pack supplied by the separately
+    # versioned private catalog. A sibling checkout validates that pack ID and
+    # output tag below; public-only CI still needs to validate the surrounding
+    # scenario without pretending the private catalog is bundled here.
+    if not args.private:
+        known_output_tags.add("http-listener-exchange")
     if args.private:
         private = Path(args.private).resolve()
         private_text = check_tree(private, private / "docs", errors)

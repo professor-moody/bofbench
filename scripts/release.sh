@@ -18,12 +18,6 @@ cd "$ROOT"
 echo "[release] verifying generated loader capabilities"
 go run ./cmd/capgen -check -out native/loader/capabilities.generated.h
 
-echo "[release] testing"
-go test ./...
-
-echo "[release] building docs"
-mkdocs build --strict
-
 if [[ ! -f native/loader/bofbench-loader.exe || ! -f native/loader/bofbench-loader-x86.exe ]]; then
   if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
     echo "[release] building native loader"
@@ -32,6 +26,12 @@ if [[ ! -f native/loader/bofbench-loader.exe || ! -f native/loader/bofbench-load
     echo "[release] warning: one or both Windows loaders are missing and MinGW-w64 is not on PATH"
   fi
 fi
+
+echo "[release] testing"
+go test ./...
+
+echo "[release] building docs"
+mkdocs build --strict
 
 echo "[release] verifying export package contract"
 SMOKE_ROOT="$TMP/export-smoke"
