@@ -25,3 +25,9 @@ historical commits. If the release archives are restored, add
 `--artifact-root /path/to/bofbench` to verify their bytes and `SHA256SUMS` too.
 Tagging, pushing, and publication are deliberately outside the verifier and
 require a separate explicit decision.
+
+That decision was authorized and completed on 2026-08-25. The immutable remote
+readback is recorded in
+`receipts/bofbench-0.1.0-published-20260825.json`. The annotated `v0.1.0` tag
+points to the source commit embedded in the archives; the later manifest and
+publication receipt remain on `main` and are also attached to the release.

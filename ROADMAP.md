@@ -1,6 +1,6 @@
 # BOFBench roadmap
 
-Status: active, reviewed 2026-08-23.
+Status: active, reviewed 2026-08-25.
 
 BOFBench exists to compose, analyze, execute, compare, and export BOFs from
 typed capability contracts. Its next phase is stabilization and proof of the
@@ -36,9 +36,10 @@ Lab's product evidence; numeric scoring is withheld on target v2.
 
 ## Next action
 
-Make the explicit tag/publication decision for local release `0.1.0` against
-`qualification/release-manifest-0.1.0.json` only. Do not infer qualification
-for any cell that the manifest records as withheld or unavailable.
+Close x86 SYSTEM-context Sliver parity for
+`named-event-lifecycle#manual-event`. Advance the gate only if the exact x86
+create, control, and handle-close objects satisfy query, signal, wait, reset,
+independent nonsignaled/absent checks, cleanup, and two-VM teardown.
 
 ## Current state
 
@@ -162,8 +163,8 @@ for any cell that the manifest records as withheld or unavailable.
   `e77a897`. Darwin amd64/arm64, Linux amd64, Windows amd64, and docs-site
   archives pass `SHA256SUMS`; every CLI embeds the same version, commit, and
   build time. Archive inspection found and fixed a `.DS_Store` leak before the
-  accepted rebuild. The receipt is `docs/evidence/release-0.1.0-local.json`;
-  no tag, push, or publication has occurred.
+  accepted rebuild. The immutable pre-publication receipt is
+  `docs/evidence/release-0.1.0-local.json`.
 - `qualification/release-manifest-0.1.0.json` now binds that release receipt,
   catalog gate `.6`, all nine selected live/cleanup receipts, and the qualified
   3+3 EDR consumer result by path, historical commit, and SHA-256. Its strict
@@ -171,16 +172,24 @@ for any cell that the manifest records as withheld or unavailable.
   path traversal, missing cleanup/destruction proof, and any mismatch between
   the declared cells and their source gates. Six broader cells remain withheld
   and four MSVC static cells remain unavailable.
+- **Published 2026-08-25:** public repository
+  `https://github.com/professor-moody/bofbench` and release `v0.1.0` are live.
+  The annotated tag peels to qualified source commit `e77a897`; all five
+  downloaded archives reproduce `SHA256SUMS`, and the attached manifest matches
+  digest `3d16b8e4...728d35a`. Publication receipt
+  `qualification/receipts/bofbench-0.1.0-published-20260825.json` preserves the
+  remote tag, release, asset, and qualification identities without changing
+  any withheld or unavailable cell.
 
-## Now: decide the release boundary
+## Completed: publish the release boundary
 
-1. Verify `qualification/release-manifest-0.1.0.json` from clean sibling
-   checkouts with `python3 scripts/verify-release-manifest.py --require-clean`.
-2. Decide explicitly whether the bound `0.1.0` candidate should be tagged and
-   published. A verified manifest does not itself authorize either action.
-3. If publication is declined or deferred, retain the manifest as the frozen
-   local release boundary and proceed to x86 named-event parity without
-   changing its claims.
+1. **Complete:** strict manifest verification passed from clean sibling
+   checkouts before publication.
+2. **Complete:** `v0.1.0` points to the exact archive source commit, while
+   `main` retains the later evidence and manifest history.
+3. **Complete:** the public release contains all five archives, `SHA256SUMS`,
+   and the exact qualification manifest; an independent download readback
+   reproduced every digest.
 
 ## Next: improve confidence, not surface area
 
@@ -210,7 +219,7 @@ for any cell that the manifest records as withheld or unavailable.
 ## Not now
 
 Do not add another operation-schema version or broad capability tranche before
-the selected proof matrix and first publication decision are complete.
+x86 named-event parity closes or records a bounded unavailable result.
 
 ## Update rule
 

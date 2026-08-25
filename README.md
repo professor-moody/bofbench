@@ -4,6 +4,15 @@ BOFBench is a capability-first workbench for building, analyzing, running, and e
 
 Current stabilization, proof, and release priorities are in [ROADMAP.md](ROADMAP.md).
 
+## Release
+
+[BOFBench 0.1.0](https://github.com/professor-moody/bofbench/releases/tag/v0.1.0)
+provides verified archives for macOS amd64/arm64, Linux amd64, Windows amd64,
+and the documentation site. Verify downloads with the attached `SHA256SUMS`.
+The attached qualification manifest records the exact selected, withheld, and
+unavailable evidence boundary; publication does not turn an unqualified cell
+into a pass.
+
 ```text
 new → add packs → build → analyze → run → export
 ```

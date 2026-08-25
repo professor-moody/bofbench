@@ -1,0 +1,83 @@
+{
+  "schema": "bofbench.release-publication/v1",
+  "recorded_at": "2026-08-25T01:35:15Z",
+  "status": "published",
+  "repository": {
+    "name": "professor-moody/bofbench",
+    "url": "https://github.com/professor-moody/bofbench",
+    "visibility": "public",
+    "default_branch": "main",
+    "main_at_publication": "ad83c2603a42839b518b4808642d58f67cefd67c"
+  },
+  "release": {
+    "id": 376092416,
+    "version": "0.1.0",
+    "tag": "v0.1.0",
+    "tag_object": "a2cf4d3a7a892484796af3383e5172880221a41b",
+    "tag_peeled_commit": "e77a897e1f53eb5ba840c7c90efa4c96ea3690b8",
+    "url": "https://github.com/professor-moody/bofbench/releases/tag/v0.1.0",
+    "published_at": "2026-08-25T01:33:38Z",
+    "draft": false,
+    "prerelease": false
+  },
+  "qualification": {
+    "decision": "qualified_with_unavailable",
+    "manifest_id": "bofbench-0.1.0-catalog-2026.08.23.6",
+    "manifest_path": "qualification/release-manifest-0.1.0.json",
+    "manifest_sha256": "sha256:3d16b8e49a856c01cb29745948fe749b6f89d8031684dfa4cbe6d2805728d35a",
+    "local_receipt_path": "docs/evidence/release-0.1.0-local.json",
+    "local_receipt_sha256": "sha256:c0456844e1974843b8f8d305868cbe95ddf4fb7994412066de41f54c1f317f0e",
+    "selected_live_cells": 9,
+    "withheld_cells": 6,
+    "unavailable_static_cells": 4
+  },
+  "assets": [
+    {
+      "name": "bofbench_0.1.0_darwin_amd64.tar.gz",
+      "bytes": 10135417,
+      "sha256": "sha256:c10e116b3aba407c4edc495ed89227b97248dbe357f85d8e18674b18e1711c37"
+    },
+    {
+      "name": "bofbench_0.1.0_darwin_arm64.tar.gz",
+      "bytes": 9717812,
+      "sha256": "sha256:061e64437ea4c32da64a054d34ceb34cc3b7ccdca4875fc7bc64beabc87c1d09"
+    },
+    {
+      "name": "bofbench_0.1.0_docs-site.tar.gz",
+      "bytes": 5637217,
+      "sha256": "sha256:619a17a2d21a78ad1c4deadaad0f31ad8cf1abb31b36108001400e96106dc301"
+    },
+    {
+      "name": "bofbench_0.1.0_linux_amd64.tar.gz",
+      "bytes": 10061811,
+      "sha256": "sha256:75ec03511ab6350213d84b72320ba1b5a5e49f473f1ce62245c2dbfaedf2e5bb"
+    },
+    {
+      "name": "bofbench_0.1.0_windows_amd64.tar.gz",
+      "bytes": 10325072,
+      "sha256": "sha256:7af8fcf1cf67abedf7c713e2cb4304e7893b14d2d39f465258567af3335a3c68"
+    },
+    {
+      "name": "SHA256SUMS",
+      "bytes": 502,
+      "sha256": "sha256:f3d4153742cd8947bed3f9132a24f59782bda6fb3e9bd7d68c9ac6e0b1815934"
+    },
+    {
+      "name": "release-manifest-0.1.0.json",
+      "bytes": 11070,
+      "sha256": "sha256:3d16b8e49a856c01cb29745948fe749b6f89d8031684dfa4cbe6d2805728d35a"
+    }
+  ],
+  "verification": {
+    "manifest_require_clean": "pass",
+    "go_test": "pass",
+    "go_vet": "pass",
+    "strict_docs": "pass",
+    "remote_tag_readback": "pass",
+    "github_asset_digest_readback": "pass",
+    "downloaded_sha256sums": "pass",
+    "downloaded_manifest_sha256": "pass"
+  },
+  "claim_boundary": "This receipt proves public repository creation, the annotated source tag, release publication, and byte-for-byte readback of the five qualified archives, checksum file, and qualification manifest. It does not qualify withheld live cells, unavailable MSVC cells, or any private catalog content not named by the manifest.",
+  "next": "Close x86 SYSTEM-context Sliver parity for named-event-lifecycle#manual-event without expanding the qualified 0.1.0 boundary."
+}
