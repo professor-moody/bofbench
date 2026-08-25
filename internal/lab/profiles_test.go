@@ -3,6 +3,7 @@ package lab
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -34,7 +35,7 @@ func TestProfilesRoundTripCloneAndAuthEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		t.Fatalf("profiles mode = %o", info.Mode().Perm())
 	}
 }

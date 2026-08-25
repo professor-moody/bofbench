@@ -33,8 +33,8 @@ func TestCLIExportsRepositoryNeutralEDRBundle(t *testing.T) {
 	requireMinGW(t)
 	bin := buildTestBinary(t)
 	tmp := t.TempDir()
-	loader, err := filepath.Abs(filepath.Join("..", "..", "native", "loader", "bofbench-loader.exe"))
-	if err != nil {
+	loader := filepath.Join(t.TempDir(), "bofbench-loader.exe")
+	if err := os.WriteFile(loader, []byte("test loader fixture\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("BOFBENCH_LOADER", loader)
@@ -337,7 +337,7 @@ func TestCLICapabilityPackWorkflow(t *testing.T) {
 		}
 	}
 	exported := runOK(t, tmp, bin, "export", filepath.Join("bofs", "pack-demo"), "--for", "raw", "--skip-run")
-	if !strings.Contains(exported, "BOF EXPORT PASS") || !strings.Contains(exported, "target    raw") || !strings.Contains(exported, "package   export/") || strings.Contains(exported, "BOF STAGE") {
+	if !strings.Contains(exported, "BOF EXPORT PASS") || !strings.Contains(exported, "target    raw") || !strings.Contains(exported, "package   "+filepath.Join("export", "pack-demo-raw")) || strings.Contains(exported, "BOF STAGE") {
 		t.Fatalf("export output:\n%s", exported)
 	}
 	mustExist(t, filepath.Join(tmp, "export", "pack-demo-raw", "manifest.json"))
@@ -764,8 +764,9 @@ func TestCLIPreflightArsenalGateAndReports(t *testing.T) {
 	mustExist(t, filepath.Join(tmp, passed.JSONPath))
 	mustExist(t, filepath.Join(tmp, passed.MDPath))
 	passedSummary := runOK(t, tmp, bin, "preflight", filepath.Join("arsenal", "demo"), "--select", "supported")
+	passedSummaryPortable := filepath.ToSlash(passedSummary)
 	for _, want := range []string{"BOF PREFLIGHT PASS", "object    arsenal/demo/supported/supported.x64.o", "target    arch=x64", "entry=go", "loader    compatible  blockers=0  warnings=0", "shape     imports=2", "reports   runs/"} {
-		if !strings.Contains(passedSummary, want) {
+		if !strings.Contains(passedSummaryPortable, want) {
 			t.Fatalf("preflight summary missing %q:\n%s", want, passedSummary)
 		}
 	}
@@ -780,7 +781,8 @@ func TestCLIPreflightArsenalGateAndReports(t *testing.T) {
 	}
 
 	blocked, err := run(t, tmp, bin, "preflight", filepath.Join("arsenal", "demo"), "--select", "blocked")
-	if err == nil || !strings.Contains(blocked, "BOF PREFLIGHT REVIEW") || !strings.Contains(blocked, "object    arsenal/demo/blocked/blocked.x64.o") || !strings.Contains(blocked, "loader    blocked") || !strings.Contains(blocked, "shape     imports=1") || !strings.Contains(blocked, "blockers  unsupported_beacon_api") || !strings.Contains(blocked, "loader support blocked execution") || !strings.Contains(blocked, "reports   runs/") {
+	blockedPortable := filepath.ToSlash(blocked)
+	if err == nil || !strings.Contains(blockedPortable, "BOF PREFLIGHT REVIEW") || !strings.Contains(blockedPortable, "object    arsenal/demo/blocked/blocked.x64.o") || !strings.Contains(blockedPortable, "loader    blocked") || !strings.Contains(blockedPortable, "shape     imports=1") || !strings.Contains(blockedPortable, "blockers  unsupported_beacon_api") || !strings.Contains(blockedPortable, "loader support blocked execution") || !strings.Contains(blockedPortable, "reports   runs/") {
 		t.Fatalf("blocked preflight did not fail with evidence: err=%v\n%s", err, blocked)
 	}
 	allArchitectures, err := run(t, tmp, bin, "preflight", filepath.Join("arsenal", "demo"), "--select", "supported", "--arch", "all", "--format", "md")
@@ -788,7 +790,8 @@ func TestCLIPreflightArsenalGateAndReports(t *testing.T) {
 		t.Fatalf("all-architecture CLI matrix did not expose x64 and x86 loader support: err=%v\n%s", err, allArchitectures)
 	}
 	reportOnly := runOK(t, tmp, bin, "preflight", filepath.Join("arsenal", "demo"), "--select", "supported", "--arch", "all", "--report-only")
-	if !strings.Contains(reportOnly, "BOF PREFLIGHT PASS") || !strings.Contains(reportOnly, "objects   2") || !strings.Contains(reportOnly, "compatible=2") || !strings.Contains(reportOnly, "arch=x86") || !strings.Contains(reportOnly, "reports   runs/") {
+	reportOnlyPortable := filepath.ToSlash(reportOnly)
+	if !strings.Contains(reportOnlyPortable, "BOF PREFLIGHT PASS") || !strings.Contains(reportOnlyPortable, "objects   2") || !strings.Contains(reportOnlyPortable, "compatible=2") || !strings.Contains(reportOnlyPortable, "arch=x86") || !strings.Contains(reportOnlyPortable, "reports   runs/") {
 		t.Fatalf("report-only matrix missing x64/x86 compatibility evidence:\n%s", reportOnly)
 	}
 }

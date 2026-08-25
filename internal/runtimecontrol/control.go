@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -206,32 +207,45 @@ func ValidateClient(client Client) error {
 	if client.Port < 1 || client.Port > 65535 {
 		return fmt.Errorf("SSH port must be between 1 and 65535")
 	}
-	for label, path := range map[string]string{
+	for label, localPath := range map[string]string{
 		"identity_file": client.IdentityFile,
 		"known_hosts":   client.KnownHosts,
-		"path":          client.Path,
-		"home":          client.Home,
-		"config_path":   client.ConfigPath,
 	} {
-		path = strings.TrimSpace(path)
-		if path == "" {
+		localPath = strings.TrimSpace(localPath)
+		if localPath == "" {
 			return fmt.Errorf("%s is required", label)
 		}
-		if strings.ContainsAny(path, "\x00\r\n") {
+		if strings.ContainsAny(localPath, "\x00\r\n") {
 			return fmt.Errorf("%s contains control characters", label)
 		}
-		if !filepath.IsAbs(path) {
+		if !filepath.IsAbs(localPath) {
 			return fmt.Errorf("%s must be an absolute path", label)
 		}
 	}
-	home := strings.TrimSuffix(filepath.Clean(client.Home), string(filepath.Separator))
-	if filepath.Base(home) != ".sliver-client" {
+	for label, remotePath := range map[string]string{
+		"path":        client.Path,
+		"home":        client.Home,
+		"config_path": client.ConfigPath,
+	} {
+		remotePath = strings.TrimSpace(remotePath)
+		if remotePath == "" {
+			return fmt.Errorf("%s is required", label)
+		}
+		if strings.ContainsAny(remotePath, "\x00\r\n") {
+			return fmt.Errorf("%s contains control characters", label)
+		}
+		if !pathpkg.IsAbs(remotePath) {
+			return fmt.Errorf("%s must be an absolute POSIX path", label)
+		}
+	}
+	home := strings.TrimSuffix(pathpkg.Clean(client.Home), "/")
+	if pathpkg.Base(home) != ".sliver-client" {
 		return fmt.Errorf("home must end in .sliver-client so the pinned Sliver client uses the dedicated location")
 	}
-	config := filepath.Clean(client.ConfigPath)
-	wantPrefix := filepath.Join(home, "configs") + string(filepath.Separator)
+	config := pathpkg.Clean(client.ConfigPath)
+	wantPrefix := pathpkg.Join(home, "configs") + "/"
 	if !strings.HasPrefix(config, wantPrefix) {
-		return fmt.Errorf("config_path must be beneath %s", filepath.Join(home, "configs"))
+		return fmt.Errorf("config_path must be beneath %s", pathpkg.Join(home, "configs"))
 	}
 	return nil
 }
@@ -264,9 +278,9 @@ func Add(config *Config, name string, control Control, replace bool) error {
 		client.User = strings.TrimSpace(client.User)
 		client.IdentityFile = filepath.Clean(client.IdentityFile)
 		client.KnownHosts = filepath.Clean(client.KnownHosts)
-		client.Path = filepath.Clean(client.Path)
-		client.Home = filepath.Clean(client.Home)
-		client.ConfigPath = filepath.Clean(client.ConfigPath)
+		client.Path = pathpkg.Clean(client.Path)
+		client.Home = pathpkg.Clean(client.Home)
+		client.ConfigPath = pathpkg.Clean(client.ConfigPath)
 		control.Client = &client
 	}
 	config.Controls[name] = control

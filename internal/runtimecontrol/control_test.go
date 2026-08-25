@@ -3,6 +3,7 @@ package runtimecontrol
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -31,7 +32,7 @@ func TestConfigRoundTripAndResolve(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode = %o", info.Mode().Perm())
 	}
 }
@@ -52,12 +53,13 @@ func TestValidationRejectsSecretsAndUnsupportedProviders(t *testing.T) {
 
 func TestRemoteClientRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "runtime-controls.json")
+	local := t.TempDir()
 	config := NewConfig()
 	control := Control{
 		Runtime: "sliver", Provider: "proxmox", ProxmoxPrep: "/tmp/prep.json", VMID: 4120,
 		Client: &Client{
 			Transport: "ssh", User: "bofbench", Port: 22,
-			IdentityFile: "/tmp/sliver-identity", KnownHosts: "/tmp/sliver-known-hosts",
+			IdentityFile: filepath.Join(local, "sliver-identity"), KnownHosts: filepath.Join(local, "sliver-known-hosts"),
 			Path: "/usr/local/bin/sliver-client", Home: "/home/bofbench/.sliver-client",
 			ConfigPath: "/home/bofbench/.sliver-client/configs/bofbench.cfg",
 		},
@@ -79,9 +81,10 @@ func TestRemoteClientRoundTrip(t *testing.T) {
 }
 
 func TestRemoteClientRejectsConfigOutsideDedicatedHome(t *testing.T) {
+	local := t.TempDir()
 	client := Client{
 		Transport: "ssh", User: "bofbench", Port: 22,
-		IdentityFile: "/tmp/id", KnownHosts: "/tmp/known-hosts",
+		IdentityFile: filepath.Join(local, "id"), KnownHosts: filepath.Join(local, "known-hosts"),
 		Path: "/usr/local/bin/sliver-client", Home: "/home/bofbench/.sliver-client",
 		ConfigPath: "/tmp/operator.cfg",
 	}
