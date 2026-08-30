@@ -1,0 +1,66 @@
+{
+  "schema": "bofbench.analyzer-corpus-label-audit",
+  "schema_version": 1,
+  "status": "confirmed_frozen_label_omission",
+  "audited_at": "2026-08-30T14:52:58Z",
+  "corpus": {
+    "path": "testdata/analyzer-corpus-v2.json",
+    "sha256": "18b3de78256e8c842df5b30a2e178593384752dc69d4e2b51dde4079393dc19e",
+    "labels_frozen_commit": "7e19c7b746d00c55d1d279901e28a684e0c58d87",
+    "inherited_case": "sc_enum",
+    "frozen_behavior_chains": [],
+    "frozen_interprocedural_behavior_chains": []
+  },
+  "measurements": {
+    "baseline": {
+      "path": "qualification/receipts/bofbench-analyzer-corpus-v2-evaluation-20260830.json",
+      "sha256": "d127abc197585a384cdea7a3302beeb152d7e9fe492d27d7e109b8405e9c5008",
+      "analyzer_commit": "b7c5b33078bca2f8e301e6d66e941ba7e5dbcb01"
+    },
+    "direct_call_remeasurement": {
+      "path": "qualification/receipts/bofbench-analyzer-corpus-v2-postfix-20260830.json",
+      "sha256": "7425e3cab98f05f968dcd8799471c728e7679f4d0f09c8c31edd4063d19795fa",
+      "analyzer_commit": "5a9fd2ae401d57d982fbd163be8aa390dbcff273",
+      "reported_behavior_chain": "remote_service_inventory",
+      "reported_interprocedural": true
+    }
+  },
+  "upstream": {
+    "repository": "https://github.com/trustedsec/CS-Situational-Awareness-BOF.git",
+    "commit": "ee9459cc4f42c6b025797bad22ffe8d9f1cf6487",
+    "source_path": "src/SA/sc_enum/entry.c",
+    "source_sha256": "7045edada00140db2552e1507abe1b640746ead342da6dabe7f00aa4c56234ab",
+    "reviewed_sequence": [
+      {
+        "lines": "415-422",
+        "finding": "go extracts the operator-supplied hostname and passes it to OpenSCManagerA"
+      },
+      {
+        "lines": "426-428",
+        "finding": "go calls enumerate_services only after the service-manager open succeeds"
+      },
+      {
+        "lines": "324-350",
+        "finding": "enumerate_services uses the shared service-manager handle in EnumServicesStatusExA"
+      }
+    ]
+  },
+  "objects": [
+    {
+      "architecture": "x64",
+      "path": "SA/sc_enum/sc_enum.x64.o",
+      "sha256": "85ba4141c800cb6cf5258bf36c2657c71e01252ed287dcc680725e885304142a"
+    },
+    {
+      "architecture": "x86",
+      "path": "SA/sc_enum/sc_enum.x86.o",
+      "sha256": "2ce766d5e52e33c4c2bc21492a65bea393aedf897e70828d0ba4a049f109141e"
+    }
+  ],
+  "conclusion": "The post-fix positives match the pinned source and object-level call graph. The mismatch is an omitted reviewed label in the immutable version 1 base, not evidence of an analyzer false positive.",
+  "disposition": "Do not edit the version 1 or version 2 corpus. Carry the correction into a separately frozen successor corpus and retain both version 2 measurement receipts.",
+  "limitations": [
+    "This audit establishes static source and object agreement, not successful runtime execution.",
+    "The finding concerns one behavior family and two compiled architecture variants."
+  ]
+}

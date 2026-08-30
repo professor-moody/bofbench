@@ -36,10 +36,10 @@ Lab's product evidence; numeric scoring is withheld on target v2.
 
 ## Next action
 
-Freeze a version 2 third-party-object corpus that adds at least one
-loader-blocked object and one positive interprocedural behavior chain. Keep
-version 1 immutable so the new coverage makes the two currently withheld recall
-claims measurable without rewriting the passing baseline.
+Freeze a version 3 corpus layer that carries the independently audited
+`sc_enum` correction without modifying versions 1 or 2, and add a second
+loader-blocked family plus a second positive interprocedural family from a third
+upstream repository before measuring it.
 
 ## Current state
 
@@ -201,6 +201,34 @@ claims measurable without rewriting the passing baseline.
   `qualification/receipts/bofbench-analyzer-corpus-evaluation-20260830.json`.
   Blocked-object and interprocedural recall remain withheld exactly as declared
   before measurement.
+- **Version 2 frozen and measured 2026-08-30:** commit `7e19c7b` adds, without
+  editing version 1, two source-reviewed TrustedSec Remote Ops families and four
+  exact objects. The combined 18-family/36-object corpus includes two
+  `unsupported_beacon_api` objects and two reviewed interprocedural
+  `process_memory_read` positives. Evaluator commit `b7c5b33` classified all 36
+  loader outcomes correctly, including 2/2 blocked objects, and retained
+  perfect capability labels. It measured behavior recall at 20/22 and
+  interprocedural recall at 0/2, localizing both false negatives to the x64/x86
+  `lastpass` pair. Receipt:
+  `qualification/receipts/bofbench-analyzer-corpus-v2-evaluation-20260830.json`.
+- **Direct-call recovery measured 2026-08-30:** analyzer commit `5a9fd2a`
+  decodes x86/x64 instructions only inside known executable function ranges,
+  ignores relocated call bytes, accepts targets only at exact known function
+  symbols, and retains the shortest call path as static evidence. The unchanged
+  version 2 corpus then measured 22/22 behavior recall and 2/2 interprocedural
+  recall; loader support remained 36/36, blocked-object recall 2/2, capabilities
+  46 TP / 0 FP / 0 FN, and all 18 architecture pairs agreed. Two reported
+  `remote_service_inventory` positives remain a formal mismatch because the
+  inherited frozen `sc_enum` labels are empty.
+- **Frozen-label audit 2026-08-30:** pinned `sc_enum` source independently
+  confirms that `go` opens the supplied host's service manager and calls
+  `enumerate_services`, which consumes that handle with
+  `EnumServicesStatusExA`. The audit therefore classifies the two post-fix
+  positives as a version 1 label omission, not analyzer false positives. Neither
+  frozen corpus was edited. The post-fix measurement and audit are
+  `qualification/receipts/bofbench-analyzer-corpus-v2-postfix-20260830.json`
+  and
+  `qualification/receipts/bofbench-analyzer-corpus-v2-label-audit-20260830.json`.
 
 ## Completed: publish the release boundary
 
@@ -214,9 +242,12 @@ claims measurable without rewriting the passing baseline.
 
 ## Next: improve confidence, not surface area
 
-- Extend the third-party evaluation under a new versioned freeze with a
-  loader-blocked object and a positive interprocedural chain; never revise the
-  version 1 labels in response to its perfect in-sample result.
+- Define a version 3 correction layer that cites the independent `sc_enum`
+  audit, preserves both earlier corpora and measurements byte-for-byte, and
+  cannot silently override an inherited case.
+- Before freezing version 3, add a second blocked family and a second positive
+  interprocedural family from a third upstream repository so corrected labels
+  are not the only reason its metrics change.
 - Add compatibility tests for every supported prior schema and publish removal
   criteria for the legacy `feature`, `recipe`, `dev`, `preflight`, and `stage`
   commands.
@@ -238,9 +269,9 @@ claims measurable without rewriting the passing baseline.
 
 ## Not now
 
-Do not use version 1's perfect exact-label result to claim blocked-object or
-interprocedural recall, or to justify a broad capability tranche before those
-missing classes are reviewed under a new frozen boundary.
+Do not present the version 2 post-fix result as a perfect corpus pass: it closes
+the reviewed `lastpass` false negatives but deliberately retains the audited
+`sc_enum` frozen-label mismatch. Do not revise version 1 or version 2 in place.
 
 ## Update rule
 

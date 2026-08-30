@@ -109,6 +109,42 @@ pairs agreed. The full per-object result and provenance are preserved in
 Blocked-object and interprocedural recall remain withheld; the passing result
 does not erase the coverage limits declared before evaluation.
 
+### Version 2: missing-class measurement
+
+`testdata/analyzer-corpus-v2.json` layers two reviewed TrustedSec Remote Ops
+families over the immutable version 1 corpus. Its separate extension lock binds
+the upstream commit, four x64/x86 objects, and the two source files used for
+review. The combined boundary contains 18 families and 36 objects, including
+two loader-blocked objects and two positive interprocedural objects.
+
+Run a current measurement into the ignored `work/` directory:
+
+```bash
+make analyzer-corpus-v2
+```
+
+The pre-fix measurement against `b7c5b33` classified all 36 loader outcomes
+correctly, measured blocked-object recall at 2/2, and retained 46 TP / 0 FP / 0
+FN capability labels. It found 20/22 behavior labels and 0/2 interprocedural
+labels; both misses were the reviewed `lastpass` process-memory chain. The
+immutable receipt is
+`qualification/receipts/bofbench-analyzer-corpus-v2-evaluation-20260830.json`.
+
+Commit `5a9fd2a` recovers resolved local x86/x64 calls only within known
+executable function ranges. The same frozen corpus then found all 22 reviewed
+behavior labels and both interprocedural labels. Its remaining two reported
+positives are the x64/x86 `sc_enum` service-inventory chain. Independent review
+of the pinned source confirms that `go` opens the supplied host's service
+manager and calls the helper that enumerates services with that handle. Because
+the inherited version 1 labels are immutable and empty for this case, the
+post-fix report remains `mismatch` instead of rewriting history.
+
+The remeasurement and the digest-bound label audit are preserved at
+`qualification/receipts/bofbench-analyzer-corpus-v2-postfix-20260830.json` and
+`qualification/receipts/bofbench-analyzer-corpus-v2-label-audit-20260830.json`.
+A successor corpus must cite that audit explicitly; versions 1 and 2 must not be
+edited to turn either historical result green.
+
 ## When analysis is uncertain
 
 - Check whether the object contains an entrypoint and supported architecture.
