@@ -36,10 +36,10 @@ Lab's product evidence; numeric scoring is withheld on target v2.
 
 ## Next action
 
-Freeze a version 3 corpus layer that carries the independently audited
-`sc_enum` correction without modifying versions 1 or 2, and add a second
-loader-blocked family plus a second positive interprocedural family from a third
-upstream repository before measuring it.
+Publish removal criteria and replacement mappings for the legacy `feature`,
+`recipe`, `dev`, `preflight`, and `stage` commands. Deprecation must name the
+supported replacement for every retained workflow before any command is
+removed.
 
 ## Current state
 
@@ -260,10 +260,8 @@ upstream repository before measuring it.
    and the exact qualification manifest; an independent download readback
    reproduced every digest.
 
-## Next: version and aggregate analyzer evidence
+## Next: retire legacy command ambiguity, then aggregate runtime evidence
 
-- Project both version 3 measurements and their signature-set transition into
-  Operator Lab without replacing the historical version 2 evidence.
 - Publish removal criteria for the legacy `feature`, `recipe`, `dev`,
   `preflight`, and `stage` commands.
 - Make runtime comparison reports easy to aggregate without weakening exact
