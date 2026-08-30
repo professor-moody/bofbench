@@ -36,11 +36,10 @@ Lab's product evidence; numeric scoring is withheld on target v2.
 
 ## Next action
 
-Evaluate the frozen third-party-object corpus without changing its labels.
-Record exact-set capability and behavior-chain precision/recall, loader-support
-accuracy, x64/x86 agreement, and interprocedural false positives. Withhold
-blocked-object and interprocedural recall because version 1 has no positive
-case for either class.
+Freeze a version 2 third-party-object corpus that adds at least one
+loader-blocked object and one positive interprocedural behavior chain. Keep
+version 1 immutable so the new coverage makes the two currently withheld recall
+claims measurable without rewriting the passing baseline.
 
 ## Current state
 
@@ -194,6 +193,14 @@ case for either class.
   and behavior-chain label sets. The freeze declares its two material coverage
   limits before evaluation: there is no loader-blocked object and no positive
   interprocedural chain.
+- **Corpus measured 2026-08-30:** the labels frozen at `9dd0eab` were evaluated
+  unchanged against analyzer commit `afb0a20` and signature-set digest
+  `abdb6714...fdb0cd73`. All 32 loader-support classifications were correct;
+  capability labels scored 44 TP, 0 FP, and 0 FN; behavior chains scored 18 TP,
+  0 FP, and 0 FN; and all 16 x64/x86 pairs agreed. The digest-bound receipt is
+  `qualification/receipts/bofbench-analyzer-corpus-evaluation-20260830.json`.
+  Blocked-object and interprocedural recall remain withheld exactly as declared
+  before measurement.
 
 ## Completed: publish the release boundary
 
@@ -207,8 +214,9 @@ case for either class.
 
 ## Next: improve confidence, not surface area
 
-- Evaluate the frozen third-party-object corpus and deposit a digest-bound report
-  without revising labels in response to analyzer output.
+- Extend the third-party evaluation under a new versioned freeze with a
+  loader-blocked object and a positive interprocedural chain; never revise the
+  version 1 labels in response to its perfect in-sample result.
 - Add compatibility tests for every supported prior schema and publish removal
   criteria for the legacy `feature`, `recipe`, `dev`, `preflight`, and `stage`
   commands.
@@ -230,8 +238,9 @@ case for either class.
 
 ## Not now
 
-Do not add another operation-schema version or broad capability tranche before
-the labeled analyzer corpus has a frozen provenance and review contract.
+Do not use version 1's perfect exact-label result to claim blocked-object or
+interprocedural recall, or to justify a broad capability tranche before those
+missing classes are reviewed under a new frozen boundary.
 
 ## Update rule
 

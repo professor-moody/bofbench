@@ -92,6 +92,23 @@ loader-blocked object and no positive interprocedural chain, so it can measure
 false positives in those areas but cannot support a recall claim for either.
 Static labels also do not claim that an object executed successfully.
 
+Run the evaluation only from a clean checkout so the report can bind the exact
+analyzer source and binary:
+
+```bash
+make analyzer-corpus
+```
+
+The first measurement evaluated the labels frozen at commit `9dd0eab` against
+analyzer commit `afb0a20` and signature-set digest
+`abdb67143e4386bedca8e2b277bd8c4032e1f4bc8bed1f986e9a40e3fdb0cd73`.
+All 32 support classifications matched, capability labels scored 44 TP / 0 FP /
+0 FN, behavior-chain labels scored 18 TP / 0 FP / 0 FN, and all 16 architecture
+pairs agreed. The full per-object result and provenance are preserved in
+`qualification/receipts/bofbench-analyzer-corpus-evaluation-20260830.json`.
+Blocked-object and interprocedural recall remain withheld; the passing result
+does not erase the coverage limits declared before evaluation.
+
 ## When analysis is uncertain
 
 - Check whether the object contains an entrypoint and supported architecture.
