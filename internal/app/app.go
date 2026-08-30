@@ -116,14 +116,14 @@ func rootCommand(stdout, stderr io.Writer) *cobra.Command {
 		commandGroup("create", catalogCommand(stdout)),
 		commandGroup("create", packCommand(stdout)),
 		commandGroup("create", addCommand(stdout)),
-		commandGroup("create", featureCommand(stdout)),
-		commandGroup("create", recipeCommand(stdout)),
-		commandGroup("create", devCommand(stdout)),
+		commandGroup("create", legacyCommand(featureCommand(stdout), "feature")),
+		commandGroup("create", legacyCommand(recipeCommand(stdout), "recipe")),
+		commandGroup("create", legacyCommand(devCommand(stdout), "dev")),
 		commandGroup("create", buildCommand(stdout)),
 		commandGroup("create", matrixCommand(stdout)),
 		commandGroup("analyze", inspectCommand(stdout)),
 		commandGroup("analyze", analyzeCommand(stdout)),
-		commandGroup("analyze", preflightCommand(stdout)),
+		commandGroup("analyze", legacyCommand(preflightCommand(stdout), "preflight")),
 		commandGroup("operate", runCommand(stdout)),
 		commandGroup("operate", operationCommand(stdout)),
 		commandGroup("operate", testCommand(stdout)),
@@ -136,6 +136,7 @@ func rootCommand(stdout, stderr io.Writer) *cobra.Command {
 		commandGroup("arsenal", arsenalCommand(stdout)),
 		commandGroup("interface", tuiCommand(stdout)),
 		commandGroup("interface", docsCommand(stdout, stderr)),
+		commandGroup("interface", compatibilityCommand(stdout)),
 		commandGroup("system", doctorCommand(stdout)),
 		commandGroup("system", versionCommand(stdout)),
 	)
@@ -1317,6 +1318,7 @@ func exportCommand(stdout io.Writer) *cobra.Command {
 	cmd.Use = "export <project-or-artifact> --for cobaltstrike|sliver|raw|edrlab [--args ...]"
 	cmd.Aliases = []string{"stage"}
 	cmd.Short = "Build if needed and export a BOF for native or C2 use"
+	cmd.Long = "Build if needed and export a BOF for native or C2 use.\n\nThe legacy 'stage' spelling is an exact alias supported through 0.x; removal is not permitted before 1.0.0. Run 'bofbench compatibility' for the versioned mapping and removal gates."
 	cmd.Flags().String("for", "", "export target: cobaltstrike, sliver, raw, edrlab")
 	cmd.Flags().String("guidance", "", "exact windows.build-guidance/v1 file for an EDR export")
 	cmd.Flags().StringSlice("guidance-observation", nil, "explicit ReverseLab observation ID to attach (repeatable)")

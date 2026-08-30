@@ -30,7 +30,7 @@ Inspect generated source reports for unsupported Beacon API, implicit Windows im
 ## Analysis and loader
 
 ```bash
-bofbench analyze dist/project.x64.o --loader-details
+bofbench analyze dist/project.x64.o --format text
 ```
 
 Separate malformed COFF, unsupported relocation, unresolved import, architecture mismatch, and entrypoint problems from the capability itself.

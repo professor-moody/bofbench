@@ -119,6 +119,6 @@ The object’s identity, SID, group, privilege, and token-query APIs support cur
 
 ## Loader support
 
-Hard blockers are limited to conditions that prevent a safe load: malformed objects, unsupported relocations or Beacon shims, missing entrypoints, incompatible architecture/helper availability, and unresolved imports that the loader cannot service. `preflight` remains a compatibility alias for `analyze --loader-details` during the migration window.
+Hard blockers are limited to conditions that prevent a safe load: malformed objects, unsupported relocations or Beacon shims, missing entrypoints, incompatible architecture/helper availability, and unresolved imports that the loader cannot service. `analyze --format text` includes loader details for one object. The compatibility `preflight` command remains distinct for corpus selection, strict exit behavior, and persisted matrix evidence; its [replacement gaps are tracked explicitly](legacy-commands.md#preflight).
 
 Continue with [Arsenal Intelligence](arsenal.md) for batch search or [Run a BOF](runtime.md) for execution receipts.

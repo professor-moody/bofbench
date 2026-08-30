@@ -1,0 +1,160 @@
+{
+  "schema": "bofbench.command-compatibility",
+  "schema_version": 1,
+  "reviewed_at": "2026-08-30",
+  "supported_through": "0.x",
+  "removal_not_before": "1.0.0",
+  "removal_ready": false,
+  "commands": [
+    {
+      "command": "feature",
+      "replacement_coverage": "complete",
+      "removal_ready": false,
+      "summary": "Individual features and curated feature packs are versioned built-in packs.",
+      "mappings": [
+        {
+          "legacy": "bofbench feature list",
+          "replacement": "bofbench pack list",
+          "notes": "Use pack search and pack show to narrow or inspect results."
+        },
+        {
+          "legacy": "bofbench feature add \u003cproject\u003e \u003cfeature...\u003e",
+          "replacement": "bofbench add \u003cproject\u003e \u003cpack...\u003e",
+          "notes": "Every supported feature ID resolves as a built-in pack."
+        },
+        {
+          "legacy": "bofbench feature pack list",
+          "replacement": "bofbench pack list"
+        },
+        {
+          "legacy": "bofbench feature pack add \u003cproject\u003e \u003cpack\u003e",
+          "replacement": "bofbench add \u003cproject\u003e \u003cpack\u003e"
+        },
+        {
+          "legacy": "bofbench new \u003cproject\u003e --feature \u003cfeature\u003e",
+          "replacement": "bofbench new \u003cproject\u003e --pack \u003cpack\u003e"
+        }
+      ],
+      "removal_criteria": [
+        "keep a registry test proving every supported feature and curated feature pack resolves as a built-in pack",
+        "prove generated source and lockfile behavior through the replacement commands"
+      ]
+    },
+    {
+      "command": "recipe",
+      "replacement_coverage": "partial",
+      "removal_ready": false,
+      "summary": "Built-in recipes resolve as packs, but standalone legacy recipe-sidecar validation has no evidence-equivalent replacement.",
+      "mappings": [
+        {
+          "legacy": "bofbench recipe list",
+          "replacement": "bofbench pack list",
+          "notes": "Recipe IDs are retained as built-in pack IDs."
+        },
+        {
+          "legacy": "bofbench recipe show \u003crecipe\u003e",
+          "replacement": "bofbench pack show \u003crecipe\u003e"
+        },
+        {
+          "legacy": "bofbench recipe apply \u003cproject\u003e \u003crecipe\u003e",
+          "replacement": "bofbench add \u003cproject\u003e \u003crecipe\u003e",
+          "notes": "Use new --pack \u003crecipe\u003e when creating a project."
+        },
+        {
+          "legacy": "bofbench recipe validate \u003cproject\u003e",
+          "replacement": "bofbench build \u003cproject\u003e; bofbench analyze \u003cproject\u003e",
+          "notes": "This validates the resolved project, not the legacy recipe sidecar itself."
+        }
+      ],
+      "open_gaps": [
+        "no primary command emits the legacy bofbench.recipe-validation evidence document",
+        "existing bofbench.recipe.json migration must remain readable and preserve its original sidecar"
+      ],
+      "removal_criteria": [
+        "replace or explicitly retire standalone recipe-sidecar validation evidence",
+        "test first-use migration for every built-in recipe ID"
+      ]
+    },
+    {
+      "command": "dev",
+      "replacement_coverage": "partial",
+      "removal_ready": false,
+      "summary": "The primary workflow is an explicit build, analyze, and run sequence; its individual evidence is richer, but it does not yet replace the unified dev receipt.",
+      "mappings": [
+        {
+          "legacy": "bofbench dev \u003cproject\u003e",
+          "replacement": "bofbench build \u003cproject\u003e; bofbench analyze \u003cproject\u003e; bofbench run \u003cproject\u003e --via \u003cruntime\u003e"
+        },
+        {
+          "legacy": "bofbench dev \u003cproject\u003e --skip-run",
+          "replacement": "bofbench build \u003cproject\u003e; bofbench analyze \u003cproject\u003e"
+        },
+        {
+          "legacy": "bofbench dev \u003cproject\u003e --verify-reproducible",
+          "replacement": "bofbench build \u003cproject\u003e --verify-reproducible",
+          "notes": "Follow with analyze and run when those phases are required."
+        }
+      ],
+      "open_gaps": [
+        "no aggregate primary report preserves the dev receipt's build, source, object, import-correlation, recipe, and runtime views together",
+        "replacement commands do not emit the same unified next-action field"
+      ],
+      "removal_criteria": [
+        "define an aggregate evidence contract with equal or richer immutable phase references",
+        "prove failure and suppression semantics match the explicit command sequence"
+      ]
+    },
+    {
+      "command": "preflight",
+      "replacement_coverage": "partial",
+      "removal_ready": false,
+      "summary": "Analyze replaces single-object loader inspection; arsenal matrix is the nearest corpus replacement but does not preserve all preflight controls or evidence.",
+      "mappings": [
+        {
+          "legacy": "bofbench preflight \u003cobject\u003e",
+          "replacement": "bofbench analyze \u003cobject\u003e --format text",
+          "notes": "Text, JSON, and Markdown analysis already include loader support."
+        },
+        {
+          "legacy": "bofbench preflight \u003carsenal\u003e --arch all",
+          "replacement": "bofbench arsenal matrix \u003carsenal\u003e --format text",
+          "notes": "Use JSON when machine-readable matrix output is required."
+        }
+      ],
+      "open_gaps": [
+        "arsenal matrix has no exact equivalents for preflight --select, --strict, or --report-only",
+        "arsenal matrix does not emit the persisted bofbench.preflight evidence contract"
+      ],
+      "removal_criteria": [
+        "replace the selection, strict-exit, report-only, and persisted-matrix workflows",
+        "prove single-object analyze reports every loader blocker represented by preflight"
+      ]
+    },
+    {
+      "command": "stage",
+      "replacement_coverage": "complete",
+      "removal_ready": false,
+      "summary": "Stage is a Cobra alias of export and shares the same implementation.",
+      "mappings": [
+        {
+          "legacy": "bofbench stage \u003cproject-or-artifact\u003e --target \u003ctarget\u003e",
+          "replacement": "bofbench export \u003cproject-or-artifact\u003e --for \u003ctarget\u003e"
+        },
+        {
+          "legacy": "bofbench stage verify \u003cdirectory-or-zip\u003e",
+          "replacement": "bofbench export verify \u003cdirectory-or-zip\u003e"
+        }
+      ],
+      "removal_criteria": [
+        "keep integration coverage proving stage and export accept equivalent inputs and produce equivalent packages"
+      ]
+    }
+  ],
+  "common_removal_criteria": [
+    "do not remove a compatibility command before version 1.0.0",
+    "ship its complete replacement mapping for at least one minor release",
+    "remove legacy invocations from current documentation and examples outside the compatibility reference",
+    "keep historical receipt and sidecar schemas readable after command removal",
+    "require integration tests showing replacement evidence is equal or richer for every supported workflow"
+  ]
+}

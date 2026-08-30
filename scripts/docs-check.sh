@@ -15,6 +15,10 @@ go run ./cmd/capgen -check -out native/loader/capabilities.generated.h
 cmp "$TMP/public-reference.md" docs/pack-reference.md
 "$BIN" operation docs --catalog-name builtin --output "$TMP/public-operation-reference.md" >/dev/null
 cmp "$TMP/public-operation-reference.md" docs/operation-reference.md
+"$BIN" compatibility --format md > "$TMP/legacy-commands.md"
+cmp "$TMP/legacy-commands.md" docs/legacy-commands.md
+"$BIN" compatibility --format json > "$TMP/command-compatibility-v1.json"
+cmp "$TMP/command-compatibility-v1.json" docs/evidence/command-compatibility-v1.json
 
 mkdocs build --strict --site-dir "$TMP/public-site"
 for stem in build-analyze third-party-analysis arsenal-search lab-run runtime-tasks export-verify operation-lifecycle; do

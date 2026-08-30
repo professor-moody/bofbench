@@ -99,7 +99,7 @@ work/bin/bofbench export bofs/portable-survey --for sliver
 work/bin/bofbench export bofs/portable-survey --for cobaltstrike
 ```
 
-Each directory and ZIP verifies the object, argument packing, target metadata, reports, and file hashes. `stage` remains a compatibility alias for one major release.
+Each directory and ZIP verifies the object, argument packing, target metadata, reports, and file hashes. `stage` is an exact compatibility alias of `export`, supported through `0.x`; see its [removal gates](legacy-commands.md#stage).
 
 ## Analyze an existing public object
 

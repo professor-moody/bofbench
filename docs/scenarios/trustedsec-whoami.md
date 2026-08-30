@@ -59,7 +59,7 @@ Check behavioral equivalence before structural differences. The imports and relo
 ```bash
 bofbench analyze \
   arsenal/trustedsec-sa/SA/whoami/whoami.x64.o \
-  --loader-details
+  --format text
 ```
 
 Loader compatibility means BOFBench can resolve and enter the object. Identity output still depends on the token of the native loader, Sliver session, or Beacon that executes it.

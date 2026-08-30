@@ -87,7 +87,7 @@ Use more detail when needed:
 ```bash
 bofbench analyze object.x64.o --format md
 bofbench analyze object.x64.o --format json
-bofbench analyze object.x64.o --loader-details
+bofbench analyze object.x64.o --format text
 ```
 
 Use a focused explanation when a report has several chains:

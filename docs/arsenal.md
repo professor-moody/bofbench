@@ -78,6 +78,7 @@ bofbench preflight arsenal/trustedsec-sa --arch all --report-only
 ```
 
 The matrix reports compatibility by corpus coverage, relocation family, Beacon shim, toolchain, and argument need.
+It is the nearest primary replacement for corpus `preflight`, but it does not yet replace `--select`, `--strict`, `--report-only`, or the persisted `bofbench.preflight` evidence schema. Those gates are tracked in the [compatibility contract](legacy-commands.md#preflight).
 
 ## Existing object workflow
 

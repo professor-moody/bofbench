@@ -40,4 +40,4 @@ Project analysis adds pack-declared arguments and capabilities to the object-der
 
 ## Backward-compatible projects
 
-Projects containing `bofbench.recipe.json` migrate on first pack use. The original sidecar remains in place, and the resolved equivalent is written to `bofbench.lock.json`. `feature`, `recipe`, and `dev` remain aliases for one major release.
+Projects containing `bofbench.recipe.json` migrate on first pack use. The original sidecar remains in place, and the resolved equivalent is written to `bofbench.lock.json`. `feature`, `recipe`, and `dev` remain compatibility commands through `0.x`; the [compatibility contract](legacy-commands.md) records which workflows have complete replacements and which still have evidence gaps.

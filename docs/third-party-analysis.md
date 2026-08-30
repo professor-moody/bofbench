@@ -185,6 +185,6 @@ measurements are retained at
 - Check whether the object contains an entrypoint and supported architecture.
 - Look for its `.cna` or `extension.json` argument contract.
 - Compare source imports with object relocations.
-- Run `--loader-details` to separate unsupported loader behavior from offensive capability.
+- Run `analyze --format text` to separate unsupported loader behavior from offensive capability.
 - Treat isolated APIs as primitives, not complete execution chains.
 - Use a named lab profile for runtime confirmation and retain the exact-hash receipt.

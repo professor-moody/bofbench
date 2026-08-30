@@ -178,4 +178,4 @@ make docs-media   # optional: regenerate the six checked-in VHS clips
 
 The operator handbook starts at [`docs/index.md`](docs/index.md); task-oriented walkthroughs are indexed in the [Scenario Library](docs/scenarios/index.md). `make docs-check` validates both available handbook layers, generated pack references, links, anchors, media, direct command examples, and the host-only build/analyze/arsenal/export smoke lane.
 
-Compatibility commands (`feature`, `recipe`, `dev`, `preflight`, and `stage`) remain readable for one major release while the primary surface uses packs, `analyze`, `run --via`, and `export --for`.
+Compatibility commands (`feature`, `recipe`, `dev`, `preflight`, and `stage`) remain supported through `0.x` and cannot be removed before `1.0.0`. Their exact replacements, known parity gaps, and testable removal gates live in the [generated compatibility reference](docs/legacy-commands.md) and its [versioned JSON contract](docs/evidence/command-compatibility-v1.json).

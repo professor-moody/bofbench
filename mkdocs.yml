@@ -108,6 +108,7 @@ nav:
       - Live Capability Proof: live-proof.md
   - Reference:
       - Commands: commands.md
+      - Legacy Command Compatibility: legacy-commands.md
       - Generated Operation Reference: operation-reference.md
       - Glossary: glossary.md
       - Documentation Conventions: documentation-conventions.md

@@ -36,16 +36,21 @@ Lab's product evidence; numeric scoring is withheld on target v2.
 
 ## Next action
 
-Publish removal criteria and replacement mappings for the legacy `feature`,
-`recipe`, `dev`, `preflight`, and `stage` commands. Deprecation must name the
-supported replacement for every retained workflow before any command is
-removed.
+Version the runtime-comparison report contract so multiple receipts can be
+aggregated without weakening exact object hashes, runtime identities,
+terminal-output bindings, or separately owned runtime verdicts.
 
 ## Current state
 
 - Build, analysis v3, native/lab/Sliver/Cobalt Strike adapters, operation schema
   v11, runtime receipts v6, topology target sets, cleanup, export, and release
   packaging are implemented; all Go packages currently pass.
+- Legacy-command compatibility is now a versioned policy rather than an
+  informal promise. `bofbench compatibility` renders the checked-in JSON and
+  Markdown contract; `feature` and `stage` have complete replacement coverage,
+  while the remaining `recipe`, `dev`, and `preflight` evidence gaps explicitly
+  block removal. Every command remains supported through `0.x` and no removal
+  is permitted before `1.0.0`.
 - The private catalog now has a full static receipt against `c38791e`: all 192
   packs and 67 operations pass MinGW x64/x86 build and expected-signature
   analysis, with raw/Sliver/Cobalt Strike exports generated. MSVC remains
@@ -260,10 +265,11 @@ removed.
    and the exact qualification manifest; an independent download readback
    reproduced every digest.
 
-## Next: retire legacy command ambiguity, then aggregate runtime evidence
+## Next: aggregate runtime evidence
 
-- Publish removal criteria for the legacy `feature`, `recipe`, `dev`,
-  `preflight`, and `stage` commands.
+- **Complete 2026-08-30:** publish versioned removal criteria and exact
+  replacement mappings for `feature`, `recipe`, `dev`, `preflight`, and
+  `stage`, including explicit parity gaps and drift enforcement.
 - Make runtime comparison reports easy to aggregate without weakening exact
   object-hash and terminal-output requirements.
 - Define a bounded proof case for the existing cross-host operation matrix only

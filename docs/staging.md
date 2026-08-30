@@ -36,4 +36,4 @@ For a third-party object without named metadata, provide compatibility argument 
 bofbench export external.x64.o --for sliver --args z:target i:25
 ```
 
-`stage` and `stage verify` remain aliases for one major release.
+`stage` and `stage verify` are exact aliases of `export` and `export verify`. They remain supported through `0.x` and cannot be removed before `1.0.0`; see the [compatibility contract](legacy-commands.md#stage).

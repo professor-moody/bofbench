@@ -140,7 +140,7 @@ bofbench export bofs/portable-survey --for edrlab
 bofbench export verify export/portable-survey-sliver.zip
 ```
 
-`stage`, `feature`, `recipe`, `dev`, and `preflight` remain compatibility aliases for one major release and print or document the capability-first equivalent.
+`feature`, `recipe`, `dev`, and `preflight` remain compatibility commands, while `stage` is an exact alias of `export`. All remain supported through `0.x` and cannot be removed before `1.0.0`. See [Legacy Command Compatibility](legacy-commands.md) for exact replacements and open parity gates, or run `bofbench compatibility` (`--format json` for automation).
 
 ## Lab
 

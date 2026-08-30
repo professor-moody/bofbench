@@ -38,4 +38,4 @@ bofbench analyze object.x64.o --format text
 bofbench preflight object.x64.o
 ```
 
-`preflight` is a compatibility alias. The capability-first analysis includes loader support after `Can do`, `Needs`, and `Works with`.
+For one object, capability-first analysis includes loader support after `Can do`, `Needs`, and `Works with`. `preflight` remains a compatibility command because its multi-object selection, strict exit behavior, and persisted matrix evidence are not yet fully replaced. See the [compatibility contract](legacy-commands.md#preflight).
