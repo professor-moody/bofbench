@@ -147,7 +147,7 @@ func TestAnalysisV3CorrelatesCallConnectedBehaviorAcrossFunctions(t *testing.T) 
 		{Function: "write_target", Symbol: "start_target"},
 		{Function: "start_target", Symbol: "KERNEL32$CreateRemoteThread"},
 	}
-	chains, flows := inferInterproceduralBehaviorChains(relocations, nil, nil)
+	chains, flows := inferInterproceduralBehaviorChains(relocations, nil, nil, nil)
 	chain := requireBehavior(t, chains, "process_injection_remote_thread")
 	if !chain.Interprocedural || len(chain.EvidenceFunctions) < 3 {
 		t.Fatalf("interprocedural chain = %+v", chain)
@@ -164,9 +164,60 @@ func TestAnalysisV3CorrelatesCallConnectedBehaviorAcrossFunctions(t *testing.T) 
 		{Function: "three", Symbol: "KERNEL32$WriteProcessMemory"},
 		{Function: "four", Symbol: "KERNEL32$CreateRemoteThread"},
 	}
-	chains, _ = inferInterproceduralBehaviorChains(split, nil, nil)
+	chains, _ = inferInterproceduralBehaviorChains(split, nil, nil, nil)
 	if len(chains) != 0 {
 		t.Fatalf("unrelated functions produced interprocedural chains: %+v", chains)
+	}
+}
+
+func TestAnalysisRecoversResolvedDirectCallsBetweenCOFFFunctions(t *testing.T) {
+	data := make([]byte, 24)
+	copy(data[0:], []byte{0xe8, 0x03, 0x00, 0x00, 0x00})
+	copy(data[8:], []byte{0xe8, 0x03, 0x00, 0x00, 0x00})
+	info := &coff.File{
+		Machine: "x64",
+		Sections: []coff.Section{{
+			Name:       ".text",
+			Executable: true,
+			Data:       data,
+		}},
+		Symbols: []coff.Symbol{
+			{Name: "open_target", Value: 0, SectionNumber: 1, Type: 0x20},
+			{Name: "read_target", Value: 8, SectionNumber: 1, Type: 0x20},
+			{Name: "copy_bytes", Value: 16, SectionNumber: 1, Type: 0x20},
+		},
+	}
+	directCalls := coffDirectCallEdges(info, coffFunctions(info))
+	if len(directCalls) != 2 || directCalls[0].From != "open_target" || directCalls[0].To != "read_target" || directCalls[1].From != "read_target" || directCalls[1].To != "copy_bytes" {
+		t.Fatalf("direct call edges = %+v", directCalls)
+	}
+	relocations := []Relocation{
+		{Function: "open_target", Symbol: "KERNEL32$OpenProcess"},
+		{Function: "copy_bytes", Symbol: "KERNEL32$ReadProcessMemory"},
+	}
+	chains, flows := inferInterproceduralBehaviorChains(relocations, directCalls, nil, nil)
+	chain := requireBehavior(t, chains, "process_memory_read")
+	if len(chains) != 1 || !chain.Interprocedural || !slices.Equal(chain.EvidenceFunctions, []string{"copy_bytes", "open_target"}) {
+		t.Fatalf("direct-call chain = %+v", chain)
+	}
+	if len(flows) != 1 || !slices.Equal(flows[0].Evidence, []string{"open_target -> read_target", "read_target -> copy_bytes"}) {
+		t.Fatalf("direct-call resource flow = %+v", flows)
+	}
+
+	info.Sections[0].Relocations = []coff.Relocation{{VirtualAddress: 1}}
+	directCalls = coffDirectCallEdges(info, coffFunctions(info))
+	if len(directCalls) != 1 || directCalls[0].From != "read_target" {
+		t.Fatalf("relocated call bytes were treated as resolved direct calls: %+v", directCalls)
+	}
+
+	info.Sections[0].Data = []byte{0xb8, 0xe8, 0x03, 0x00, 0x00, 0x90, 0x90, 0x90, 0x90, 0xc3, 0x90, 0x90}
+	info.Sections[0].Relocations = nil
+	info.Symbols = []coff.Symbol{
+		{Name: "caller", Value: 0, SectionNumber: 1, Type: 0x20},
+		{Name: "callee", Value: 9, SectionNumber: 1, Type: 0x20},
+	}
+	if directCalls = coffDirectCallEdges(info, coffFunctions(info)); len(directCalls) != 0 {
+		t.Fatalf("immediate byte was treated as a CALL opcode: %+v", directCalls)
 	}
 }
 

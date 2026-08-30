@@ -21,6 +21,7 @@ import (
 	"github.com/professor-moody/bofbench/internal/coff"
 	"github.com/professor-moody/bofbench/internal/evidence"
 	"github.com/professor-moody/bofbench/internal/runlog"
+	"golang.org/x/arch/x86/x86asm"
 )
 
 type Kind string
@@ -72,6 +73,7 @@ type Analysis struct {
 	GeneratedAt          string                    `json:"generated_at"`
 	Warnings             []string                  `json:"warnings,omitempty"`
 	AnalyzerNotes        []string                  `json:"analyzer_notes,omitempty"`
+	directCallEdges      []callEdge
 }
 
 type Section struct {
@@ -445,6 +447,7 @@ func analyzeCOFF(path, entry string, a Analysis) (Analysis, error) {
 	a.Toolchain = detectCOFFToolchain(info)
 	a.COFFDiagnostics = append(a.COFFDiagnostics, info.Diagnostics...)
 	functions := coffFunctions(info)
+	a.directCallEdges = coffDirectCallEdges(info, functions)
 	for _, section := range info.Sections {
 		a.Sections = append(a.Sections, Section{
 			Name:          section.Name,
@@ -542,6 +545,99 @@ func coffFunctionAt(functions []coff.Symbol, offset uint32) string {
 		name = function.Name
 	}
 	return name
+}
+
+func coffDirectCallEdges(info *coff.File, functions map[string][]coff.Symbol) []callEdge {
+	if info == nil || (info.Machine != "x64" && info.Machine != "x86") {
+		return nil
+	}
+	seen := map[string]bool{}
+	var edges []callEdge
+	mode := 64
+	if info.Machine == "x86" {
+		mode = 32
+	}
+	for _, section := range info.Sections {
+		sectionFunctions := functions[section.Name]
+		if !section.Executable || len(section.Data) < 5 || len(sectionFunctions) < 2 {
+			continue
+		}
+		targets := map[uint32]string{}
+		for _, function := range sectionFunctions {
+			if int(function.Value) >= len(section.Data) || targets[function.Value] != "" {
+				continue
+			}
+			targets[function.Value] = function.Name
+		}
+		relocated := map[uint32]bool{}
+		for _, relocation := range section.Relocations {
+			relocated[relocation.VirtualAddress] = true
+		}
+		for index := 0; index < len(sectionFunctions); {
+			function := sectionFunctions[index]
+			start := int(function.Value)
+			next := index + 1
+			for next < len(sectionFunctions) && sectionFunctions[next].Value == function.Value {
+				next++
+			}
+			end := len(section.Data)
+			if next < len(sectionFunctions) {
+				end = min(end, int(sectionFunctions[next].Value))
+			}
+			if start >= 0 && start < end {
+				for offset := start; offset < end; {
+					instruction, err := x86asm.Decode(section.Data[offset:end], mode)
+					if err != nil || instruction.Len == 0 {
+						offset++
+						continue
+					}
+					callOffset := offset
+					offset += instruction.Len
+					if instruction.Op != x86asm.CALL || coffCallBytesRelocated(relocated, uint32(callOffset), instruction.Len) {
+						continue
+					}
+					displacement, ok := instruction.Args[0].(x86asm.Rel)
+					if !ok {
+						continue
+					}
+					targetOffset := int64(callOffset) + int64(instruction.Len) + int64(displacement)
+					if targetOffset < 0 || targetOffset > int64(^uint32(0)) {
+						continue
+					}
+					target := targets[uint32(targetOffset)]
+					if target == "" || normalizeFunctionName(target) == normalizeFunctionName(function.Name) {
+						continue
+					}
+					edge := callEdge{From: function.Name, To: target, Evidence: fmt.Sprintf("direct call at %s+0x%x", section.Name, callOffset)}
+					key := normalizeFunctionName(edge.From) + "\x00" + normalizeFunctionName(edge.To)
+					if !seen[key] {
+						seen[key] = true
+						edges = append(edges, edge)
+					}
+				}
+			}
+			index = next
+		}
+	}
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].From != edges[j].From {
+			return edges[i].From < edges[j].From
+		}
+		if edges[i].To != edges[j].To {
+			return edges[i].To < edges[j].To
+		}
+		return edges[i].Evidence < edges[j].Evidence
+	})
+	return edges
+}
+
+func coffCallBytesRelocated(relocated map[uint32]bool, callOffset uint32, instructionLength int) bool {
+	for offset := callOffset; offset < callOffset+uint32(instructionLength); offset++ {
+		if relocated[offset] {
+			return true
+		}
+	}
+	return false
 }
 
 func entrypointMatches(symbol, entry, arch string) bool {

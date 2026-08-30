@@ -43,6 +43,12 @@ type ResourceFlow struct {
 	Confidence        string   `json:"confidence"`
 }
 
+type callEdge struct {
+	From     string
+	To       string
+	Evidence string
+}
+
 type Requirements struct {
 	Platform  []string `json:"platform,omitempty"`
 	Privilege []string `json:"privilege,omitempty"`
@@ -552,7 +558,7 @@ func enrichAnalysis(path string, analysis *Analysis) {
 		analysis.Capabilities[index].Needs = capabilityNeeds(analysis.Capabilities[index].ID)
 	}
 	analysis.BehaviorChains = inferBehaviorChains(analysis.RelocationDetails, analysis.Strings)
-	interprocedural, flows := inferInterproceduralBehaviorChains(analysis.RelocationDetails, analysis.Strings, analysis.BehaviorChains)
+	interprocedural, flows := inferInterproceduralBehaviorChains(analysis.RelocationDetails, analysis.directCallEdges, analysis.Strings, analysis.BehaviorChains)
 	analysis.BehaviorChains = append(analysis.BehaviorChains, interprocedural...)
 	analysis.ResourceFlows = flows
 	sort.Slice(analysis.BehaviorChains, func(i, j int) bool {
@@ -660,11 +666,19 @@ func inferBehaviorChains(relocations []Relocation, visibleStrings []String) []Be
 	return inferBehaviorChainsWithRules(relocations, visibleStrings, behaviorRules)
 }
 
-func inferInterproceduralBehaviorChains(relocations []Relocation, visibleStrings []String, local []BehaviorChain) ([]BehaviorChain, []ResourceFlow) {
+func inferInterproceduralBehaviorChains(relocations []Relocation, directCalls []callEdge, visibleStrings []String, local []BehaviorChain) ([]BehaviorChain, []ResourceFlow) {
 	functions := map[string]bool{}
 	for _, relocation := range relocations {
 		if relocation.Function != "" {
 			functions[normalizeFunctionName(relocation.Function)] = true
+		}
+	}
+	for _, edge := range directCalls {
+		if from := normalizeFunctionName(edge.From); from != "" {
+			functions[from] = true
+		}
+		if to := normalizeFunctionName(edge.To); to != "" {
+			functions[to] = true
 		}
 	}
 	apis := map[string]map[string]string{}
@@ -694,16 +708,30 @@ func inferInterproceduralBehaviorChains(relocations []Relocation, visibleStrings
 			continue
 		}
 	}
+	for _, directCall := range directCalls {
+		from := normalizeFunctionName(directCall.From)
+		to := normalizeFunctionName(directCall.To)
+		if from == "" || to == "" || from == to || !functions[to] {
+			continue
+		}
+		if edges[from] == nil {
+			edges[from] = map[string]bool{}
+		}
+		edges[from][to] = true
+	}
 	stringsLower := make([]string, 0, len(visibleStrings))
 	for _, item := range visibleStrings {
 		stringsLower = append(stringsLower, strings.ToLower(strings.ReplaceAll(item.Value, "/", `\`)))
 	}
 	localIDs := map[string]bool{}
+	localRuleIDs := map[string]bool{}
 	for _, chain := range local {
 		localIDs[chain.ID+"@"+normalizeFunctionName(chain.Function)] = true
+		localRuleIDs[chain.ID] = true
 	}
 	var chains []BehaviorChain
 	var flows []ResourceFlow
+	chainIndexes := map[string]int{}
 	roots := make([]string, 0, len(functions))
 	for function := range functions {
 		roots = append(roots, function)
@@ -737,19 +765,30 @@ func inferInterproceduralBehaviorChains(relocations []Relocation, visibleStrings
 			}
 			evidenceFunctions := map[string]bool{}
 			for index := range steps {
-				for function, evidence := range apiFunctions[steps[index].API] {
+				function, evidence := firstAPIEvidence(apiFunctions[steps[index].API])
+				if function != "" {
 					evidenceFunctions[function] = true
 					steps[index].Evidence = evidence + " in " + function
-					break
 				}
 			}
-			if len(evidenceFunctions) < 2 || localIDs[rule.id+"@"+root] {
+			if len(evidenceFunctions) < 2 || localRuleIDs[rule.id] || localIDs[rule.id+"@"+root] {
 				continue
 			}
 			functionList := sortedKeys(evidenceFunctions)
-			chains = append(chains, BehaviorChain{ID: rule.id, Name: rule.name, Summary: rule.summary, Confidence: "strong chain", Function: root, Effects: append([]string(nil), rule.effects...), Needs: append([]string(nil), rule.needs...), Steps: steps, Interprocedural: true, EvidenceFunctions: functionList})
+			chain := BehaviorChain{ID: rule.id, Name: rule.name, Summary: rule.summary, Confidence: "strong chain", Function: root, Effects: append([]string(nil), rule.effects...), Needs: append([]string(nil), rule.needs...), Steps: steps, Interprocedural: true, EvidenceFunctions: functionList}
 			resource := behaviorResource(rule.id)
-			flows = append(flows, ResourceFlow{ID: rule.id + "@" + root, Resource: resource, ProducerFunction: functionList[0], ConsumerFunctions: append([]string(nil), functionList[1:]...), Evidence: callEdgeEvidence(root, functionList, edges), Confidence: "call-connected static evidence"})
+			flow := ResourceFlow{ID: rule.id + "@" + root, Resource: resource, ProducerFunction: functionList[0], ConsumerFunctions: append([]string(nil), functionList[1:]...), Evidence: callEdgeEvidence(root, functionList, edges), Confidence: "call-connected static evidence"}
+			key := rule.id + "\x00" + strings.Join(functionList, "\x00")
+			if index, exists := chainIndexes[key]; exists {
+				if len(flow.Evidence) < len(flows[index].Evidence) || (len(flow.Evidence) == len(flows[index].Evidence) && root < chains[index].Function) {
+					chains[index] = chain
+					flows[index] = flow
+				}
+				continue
+			}
+			chainIndexes[key] = len(chains)
+			chains = append(chains, chain)
+			flows = append(flows, flow)
 			localIDs[rule.id+"@"+root] = true
 		}
 	}
@@ -800,24 +839,52 @@ func sortedKeys(values map[string]bool) []string {
 	return result
 }
 
+func firstAPIEvidence(values map[string]string) (string, string) {
+	functions := make([]string, 0, len(values))
+	for function := range values {
+		functions = append(functions, function)
+	}
+	sort.Strings(functions)
+	if len(functions) == 0 {
+		return "", ""
+	}
+	return functions[0], values[functions[0]]
+}
+
 func callEdgeEvidence(root string, functions []string, edges map[string]map[string]bool) []string {
-	allowed := map[string]bool{}
+	evidence := map[string]bool{}
 	for _, function := range functions {
-		allowed[function] = true
-	}
-	var evidence []string
-	for from, targets := range edges {
-		if from != root && !allowed[from] {
-			continue
+		path := shortestCallPath(root, function, edges)
+		for index := 0; index+1 < len(path); index++ {
+			evidence[path[index]+" -> "+path[index+1]] = true
 		}
-		for to := range targets {
-			if allowed[to] {
-				evidence = append(evidence, from+" -> "+to)
+	}
+	return sortedKeys(evidence)
+}
+
+func shortestCallPath(root, target string, edges map[string]map[string]bool) []string {
+	if root == target {
+		return []string{root}
+	}
+	seen := map[string]bool{root: true}
+	paths := map[string][]string{root: {root}}
+	queue := []string{root}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, next := range sortedKeys(edges[current]) {
+			if seen[next] {
+				continue
 			}
+			seen[next] = true
+			paths[next] = append(append([]string(nil), paths[current]...), next)
+			if next == target {
+				return paths[next]
+			}
+			queue = append(queue, next)
 		}
 	}
-	sort.Strings(evidence)
-	return evidence
+	return nil
 }
 
 func behaviorResource(id string) string {

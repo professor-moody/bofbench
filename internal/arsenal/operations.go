@@ -22,7 +22,7 @@ const LockFileName = "arsenal.lock.json"
 const (
 	arsenalIndexSchema        = "bofbench.arsenal-index"
 	arsenalIndexSchemaVersion = 2
-	analyzerCacheVersion      = "behavior-v3-interprocedural"
+	analyzerCacheVersion      = "behavior-v4-direct-calls"
 )
 
 type Inventory struct {

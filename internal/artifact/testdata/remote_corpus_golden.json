@@ -1,8 +1,8 @@
 [
   {
     "name": "sc_enum",
-    "x64": {"loader": "compatible", "capabilities": ["service_inventory"], "chains": []},
-    "x86": {"loader": "compatible", "capabilities": ["service_inventory"], "chains": []}
+    "x64": {"loader": "compatible", "capabilities": ["service_inventory"], "chains": ["remote_service_inventory"]},
+    "x86": {"loader": "compatible", "capabilities": ["service_inventory"], "chains": ["remote_service_inventory"]}
   },
   {
     "name": "schtasksquery",
