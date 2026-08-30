@@ -16,11 +16,15 @@ type corpusLock struct {
 	Schema        string `json:"schema"`
 	SchemaVersion int    `json:"schema_version"`
 	Repositories  []struct {
-		Name       string `json:"name"`
-		Repository string `json:"repository"`
-		Commit     string `json:"commit"`
-		Root       string `json:"root"`
-		Objects    []struct {
+		Name          string `json:"name"`
+		Repository    string `json:"repository"`
+		Commit        string `json:"commit"`
+		Root          string `json:"root"`
+		ReviewSources []struct {
+			Path   string `json:"path"`
+			SHA256 string `json:"sha256"`
+		} `json:"review_sources"`
+		Objects []struct {
 			Path   string `json:"path"`
 			SHA256 string `json:"sha256"`
 		} `json:"objects"`
@@ -50,6 +54,49 @@ type analyzerCorpus struct {
 	Limitations []string `json:"limitations"`
 	Cases       []struct {
 		ID              string            `json:"id"`
+		Objects         map[string]string `json:"objects"`
+		ExpectedSupport map[string]string `json:"expected_support"`
+		Labels          struct {
+			Capabilities                  []string `json:"capabilities"`
+			BehaviorChains                []string `json:"behavior_chains"`
+			InterproceduralBehaviorChains []string `json:"interprocedural_behavior_chains"`
+		} `json:"labels"`
+	} `json:"cases"`
+}
+
+type analyzerCorpusV2 struct {
+	Schema        string    `json:"schema"`
+	SchemaVersion int       `json:"schema_version"`
+	CorpusID      string    `json:"corpus_id"`
+	State         string    `json:"state"`
+	FrozenAt      time.Time `json:"frozen_at"`
+	Extends       struct {
+		Corpus           string `json:"corpus"`
+		CorpusSHA256     string `json:"corpus_sha256"`
+		ObjectLock       string `json:"object_lock"`
+		ObjectLockSHA256 string `json:"object_lock_sha256"`
+	} `json:"extends"`
+	Provenance struct {
+		ObjectLock       string `json:"object_lock"`
+		ObjectLockSHA256 string `json:"object_lock_sha256"`
+		Sources          []struct {
+			Name       string `json:"name"`
+			Repository string `json:"repository"`
+			Commit     string `json:"commit"`
+			Root       string `json:"root"`
+		} `json:"sources"`
+	} `json:"provenance"`
+	ReviewPolicy struct {
+		Basis          []string `json:"basis"`
+		Comparison     string   `json:"comparison"`
+		SupportClasses []string `json:"support_classes"`
+		LabelFields    []string `json:"label_fields"`
+	} `json:"review_policy"`
+	Limitations []string `json:"limitations"`
+	Cases       []struct {
+		ID              string            `json:"id"`
+		Source          string            `json:"source"`
+		ReviewNotes     string            `json:"review_notes"`
 		Objects         map[string]string `json:"objects"`
 		ExpectedSupport map[string]string `json:"expected_support"`
 		Labels          struct {
@@ -178,5 +225,141 @@ func TestAnalyzerCorpusFreezesReviewedLabelsBeforeMeasurement(t *testing.T) {
 	}
 	if len(corpus.Cases) != 16 || len(selectedObjects) != 32 || len(selectedObjects) != len(lockedObjects) {
 		t.Fatalf("corpus coverage cases=%d selected=%d locked=%d, want 16/32/32", len(corpus.Cases), len(selectedObjects), len(lockedObjects))
+	}
+}
+
+func TestAnalyzerCorpusV2ExtendsFrozenBaseWithMissingClasses(t *testing.T) {
+	root := filepath.Join("..", "..")
+	corpusPath := filepath.Join(root, "testdata", "analyzer-corpus-v2.json")
+	corpusBody, err := os.ReadFile(corpusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var corpus analyzerCorpusV2
+	if err := json.Unmarshal(corpusBody, &corpus); err != nil {
+		t.Fatal(err)
+	}
+	if corpus.Schema != "bofbench.analyzer-evaluation-corpus" || corpus.SchemaVersion != 2 || corpus.CorpusID == "" || corpus.State != "labels_frozen" || corpus.FrozenAt.IsZero() {
+		t.Fatalf("incomplete analyzer corpus v2 identity: %#v", corpus)
+	}
+	if len(corpus.ReviewPolicy.Basis) == 0 || corpus.ReviewPolicy.Comparison == "" || len(corpus.ReviewPolicy.LabelFields) != 3 || len(corpus.Limitations) < 4 {
+		t.Fatal("corpus v2 omits its review method or declared limitations")
+	}
+
+	baseCorpusBody, err := os.ReadFile(filepath.Join(root, corpus.Extends.Corpus))
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseCorpusDigest := sha256.Sum256(baseCorpusBody)
+	if actual := hex.EncodeToString(baseCorpusDigest[:]); actual != corpus.Extends.CorpusSHA256 {
+		t.Fatalf("base corpus digest=%s, v2 records %s", actual, corpus.Extends.CorpusSHA256)
+	}
+	var base analyzerCorpus
+	if err := json.Unmarshal(baseCorpusBody, &base); err != nil {
+		t.Fatal(err)
+	}
+	baseLockBody, err := os.ReadFile(filepath.Join(root, corpus.Extends.ObjectLock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseLockDigest := sha256.Sum256(baseLockBody)
+	if actual := hex.EncodeToString(baseLockDigest[:]); actual != corpus.Extends.ObjectLockSHA256 {
+		t.Fatalf("base object-lock digest=%s, v2 records %s", actual, corpus.Extends.ObjectLockSHA256)
+	}
+
+	extensionLockBody, err := os.ReadFile(filepath.Join(root, corpus.Provenance.ObjectLock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	extensionLockDigest := sha256.Sum256(extensionLockBody)
+	if actual := hex.EncodeToString(extensionLockDigest[:]); actual != corpus.Provenance.ObjectLockSHA256 {
+		t.Fatalf("extension object-lock digest=%s, v2 records %s", actual, corpus.Provenance.ObjectLockSHA256)
+	}
+	var extensionLock corpusLock
+	if err := json.Unmarshal(extensionLockBody, &extensionLock); err != nil {
+		t.Fatal(err)
+	}
+	if extensionLock.Schema != "bofbench.corpus-lock" || extensionLock.SchemaVersion != 1 || len(extensionLock.Repositories) != 1 || len(corpus.Provenance.Sources) != 1 {
+		t.Fatalf("unexpected v2 extension provenance: lock=%#v sources=%#v", extensionLock, corpus.Provenance.Sources)
+	}
+	locked := extensionLock.Repositories[0]
+	source := corpus.Provenance.Sources[0]
+	if source.Name != locked.Name || source.Repository != locked.Repository || source.Commit != locked.Commit || source.Root != locked.Root {
+		t.Fatalf("v2 source does not match extension lock: source=%#v lock=%#v", source, locked)
+	}
+	if len(locked.ReviewSources) != 2 || len(locked.Objects) != 4 {
+		t.Fatalf("v2 extension coverage sources=%d objects=%d, want 2/4", len(locked.ReviewSources), len(locked.Objects))
+	}
+	for _, reviewSource := range locked.ReviewSources {
+		body, err := os.ReadFile(filepath.Join(root, locked.Root, reviewSource.Path))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(body)
+		if actual := hex.EncodeToString(digest[:]); actual != reviewSource.SHA256 {
+			t.Errorf("%s: sha256=%s, want %s", reviewSource.Path, actual, reviewSource.SHA256)
+		}
+	}
+
+	allowedSupport := map[string]bool{}
+	for _, class := range corpus.ReviewPolicy.SupportClasses {
+		allowedSupport[class] = true
+	}
+	lockedObjects := map[string]bool{}
+	for _, object := range locked.Objects {
+		if object.Path == "" || len(object.SHA256) != 64 || lockedObjects[object.Path] {
+			t.Fatalf("invalid or duplicate v2 object: %#v", object)
+		}
+		lockedObjects[object.Path] = true
+	}
+	seenCases := map[string]bool{}
+	selectedObjects := map[string]bool{}
+	hasBlockedCase := false
+	hasInterproceduralPositive := false
+	for _, test := range corpus.Cases {
+		if test.ID == "" || seenCases[test.ID] || test.Source != locked.Name || test.ReviewNotes == "" {
+			t.Fatalf("invalid v2 corpus case: %#v", test)
+		}
+		seenCases[test.ID] = true
+		for _, arch := range []string{"x64", "x86"} {
+			object := test.Objects[arch]
+			if len(test.Objects) != 2 || !strings.HasSuffix(object, "."+arch+".o") || !lockedObjects[object] || selectedObjects[object] {
+				t.Fatalf("case %s has invalid %s object %q", test.ID, arch, object)
+			}
+			selectedObjects[object] = true
+			support := test.ExpectedSupport[arch]
+			if len(test.ExpectedSupport) != 2 || !allowedSupport[support] {
+				t.Fatalf("case %s has invalid %s support class %q", test.ID, arch, support)
+			}
+			if support != "compatible" && support != "compatible_runtime_lookup" {
+				hasBlockedCase = true
+			}
+		}
+		if len(test.Labels.InterproceduralBehaviorChains) > 0 {
+			hasInterproceduralPositive = true
+		}
+		for label, values := range map[string][]string{
+			"capabilities":                    test.Labels.Capabilities,
+			"behavior_chains":                 test.Labels.BehaviorChains,
+			"interprocedural_behavior_chains": test.Labels.InterproceduralBehaviorChains,
+		} {
+			if !slices.IsSorted(values) {
+				t.Fatalf("case %s label %s is not sorted: %v", test.ID, label, values)
+			}
+			for index, value := range values {
+				if value == "" || (index > 0 && values[index-1] == value) {
+					t.Fatalf("case %s label %s has an empty or duplicate value: %v", test.ID, label, values)
+				}
+			}
+		}
+	}
+	if len(base.Cases)+len(corpus.Cases) != 18 || len(corpus.Cases) != 2 || len(selectedObjects) != 4 || len(selectedObjects) != len(lockedObjects) {
+		t.Fatalf("combined corpus coverage base=%d extension=%d selected=%d locked=%d, want 16/2/4/4", len(base.Cases), len(corpus.Cases), len(selectedObjects), len(lockedObjects))
+	}
+	if !hasBlockedCase || !hasInterproceduralPositive {
+		t.Fatalf("v2 must add both missing classes: blocked=%t interprocedural=%t", hasBlockedCase, hasInterproceduralPositive)
 	}
 }

@@ -1,0 +1,88 @@
+{
+  "schema": "bofbench.analyzer-evaluation-corpus",
+  "schema_version": 2,
+  "corpus_id": "reviewed-third-party-bofs-v2",
+  "state": "labels_frozen",
+  "frozen_at": "2026-08-30T14:38:41Z",
+  "extends": {
+    "corpus": "testdata/analyzer-corpus-v1.json",
+    "corpus_sha256": "e8a92359273a01c07466fac362f590f8aa909e3950a13c628a05feb302915046",
+    "object_lock": "testdata/corpus-lock.json",
+    "object_lock_sha256": "d73214e974884619390c247f9ea63ce7872f2ca14f9ae3952bed7c9bb56f916d"
+  },
+  "provenance": {
+    "object_lock": "testdata/corpus-extension-lock-v2.json",
+    "object_lock_sha256": "0d761da8ffc65af1d3f085e6d648e9fd1e92f43728fa2951a525359af2cc4d9b",
+    "sources": [
+      {
+        "name": "trustedsec-remote-ops-bofs",
+        "repository": "https://github.com/trustedsec/CS-Remote-OPs-BOF.git",
+        "commit": "b7acde85f1db0d4552888a67c7caa165a84df977",
+        "root": "arsenal/trustedsec-remote-ops"
+      }
+    ]
+  },
+  "review_policy": {
+    "basis": [
+      "upstream source at each frozen commit",
+      "compiled-object imports, symbols, and relocations",
+      "the native loader support contract",
+      "the unchanged version 1 review boundary"
+    ],
+    "comparison": "exact label sets after combining the immutable base cases with this extension",
+    "support_classes": [
+      "compatible",
+      "compatible_runtime_lookup",
+      "unsupported_beacon_api"
+    ],
+    "label_fields": [
+      "capabilities",
+      "behavior_chains",
+      "interprocedural_behavior_chains"
+    ]
+  },
+  "limitations": [
+    "Labels describe static capability evidence and loader support, not successful runtime behavior.",
+    "Version 2 adds one upstream repository and revision to the version 1 source, so cross-repository generalization remains descriptive.",
+    "Blocked-object recall is based on one reviewed behavior family and two architecture variants.",
+    "Interprocedural recall is based on one reviewed behavior family and two architecture variants."
+  ],
+  "cases": [
+    {
+      "id": "lastpass-process-memory-read",
+      "source": "trustedsec-remote-ops-bofs",
+      "review_notes": "GetProcessList opens the selected process and calls GetProcessMemory, which passes the process handle to Write_Memory_Range for ReadProcessMemory. Both objects retain all three functions as distinct symbols.",
+      "objects": {
+        "x64": "Remote/lastpass/lastpass.x64.o",
+        "x86": "Remote/lastpass/lastpass.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible"
+      },
+      "labels": {
+        "capabilities": ["process_access"],
+        "behavior_chains": ["process_memory_read"],
+        "interprocedural_behavior_chains": ["process_memory_read"]
+      }
+    },
+    {
+      "id": "make-token-cert-unsupported-beacon-api",
+      "source": "trustedsec-remote-ops-bofs",
+      "review_notes": "The object opens and enumerates the current-user certificate store and inspects certificate properties, then imports BeaconUseToken, which the native loader support contract does not implement.",
+      "objects": {
+        "x64": "Remote/make_token_cert/make_token_cert.x64.o",
+        "x86": "Remote/make_token_cert/make_token_cert.x86.o"
+      },
+      "expected_support": {
+        "x64": "unsupported_beacon_api",
+        "x86": "unsupported_beacon_api"
+      },
+      "labels": {
+        "capabilities": [],
+        "behavior_chains": ["certificate_store_inventory"],
+        "interprocedural_behavior_chains": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "schema": "bofbench.corpus-lock",
+  "schema_version": 1,
+  "repositories": [
+    {
+      "name": "trustedsec-remote-ops-bofs",
+      "repository": "https://github.com/trustedsec/CS-Remote-OPs-BOF.git",
+      "commit": "b7acde85f1db0d4552888a67c7caa165a84df977",
+      "root": "arsenal/trustedsec-remote-ops",
+      "review_sources": [
+        {
+          "path": "src/Remote/lastpass/entry.c",
+          "sha256": "a0c4ea3a7ec35dd7a42ea1a23649f96a0873825508be24a3d0bb07fe37475bfc"
+        },
+        {
+          "path": "src/Remote/make_token_cert/entry.c",
+          "sha256": "d44f85740768673003f64587f5cff6a2532cac873c050a02ef29543708337056"
+        }
+      ],
+      "objects": [
+        {
+          "path": "Remote/lastpass/lastpass.x64.o",
+          "sha256": "967f15cbd585e737f4021db5a5658aa67e6eef1a83a3dfbedb405bfe08ee1d45"
+        },
+        {
+          "path": "Remote/lastpass/lastpass.x86.o",
+          "sha256": "1080cd3e34b098c6181ef4830cf0ee9e3a81638c44b48bb91cabfa878cf843e0"
+        },
+        {
+          "path": "Remote/make_token_cert/make_token_cert.x64.o",
+          "sha256": "24555d2b3edd92242028f48ed860969be3245f1a464794335439dcb0d0a5abfa"
+        },
+        {
+          "path": "Remote/make_token_cert/make_token_cert.x86.o",
+          "sha256": "bb65be112305fbd69c1f72f642713767dc4efd5f0e624c06b45279c791d98952"
+        }
+      ]
+    }
+  ]
+}
