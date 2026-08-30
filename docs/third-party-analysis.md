@@ -145,6 +145,41 @@ The remeasurement and the digest-bound label audit are preserved at
 A successor corpus must cite that audit explicitly; versions 1 and 2 must not be
 edited to turn either historical result green.
 
+### Version 3: audited corrections and a third source
+
+`testdata/analyzer-corpus-v3.json` is that successor. It reproduces the exact
+inherited `sc_enum` labels, binds the independent audit by path and SHA-256, and
+then declares the corrected service-inventory labels. The evaluator rejects a
+correction that names a new case, repeats a case, changes labels other than the
+declared prior set, or cites an audit that does not bind the inherited corpus
+and case. Versions 1 and 2 and all of their receipts remain unchanged.
+
+The extension lock adds Adaptix Extension Kit at one exact commit. Its
+`token_make` x64/x86 objects form the second reviewed loader-blocked family.
+Its PoolParty object supplies the second reviewed interprocedural
+`process_memory_read` family. That case declares only x64 because the pinned
+upstream Makefile publishes x64 and intentionally comments out its x86 build;
+the evaluator reports it as unpaired instead of manufacturing a corpus object.
+
+Run the current boundary with:
+
+```bash
+make analyzer-corpus-v3
+```
+
+The frozen baseline correctly classified all 39 loader outcomes and every
+reviewed positive, but produced one extra `startup_folder_persistence` label for
+PoolParty's random delete-on-close file. The private Startup-folder pack
+signature required only co-located `CreateFileW` and `WriteFile`, not its own
+structured marker. Pack version 1.0.1 adds `[startup-folder]` as required string
+evidence. With the corpus unchanged, the second measurement has 39/39 loader
+support, 4/4 blocked objects, 53 TP / 0 FP / 0 FN capabilities, 25 TP / 0 FP /
+0 FN behavior chains, 5 TP / 0 FP / 0 FN interprocedural chains, and agreement
+across all 19 paired cases. The x64-only case is counted separately. Both
+measurements are retained at
+`qualification/receipts/bofbench-analyzer-corpus-v3-baseline-20260830.json` and
+`qualification/receipts/bofbench-analyzer-corpus-v3-postfix-20260830.json`.
+
 ## When analysis is uncertain
 
 - Check whether the object contains an entrypoint and supported architecture.

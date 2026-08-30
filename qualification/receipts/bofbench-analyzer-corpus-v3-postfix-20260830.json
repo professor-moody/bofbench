@@ -1,0 +1,1700 @@
+{
+  "analyzer": {
+    "binary_sha256": "0b2939aebb7c907a889a66a10f85eeb5f8c8a63686f478ca5993f7ba32d94860",
+    "host": {
+      "arch": "arm64",
+      "go_version": "go1.26.4",
+      "os": "darwin"
+    },
+    "signature_set_sha256": "16146d253a9fb59ab5a19d64bd5b754d7f471244041fce6237ad6de9c33eaad4",
+    "source_commit": "bd67ba61b74ac1559ee01d49bac5330fcbfbab85",
+    "source_inventory_signature_sets": {
+      "adaptix-extension-kit": "16146d253a9fb59ab5a19d64bd5b754d7f471244041fce6237ad6de9c33eaad4",
+      "trustedsec-remote-ops-bofs": "16146d253a9fb59ab5a19d64bd5b754d7f471244041fce6237ad6de9c33eaad4",
+      "trustedsec-situational-awareness-bofs": "16146d253a9fb59ab5a19d64bd5b754d7f471244041fce6237ad6de9c33eaad4"
+    },
+    "tool": {
+      "build_time": "2026-08-30T11:55:08-05:00",
+      "commit": "bd67ba61b74ac1559ee01d49bac5330fcbfbab85",
+      "name": "bofbench",
+      "version": "dev"
+    }
+  },
+  "corpus": {
+    "corrections": [
+      {
+        "audit": {
+          "path": "qualification/receipts/bofbench-analyzer-corpus-v2-label-audit-20260830.json",
+          "sha256": "e5164d5a8d4a1cc0391b09e25a1a24e80014f32295291bde51a9f201b81f1680",
+          "status": "confirmed_frozen_label_omission"
+        },
+        "case": "sc_enum",
+        "from": {
+          "behavior_chains": [],
+          "capabilities": [
+            "service_inventory"
+          ],
+          "interprocedural_behavior_chains": []
+        },
+        "reason": "The independent frozen-label audit confirms that the inherited source and both objects implement a remote service-inventory chain; versions 1 and 2 remain unchanged.",
+        "to": {
+          "behavior_chains": [
+            "remote_service_inventory"
+          ],
+          "capabilities": [
+            "service_inventory"
+          ],
+          "interprocedural_behavior_chains": [
+            "remote_service_inventory"
+          ]
+        }
+      }
+    ],
+    "id": "reviewed-third-party-bofs-v3",
+    "labels_frozen_commit": "2c6999c104a0ba53daaa7aaaa2cee0e00b08b548",
+    "layers": [
+      {
+        "corrections": [],
+        "id": "trustedsec-situational-awareness-reviewed-v1",
+        "labels_frozen_commit": "9dd0eabc00fa21a0787aadf109fc32fe5ed8a2a7",
+        "limitations": [
+          "This first corpus has no loader-blocked object, so blocked-object recall is not measurable.",
+          "This first corpus has no positive interprocedural behavior chain, so interprocedural recall is not measurable.",
+          "Labels describe static capability evidence and loader support, not successful runtime behavior.",
+          "All objects come from one upstream repository and one frozen revision."
+        ],
+        "object_lock": "testdata/corpus-lock.json",
+        "object_lock_sha256": "d73214e974884619390c247f9ea63ce7872f2ca14f9ae3952bed7c9bb56f916d",
+        "path": "testdata/analyzer-corpus-v1.json",
+        "sha256": "e8a92359273a01c07466fac362f590f8aa909e3950a13c628a05feb302915046"
+      },
+      {
+        "corrections": [],
+        "id": "reviewed-third-party-bofs-v2",
+        "labels_frozen_commit": "7e19c7b746d00c55d1d279901e28a684e0c58d87",
+        "limitations": [
+          "Labels describe static capability evidence and loader support, not successful runtime behavior.",
+          "Version 2 adds one upstream repository and revision to the version 1 source, so cross-repository generalization remains descriptive.",
+          "Blocked-object recall is based on one reviewed behavior family and two architecture variants.",
+          "Interprocedural recall is based on one reviewed behavior family and two architecture variants."
+        ],
+        "object_lock": "testdata/corpus-extension-lock-v2.json",
+        "object_lock_sha256": "0d761da8ffc65af1d3f085e6d648e9fd1e92f43728fa2951a525359af2cc4d9b",
+        "path": "testdata/analyzer-corpus-v2.json",
+        "sha256": "18b3de78256e8c842df5b30a2e178593384752dc69d4e2b51dde4079393dc19e"
+      },
+      {
+        "corrections": [
+          {
+            "audit": {
+              "path": "qualification/receipts/bofbench-analyzer-corpus-v2-label-audit-20260830.json",
+              "sha256": "e5164d5a8d4a1cc0391b09e25a1a24e80014f32295291bde51a9f201b81f1680",
+              "status": "confirmed_frozen_label_omission"
+            },
+            "case": "sc_enum",
+            "from": {
+              "behavior_chains": [],
+              "capabilities": [
+                "service_inventory"
+              ],
+              "interprocedural_behavior_chains": []
+            },
+            "reason": "The independent frozen-label audit confirms that the inherited source and both objects implement a remote service-inventory chain; versions 1 and 2 remain unchanged.",
+            "to": {
+              "behavior_chains": [
+                "remote_service_inventory"
+              ],
+              "capabilities": [
+                "service_inventory"
+              ],
+              "interprocedural_behavior_chains": [
+                "remote_service_inventory"
+              ]
+            }
+          }
+        ],
+        "id": "reviewed-third-party-bofs-v3",
+        "labels_frozen_commit": "2c6999c104a0ba53daaa7aaaa2cee0e00b08b548",
+        "limitations": [
+          "Labels describe static capability evidence and loader support, not successful runtime behavior.",
+          "Version 3 spans three upstream repositories at exact revisions, so broader ecosystem generalization remains descriptive.",
+          "The second blocked family is represented by both upstream-published x64 and x86 objects.",
+          "The second positive interprocedural family is x64-only because the pinned upstream Makefile intentionally does not publish its x86 PoolParty build.",
+          "PoolParty contains eight selectable injection paths in one object; labels describe object-level static evidence, not execution of every path."
+        ],
+        "object_lock": "testdata/corpus-extension-lock-v3.json",
+        "object_lock_sha256": "8fea2108ed705e522aa2afd9aa8cf0e36b0c45aa2a402898e47a06b5c47d07ce",
+        "path": "testdata/analyzer-corpus-v3.json",
+        "sha256": "3774f0a6b967548273eea357b7e479b543bf165193358878a75ca470f93b31d6"
+      }
+    ],
+    "path": "testdata/analyzer-corpus-v3.json",
+    "sha256": "3774f0a6b967548273eea357b7e479b543bf165193358878a75ca470f93b31d6",
+    "sources": [
+      {
+        "commit": "ee9459cc4f42c6b025797bad22ffe8d9f1cf6487",
+        "name": "trustedsec-situational-awareness-bofs",
+        "object_lock": "testdata/corpus-lock.json",
+        "object_lock_sha256": "d73214e974884619390c247f9ea63ce7872f2ca14f9ae3952bed7c9bb56f916d",
+        "repository": "https://github.com/trustedsec/CS-Situational-Awareness-BOF.git",
+        "review_sources": [],
+        "root": "arsenal/trustedsec-sa"
+      },
+      {
+        "commit": "b7acde85f1db0d4552888a67c7caa165a84df977",
+        "name": "trustedsec-remote-ops-bofs",
+        "object_lock": "testdata/corpus-extension-lock-v2.json",
+        "object_lock_sha256": "0d761da8ffc65af1d3f085e6d648e9fd1e92f43728fa2951a525359af2cc4d9b",
+        "repository": "https://github.com/trustedsec/CS-Remote-OPs-BOF.git",
+        "review_sources": [
+          {
+            "path": "src/Remote/lastpass/entry.c",
+            "sha256": "a0c4ea3a7ec35dd7a42ea1a23649f96a0873825508be24a3d0bb07fe37475bfc"
+          },
+          {
+            "path": "src/Remote/make_token_cert/entry.c",
+            "sha256": "d44f85740768673003f64587f5cff6a2532cac873c050a02ef29543708337056"
+          }
+        ],
+        "root": "arsenal/trustedsec-remote-ops"
+      },
+      {
+        "commit": "9413caf85fd83272f5866ef42f9e7ed8db9987d6",
+        "name": "adaptix-extension-kit",
+        "object_lock": "testdata/corpus-extension-lock-v3.json",
+        "object_lock_sha256": "8fea2108ed705e522aa2afd9aa8cf0e36b0c45aa2a402898e47a06b5c47d07ce",
+        "repository": "https://github.com/Adaptix-Framework/Extension-Kit.git",
+        "review_sources": [
+          {
+            "path": "Injection-BOF/Makefile",
+            "sha256": "f1c7a79e7811e219a9d9bca55162042dad4c8cff47f14682a498ce09bfbba39a"
+          },
+          {
+            "path": "Injection-BOF/inject_poolparty/1.h",
+            "sha256": "5f287c5387da869a2c7cf452c0428070ac8192141d4aa0f9f65200c325c1f8ff"
+          },
+          {
+            "path": "Injection-BOF/inject_poolparty/2.h",
+            "sha256": "3845319c412df9dafdf6e7243ab20f03519c774ae127b7d280f775dbd8658ea2"
+          },
+          {
+            "path": "Injection-BOF/inject_poolparty/3.h",
+            "sha256": "22787977ec45c05570c4daf7c89699e7d0a2cd9d64ff0d09f259f60ee5f50009"
+          },
+          {
+            "path": "Injection-BOF/inject_poolparty/4.h",
+            "sha256": "081b34e9230d9b04df2f118f4d99fad496f6248a34888ced6bd15d00a2641026"
+          },
+          {
+            "path": "Injection-BOF/inject_poolparty/5.h",
+            "sha256": "2b6b9f53a0b508b9374fe77bcd53a8fc9945967a1149766f7104a29ae037ac32"
+          },
+          {
+            "path": "Injection-BOF/inject_poolparty/6.h",
+            "sha256": "c69aad1f830d69682eda57f058c3c57932a7f09e6d3389ed8fa6ff9ee540ae5d"
+          },
+          {
+            "path": "Injection-BOF/inject_poolparty/7.h",
+            "sha256": "96924068be6aaa9323fc7c5cbd2b07fccbc713870ff235f0f82d12b7fa1d589f"
+          },
+          {
+            "path": "Injection-BOF/inject_poolparty/8.h",
+            "sha256": "6cbb5fdde0486e0fdd92e6991c87269785e68076e9e2e895eaea199ea9b58c97"
+          },
+          {
+            "path": "Injection-BOF/inject_poolparty/PoolParty.h",
+            "sha256": "cc6f127c0031859e04d3904208bd7a06430f315a94b943ed3d190a56585be3fc"
+          },
+          {
+            "path": "Injection-BOF/inject_poolparty/inject_poolparty.c",
+            "sha256": "0082736c377a090c4798595b686334a274af85bfd968248ee0e30b080b31f9e1"
+          },
+          {
+            "path": "LateralMovement-BOF/Makefile",
+            "sha256": "84b7e1b4279a4007817471c8b75a09fa87020d931bd162b3ce1775406e329435"
+          },
+          {
+            "path": "LateralMovement-BOF/token_make/token_make.c",
+            "sha256": "403c6975284fe08641f1eaba98afe64cad367794f3d91e4edd055ff37fa54022"
+          }
+        ],
+        "root": "arsenal/adaptix-extension-kit"
+      }
+    ]
+  },
+  "evaluated_at": "2026-08-30T16:58:20.285791Z",
+  "limitations": [
+    "Labels describe static capability evidence and loader support, not successful runtime behavior.",
+    "Version 3 spans three upstream repositories at exact revisions, so broader ecosystem generalization remains descriptive.",
+    "The second blocked family is represented by both upstream-published x64 and x86 objects.",
+    "The second positive interprocedural family is x64-only because the pinned upstream Makefile intentionally does not publish its x86 PoolParty build.",
+    "PoolParty contains eight selectable injection paths in one object; labels describe object-level static evidence, not execution of every path."
+  ],
+  "results": [
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "identity_account_sid",
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "identity_account_sid",
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/whoami/whoami.x64.o",
+          "sha256": "260c676ff1f4a68163aa4c1f4c1a7ad49a4943909eb54e0b1d3dfb89c67515bd",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "identity_account_sid",
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "identity_account_sid",
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/whoami/whoami.x86.o",
+          "sha256": "ce1abc3e1d8362d28e49bc32683b3d8d0df412c16a2e37b565dae651ce3eab7e",
+          "status": "pass"
+        }
+      ],
+      "id": "whoami",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [
+              "wmi_query"
+            ],
+            "capabilities": [
+              "wmi_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "wmi_query"
+            ],
+            "capabilities": [
+              "wmi_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/tasklist/tasklist.x64.o",
+          "sha256": "d89d6cea34a1762bc56fbf4519ff167f71092fad1ad6fc5dc12594a71ecdb978",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [
+              "wmi_query"
+            ],
+            "capabilities": [
+              "wmi_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "wmi_query"
+            ],
+            "capabilities": [
+              "wmi_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/tasklist/tasklist.x86.o",
+          "sha256": "066824e6f8e9953ae58e82f18068c637c66f093f06fbc8d67ddea1763cc0ab0f",
+          "status": "pass"
+        }
+      ],
+      "id": "tasklist",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [
+              "wmi_query"
+            ],
+            "capabilities": [
+              "wmi_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "wmi_query"
+            ],
+            "capabilities": [
+              "wmi_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/wmi_query/wmi_query.x64.o",
+          "sha256": "64cb86c48f5ca6c6595f3a5767928f9e45ca92b937a543a1815f3c16da22d97e",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [
+              "wmi_query"
+            ],
+            "capabilities": [
+              "wmi_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "wmi_query"
+            ],
+            "capabilities": [
+              "wmi_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/wmi_query/wmi_query.x86.o",
+          "sha256": "c33d2f6e309f02f857738430c5b33d87bcc9f035e937ea935316a055e3b2d2df",
+          "status": "pass"
+        }
+      ],
+      "id": "wmi_query",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [
+              "remote_service_inventory"
+            ],
+            "capabilities": [
+              "service_inventory"
+            ],
+            "interprocedural_behavior_chains": [
+              "remote_service_inventory"
+            ],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "remote_service_inventory"
+            ],
+            "capabilities": [
+              "service_inventory"
+            ],
+            "interprocedural_behavior_chains": [
+              "remote_service_inventory"
+            ],
+            "support": "compatible"
+          },
+          "path": "SA/sc_enum/sc_enum.x64.o",
+          "sha256": "85ba4141c800cb6cf5258bf36c2657c71e01252ed287dcc680725e885304142a",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [
+              "remote_service_inventory"
+            ],
+            "capabilities": [
+              "service_inventory"
+            ],
+            "interprocedural_behavior_chains": [
+              "remote_service_inventory"
+            ],
+            "support": "compatible"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "remote_service_inventory"
+            ],
+            "capabilities": [
+              "service_inventory"
+            ],
+            "interprocedural_behavior_chains": [
+              "remote_service_inventory"
+            ],
+            "support": "compatible"
+          },
+          "path": "SA/sc_enum/sc_enum.x86.o",
+          "sha256": "2ce766d5e52e33c4c2bc21492a65bea393aedf897e70828d0ba4a049f109141e",
+          "status": "pass"
+        }
+      ],
+      "id": "sc_enum",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [
+              "remote_task_inventory"
+            ],
+            "capabilities": [
+              "wmi_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "remote_task_inventory"
+            ],
+            "capabilities": [
+              "wmi_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/schtasksquery/schtasksquery.x64.o",
+          "sha256": "5b2a55c06a5fb92c2ac63a9f10ea832c822ab1fb99fff6e2f50460197ad3a091",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [
+              "remote_task_inventory"
+            ],
+            "capabilities": [
+              "wmi_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "remote_task_inventory"
+            ],
+            "capabilities": [
+              "wmi_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/schtasksquery/schtasksquery.x86.o",
+          "sha256": "a72f47d3c13d6a38cf40f3dbb54a9d7ca63c1066c73c1e870a51de40e8f600d7",
+          "status": "pass"
+        }
+      ],
+      "id": "schtasksquery",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "share_inventory"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "share_inventory"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/netshares/netshares.x64.o",
+          "sha256": "9337655f67a226c723550be84b2152cd6e9ddca9ef729e0324b2629c3d67c7ae",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "share_inventory"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "share_inventory"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/netshares/netshares.x86.o",
+          "sha256": "b96f0def609e8bc3656fdbf72d7cbc0f0d2891fd78f81e3dbd549877911bb0d9",
+          "status": "pass"
+        }
+      ],
+      "id": "netshares",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [
+              "dns_query",
+              "remote_session_inventory"
+            ],
+            "capabilities": [
+              "domain_context",
+              "dynamic_loading",
+              "network_tcp"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "dns_query",
+              "remote_session_inventory"
+            ],
+            "capabilities": [
+              "domain_context",
+              "dynamic_loading",
+              "network_tcp"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/get-netsession2/get-netsession2.x64.o",
+          "sha256": "dc474ab4d3196450d91ae23ec7ca3dc864676948fea19196ccdb09a9250da679",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [
+              "dns_query",
+              "remote_session_inventory"
+            ],
+            "capabilities": [
+              "domain_context",
+              "dynamic_loading",
+              "network_tcp"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible_runtime_lookup"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "dns_query",
+              "remote_session_inventory"
+            ],
+            "capabilities": [
+              "domain_context",
+              "dynamic_loading",
+              "network_tcp"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible_runtime_lookup"
+          },
+          "path": "SA/get-netsession2/get-netsession2.x86.o",
+          "sha256": "ca4ac30a2b130ed9ae2809af4f94060748fdfe47620cfcaf2a67cbacd2a20b74",
+          "status": "pass"
+        }
+      ],
+      "id": "get-netsession2",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [
+              "remote_registry_read"
+            ],
+            "capabilities": [
+              "registry_read"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "remote_registry_read"
+            ],
+            "capabilities": [
+              "registry_read"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/reg_query/reg_query.x64.o",
+          "sha256": "8d9846527a8fae2ac803ff6321a95a2f73a6582e80df16d63cafaa70622ab52b",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [
+              "remote_registry_read"
+            ],
+            "capabilities": [
+              "registry_read"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "remote_registry_read"
+            ],
+            "capabilities": [
+              "registry_read"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/reg_query/reg_query.x86.o",
+          "sha256": "d59238a71ca451d75c3809d324b7ad34a416ee3005f5a067548f71fd6b762031",
+          "status": "pass"
+        }
+      ],
+      "id": "reg_query",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "registry_read",
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "registry_read",
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/get_dpapi_system/get_dpapi_system.x64.o",
+          "sha256": "f881eb3f54f82860856c49b6b818f5bf7bcf995b226fcccd462b41ee3e29af4b",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "registry_read",
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "registry_read",
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/get_dpapi_system/get_dpapi_system.x86.o",
+          "sha256": "64e76107e111766f146e16aa150bd041dab6feb1ca53449be5cf9214fada39af",
+          "status": "pass"
+        }
+      ],
+      "id": "get_dpapi_system",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "dynamic_loading",
+              "identity_account_sid"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "dynamic_loading",
+              "identity_account_sid"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/adcs_enum/adcs_enum.x64.o",
+          "sha256": "3097b0801b5f3d4e61d3b42ba8f43f734a31b184f857e6549336309a51158489",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "dynamic_loading",
+              "identity_account_sid"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible_runtime_lookup"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "dynamic_loading",
+              "identity_account_sid"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible_runtime_lookup"
+          },
+          "path": "SA/adcs_enum/adcs_enum.x86.o",
+          "sha256": "65bf97e10231b4d43a73cd2ca501ea0b3ed6a263b3cddc38fc7b9901bbea2bfd",
+          "status": "pass"
+        }
+      ],
+      "id": "adcs_enum",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/get_session_info/get_session_info.x64.o",
+          "sha256": "665f6464cbb9e6398b60ec4da8689deeeedcfbf53a03a4cbfea6515fd4e0b2f1",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/get_session_info/get_session_info.x86.o",
+          "sha256": "4587e416ea24f2cae67a3d9d24b0ea296b039723d033b97f6431c9d883e62faf",
+          "status": "pass"
+        }
+      ],
+      "id": "get_session_info",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "domain_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "domain_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/netloggedon2/netloggedon2.x64.o",
+          "sha256": "285b757a8c777be07859de88cf47374380aa4e8823eda0e358814202bf390c07",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "domain_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "domain_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/netloggedon2/netloggedon2.x86.o",
+          "sha256": "c75535aaa895e86328b15ba67a00fb7e004b60fbb5abfe5c9365c08d913c83ce",
+          "status": "pass"
+        }
+      ],
+      "id": "netloggedon2",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [
+              "dns_query"
+            ],
+            "capabilities": [
+              "dynamic_loading",
+              "network_tcp"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "dns_query"
+            ],
+            "capabilities": [
+              "dynamic_loading",
+              "network_tcp"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/nslookup/nslookup.x64.o",
+          "sha256": "8bb7b66350bf4c83de673330925a8f65d5657283ef8500b92ab124908eae8c9a",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [
+              "dns_query"
+            ],
+            "capabilities": [
+              "dynamic_loading",
+              "network_tcp"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible_runtime_lookup"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "dns_query"
+            ],
+            "capabilities": [
+              "dynamic_loading",
+              "network_tcp"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible_runtime_lookup"
+          },
+          "path": "SA/nslookup/nslookup.x86.o",
+          "sha256": "91c5fa699899b18f5de349aab5cacbf4546214d81bcf74318548957cd6baa002",
+          "status": "pass"
+        }
+      ],
+      "id": "nslookup",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [
+              "dns_cache_inventory"
+            ],
+            "capabilities": [],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "dns_cache_inventory"
+            ],
+            "capabilities": [],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/listdns/listdns.x64.o",
+          "sha256": "83ba901003adb5546343477f806de754e768f81ae597c9e5ba434da6470de4d1",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [
+              "dns_cache_inventory"
+            ],
+            "capabilities": [],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "dns_cache_inventory"
+            ],
+            "capabilities": [],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/listdns/listdns.x86.o",
+          "sha256": "3920cfb5f47ce4ab63d77ec71aa45ee4f808211b8e9c127168571aaec7648ea0",
+          "status": "pass"
+        }
+      ],
+      "id": "listdns",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [
+              "socket_endpoint_inventory"
+            ],
+            "capabilities": [
+              "network_tcp",
+              "process_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "socket_endpoint_inventory"
+            ],
+            "capabilities": [
+              "network_tcp",
+              "process_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/netstat/netstat.x64.o",
+          "sha256": "093d483cce679580e893b270134aae5f7b6d3ec92189b92df12f2ea08eae8d39",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [
+              "socket_endpoint_inventory"
+            ],
+            "capabilities": [
+              "network_tcp",
+              "process_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "socket_endpoint_inventory"
+            ],
+            "capabilities": [
+              "network_tcp",
+              "process_access"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/netstat/netstat.x86.o",
+          "sha256": "4582da0abbccca9f749a6d4c8f76bcfbcfc9e58698033f5e98a19e6897449233",
+          "status": "pass"
+        }
+      ],
+      "id": "netstat",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "domain_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "domain_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/ldapsecuritycheck/ldapsecuritycheck.x64.o",
+          "sha256": "b91980f94180f810bfa633b3964e22ec715933b5f6a94a70bfa0fe8232e16f2f",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "domain_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "domain_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "compatible"
+          },
+          "path": "SA/ldapsecuritycheck/ldapsecuritycheck.x86.o",
+          "sha256": "528381f3942a57e89c4d0c92212acfafbffe38ba499443a3a9f70f083c52aa55",
+          "status": "pass"
+        }
+      ],
+      "id": "ldapsecuritycheck",
+      "source": "trustedsec-situational-awareness-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [
+              "process_memory_read"
+            ],
+            "capabilities": [
+              "process_access"
+            ],
+            "interprocedural_behavior_chains": [
+              "process_memory_read"
+            ],
+            "support": "compatible"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "process_memory_read"
+            ],
+            "capabilities": [
+              "process_access"
+            ],
+            "interprocedural_behavior_chains": [
+              "process_memory_read"
+            ],
+            "support": "compatible"
+          },
+          "path": "Remote/lastpass/lastpass.x64.o",
+          "sha256": "967f15cbd585e737f4021db5a5658aa67e6eef1a83a3dfbedb405bfe08ee1d45",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [
+              "process_memory_read"
+            ],
+            "capabilities": [
+              "process_access"
+            ],
+            "interprocedural_behavior_chains": [
+              "process_memory_read"
+            ],
+            "support": "compatible"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "process_memory_read"
+            ],
+            "capabilities": [
+              "process_access"
+            ],
+            "interprocedural_behavior_chains": [
+              "process_memory_read"
+            ],
+            "support": "compatible"
+          },
+          "path": "Remote/lastpass/lastpass.x86.o",
+          "sha256": "1080cd3e34b098c6181ef4830cf0ee9e3a81638c44b48bb91cabfa878cf843e0",
+          "status": "pass"
+        }
+      ],
+      "id": "lastpass-process-memory-read",
+      "source": "trustedsec-remote-ops-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [
+              "certificate_store_inventory"
+            ],
+            "capabilities": [],
+            "interprocedural_behavior_chains": [],
+            "support": "unsupported_beacon_api"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "certificate_store_inventory"
+            ],
+            "capabilities": [],
+            "interprocedural_behavior_chains": [],
+            "support": "unsupported_beacon_api"
+          },
+          "path": "Remote/make_token_cert/make_token_cert.x64.o",
+          "sha256": "24555d2b3edd92242028f48ed860969be3245f1a464794335439dcb0d0a5abfa",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [
+              "certificate_store_inventory"
+            ],
+            "capabilities": [],
+            "interprocedural_behavior_chains": [],
+            "support": "unsupported_beacon_api"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "certificate_store_inventory"
+            ],
+            "capabilities": [],
+            "interprocedural_behavior_chains": [],
+            "support": "unsupported_beacon_api"
+          },
+          "path": "Remote/make_token_cert/make_token_cert.x86.o",
+          "sha256": "bb65be112305fbd69c1f72f642713767dc4efd5f0e624c06b45279c791d98952",
+          "status": "pass"
+        }
+      ],
+      "id": "make-token-cert-unsupported-beacon-api",
+      "source": "trustedsec-remote-ops-bofs",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": true,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "unsupported_beacon_api"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "unsupported_beacon_api"
+          },
+          "path": "LateralMovement-BOF/_bin/token_make.x64.o",
+          "sha256": "6b4acafd6e0f5548b5c20ec059e33512fe30dd216a1665faec61c4c295453d82",
+          "status": "pass"
+        },
+        {
+          "actual": {
+            "behavior_chains": [],
+            "capabilities": [
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "unsupported_beacon_api"
+          },
+          "architecture": "x86",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [],
+            "capabilities": [
+              "token_context"
+            ],
+            "interprocedural_behavior_chains": [],
+            "support": "unsupported_beacon_api"
+          },
+          "path": "LateralMovement-BOF/_bin/token_make.x32.o",
+          "sha256": "1e3a268deffd2dfa2317046f0bd8b62d789a975eb908772b95d545c76dea6ed1",
+          "status": "pass"
+        }
+      ],
+      "id": "token-make-unsupported-beacon-api",
+      "source": "adaptix-extension-kit",
+      "status": "pass"
+    },
+    {
+      "architecture_label_agreement": null,
+      "architectures": [
+        {
+          "actual": {
+            "behavior_chains": [
+              "process_memory_read"
+            ],
+            "capabilities": [
+              "dynamic_loading",
+              "file_write",
+              "handle_inventory",
+              "memory_operations",
+              "process_access"
+            ],
+            "interprocedural_behavior_chains": [
+              "process_memory_read"
+            ],
+            "support": "compatible_runtime_lookup"
+          },
+          "architecture": "x64",
+          "differences": {
+            "behavior_chains": false,
+            "capabilities": false,
+            "interprocedural_behavior_chains": false,
+            "support": false
+          },
+          "expected": {
+            "behavior_chains": [
+              "process_memory_read"
+            ],
+            "capabilities": [
+              "dynamic_loading",
+              "file_write",
+              "handle_inventory",
+              "memory_operations",
+              "process_access"
+            ],
+            "interprocedural_behavior_chains": [
+              "process_memory_read"
+            ],
+            "support": "compatible_runtime_lookup"
+          },
+          "path": "Injection-BOF/_bin/inject_poolparty.x64.o",
+          "sha256": "0ae5e3a50d3cc5fef24492880f0d515e51af3437e2ad3bc6c2f6e88ec10399b5",
+          "status": "pass"
+        }
+      ],
+      "id": "poolparty-process-memory-read",
+      "source": "adaptix-extension-kit",
+      "status": "pass"
+    }
+  ],
+  "schema": "bofbench.analyzer-corpus-evaluation",
+  "schema_version": 3,
+  "status": "pass",
+  "summary": {
+    "architecture_label_agreement": {
+      "matching_pairs": 19,
+      "rate": 1.0,
+      "total_pairs": 19,
+      "unpaired_cases": 1
+    },
+    "behavior_chains": {
+      "false_negative": 0,
+      "false_positive": 0,
+      "precision": {
+        "state": "measured",
+        "value": 1.0
+      },
+      "recall": {
+        "state": "measured",
+        "value": 1.0
+      },
+      "true_positive": 25
+    },
+    "capabilities": {
+      "false_negative": 0,
+      "false_positive": 0,
+      "precision": {
+        "state": "measured",
+        "value": 1.0
+      },
+      "recall": {
+        "state": "measured",
+        "value": 1.0
+      },
+      "true_positive": 53
+    },
+    "cases": 20,
+    "interprocedural_behavior_chains": {
+      "false_negative": 0,
+      "false_positive": 0,
+      "precision": {
+        "state": "measured",
+        "value": 1.0
+      },
+      "recall": {
+        "state": "measured",
+        "value": 1.0
+      },
+      "true_positive": 5
+    },
+    "loader_support": {
+      "accuracy": 1.0,
+      "blocked_objects": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "precision": {
+          "state": "measured",
+          "value": 1.0
+        },
+        "recall": {
+          "state": "measured",
+          "value": 1.0
+        },
+        "true_positive": 4
+      },
+      "correct": 39,
+      "expected_classes": {
+        "compatible": 31,
+        "compatible_runtime_lookup": 4,
+        "unsupported_beacon_api": 4
+      },
+      "total": 39
+    },
+    "mismatched_cases": 0,
+    "mismatched_objects": 0,
+    "objects": 39
+  }
+}

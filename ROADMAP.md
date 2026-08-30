@@ -229,6 +229,26 @@ upstream repository before measuring it.
   `qualification/receipts/bofbench-analyzer-corpus-v2-postfix-20260830.json`
   and
   `qualification/receipts/bofbench-analyzer-corpus-v2-label-audit-20260830.json`.
+- **Version 3 frozen and measured 2026-08-30:** commit `2c6999c` adds a
+  correction layer that can change an inherited label only when its exact
+  prior value and a digest-bound independent audit both agree. It leaves
+  versions 1 and 2 unchanged, adds Adaptix Extension Kit as the third pinned
+  repository, and expands the corpus to 20 families and 39 objects. The new
+  source contributes a second paired loader-blocked family and an explicitly
+  x64-only second interprocedural family because upstream does not publish the
+  PoolParty x86 object.
+- **Version 3 false positive removed 2026-08-30:** the frozen baseline got all
+  39 loader outcomes, 53 capabilities, 25 reviewed behavior positives, and 5
+  interprocedural positives right, but also labeled PoolParty's random
+  delete-on-close file as Startup-folder persistence. The responsible private
+  catalog contract had only `CreateFileW` plus `WriteFile` evidence. Requiring
+  that pack's structured `[startup-folder]` marker changed the signature-set
+  digest from `fec2f9c6...e51098a` to `16146d25...3eaad4`; the unchanged corpus
+  then passed with zero false positives or false negatives and all 19 paired
+  architecture cases agreeing. Receipts:
+  `qualification/receipts/bofbench-analyzer-corpus-v3-baseline-20260830.json`
+  and
+  `qualification/receipts/bofbench-analyzer-corpus-v3-postfix-20260830.json`.
 
 ## Completed: publish the release boundary
 
@@ -240,17 +260,12 @@ upstream repository before measuring it.
    and the exact qualification manifest; an independent download readback
    reproduced every digest.
 
-## Next: improve confidence, not surface area
+## Next: version and aggregate analyzer evidence
 
-- Define a version 3 correction layer that cites the independent `sc_enum`
-  audit, preserves both earlier corpora and measurements byte-for-byte, and
-  cannot silently override an inherited case.
-- Before freezing version 3, add a second blocked family and a second positive
-  interprocedural family from a third upstream repository so corrected labels
-  are not the only reason its metrics change.
-- Add compatibility tests for every supported prior schema and publish removal
-  criteria for the legacy `feature`, `recipe`, `dev`, `preflight`, and `stage`
-  commands.
+- Project both version 3 measurements and their signature-set transition into
+  Operator Lab without replacing the historical version 2 evidence.
+- Publish removal criteria for the legacy `feature`, `recipe`, `dev`,
+  `preflight`, and `stage` commands.
 - Make runtime comparison reports easy to aggregate without weakening exact
   object-hash and terminal-output requirements.
 - Define a bounded proof case for the existing cross-host operation matrix only
