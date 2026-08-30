@@ -698,6 +698,40 @@ func TestSchemaVersionFiveValidatesParallelGroupsAndExports(t *testing.T) {
 	}
 }
 
+func TestReferenceMarkdownSortsParallelExports(t *testing.T) {
+	item := Resolved{
+		Qualified: "test/parallel",
+		Document: Document{
+			SchemaVersion: 5,
+			Summary:       "Parallel reference ordering",
+			Tier:          "internal",
+			Steps: []Step{{
+				ID: "fanout",
+				Parallel: &Parallel{
+					Join:     "all",
+					Branches: []ParallelBranch{{ID: "left", Pack: "host-discovery"}},
+					Exports: map[string]string{
+						"zeta":  "$branch.left.zeta",
+						"alpha": "$branch.left.alpha",
+					},
+				},
+			}},
+		},
+	}
+
+	want := ReferenceMarkdown([]Resolved{item})
+	alpha := strings.Index(want, "export `alpha`")
+	zeta := strings.Index(want, "export `zeta`")
+	if alpha == -1 || zeta == -1 || alpha > zeta {
+		t.Fatalf("parallel exports are not sorted: %s", want)
+	}
+	for i := 0; i < 32; i++ {
+		if got := ReferenceMarkdown([]Resolved{item}); got != want {
+			t.Fatalf("parallel export order changed on generation %d", i+2)
+		}
+	}
+}
+
 func TestParallelReceiptPinsBranchesAndRecordsExpandedPath(t *testing.T) {
 	packs, err := packsvc.Load(packsvc.LoadOptions{})
 	if err != nil {

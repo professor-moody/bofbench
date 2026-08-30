@@ -3152,7 +3152,13 @@ func ReferenceMarkdown(items []Resolved) string {
 					}
 					fmt.Fprintf(&body, "    - branch `%s` → `%s`\n", branch.ID, branchTarget)
 				}
-				for name, reference := range step.Parallel.Exports {
+				exportNames := make([]string, 0, len(step.Parallel.Exports))
+				for name := range step.Parallel.Exports {
+					exportNames = append(exportNames, name)
+				}
+				sort.Strings(exportNames)
+				for _, name := range exportNames {
+					reference := step.Parallel.Exports[name]
 					fmt.Fprintf(&body, "    - export `%s` ← `%s`\n", name, reference)
 				}
 			}
