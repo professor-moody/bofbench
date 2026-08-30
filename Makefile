@@ -1,7 +1,8 @@
 BIN := work/bin/bofbench
 WINBIN := work/bin/bofbench.exe
+ANALYZER_CORPUS_REPORT ?= qualification/receipts/bofbench-analyzer-corpus-evaluation-20260830.json
 
-.PHONY: generate verify-generated test build build-windows native-loader docs docs-check docs-media doctor verify-release-manifest release clean
+.PHONY: generate verify-generated test build build-windows native-loader docs docs-check docs-media doctor analyzer-corpus verify-release-manifest release clean
 
 generate:
 	go generate ./internal/capability
@@ -38,6 +39,12 @@ docs-media:
 
 doctor: build
 	$(BIN) doctor
+
+analyzer-corpus:
+	@commit="$$(git rev-parse HEAD)"; \
+	build_time="$$(git show -s --format=%cI HEAD)"; \
+	go build -trimpath -ldflags "-X github.com/professor-moody/bofbench/internal/evidence.Version=dev -X github.com/professor-moody/bofbench/internal/evidence.Commit=$$commit -X github.com/professor-moody/bofbench/internal/evidence.BuildTime=$$build_time" -o $(BIN) ./cmd/bofbench; \
+	python3 scripts/evaluate-analyzer-corpus.py --bin $(BIN) --output $(ANALYZER_CORPUS_REPORT)
 
 verify-release-manifest:
 	python3 scripts/verify-release-manifest.py
