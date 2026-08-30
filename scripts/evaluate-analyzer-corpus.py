@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import subprocess
@@ -14,6 +15,12 @@ from pathlib import Path
 from typing import Any
 
 ACCEPTED_SUPPORT = {"compatible", "compatible_runtime_lookup"}
+ARCHITECTURES = ("x64", "x86")
+LABEL_FIELDS = (
+    "capabilities",
+    "behavior_chains",
+    "interprocedural_behavior_chains",
+)
 
 
 def fail(message: str) -> None:
@@ -73,6 +80,15 @@ def exact_labels(values: Any, label: str) -> list[str]:
     if values != sorted(set(values)):
         fail(f"{label} must be sorted and unique")
     return values
+
+
+def reviewed_labels(value: Any, label: str) -> dict[str, list[str]]:
+    if not isinstance(value, dict) or set(value) != set(LABEL_FIELDS):
+        fail(f"{label} must contain exactly the three reviewed label fields")
+    return {
+        field: exact_labels(value.get(field), f"{label} {field}")
+        for field in LABEL_FIELDS
+    }
 
 
 def metric(tp: int, fp: int, fn: int) -> dict[str, Any]:
@@ -283,10 +299,12 @@ def resolve_corpus(
     schema_version = corpus.get("schema_version")
     if (
         corpus.get("schema") != "bofbench.analyzer-evaluation-corpus"
-        or schema_version not in (1, 2)
+        or schema_version not in (1, 2, 3)
         or corpus.get("state") != "labels_frozen"
     ):
-        fail("corpus is not a frozen bofbench.analyzer-evaluation-corpus/v1 or /v2")
+        fail(
+            "corpus is not a frozen bofbench.analyzer-evaluation-corpus/v1, /v2, or /v3"
+        )
     corpus_id = corpus.get("corpus_id")
     if not isinstance(corpus_id, str) or not corpus_id:
         fail("corpus has no identity")
@@ -294,7 +312,9 @@ def resolve_corpus(
     sources: list[dict[str, Any]] = []
     cases: list[dict[str, Any]] = []
     layers: list[dict[str, Any]] = []
-    if schema_version == 2:
+    corrections: list[dict[str, Any]] = []
+    base: dict[str, Any] | None = None
+    if schema_version >= 2:
         extends = corpus.get("extends")
         if not isinstance(extends, dict):
             fail(f"corpus layer {corpus_id} has no inherited corpus")
@@ -311,8 +331,110 @@ def resolve_corpus(
         ):
             fail(f"corpus layer {corpus_id} does not bind its base object lock")
         sources.extend(base["sources"])
-        cases.extend(base["cases"])
+        cases.extend(copy.deepcopy(base["cases"]))
         layers.extend(base["layers"])
+        corrections.extend(base["corrections"])
+
+    layer_corrections: list[dict[str, Any]] = []
+    raw_corrections = corpus.get("corrections", [])
+    if schema_version == 3:
+        if not isinstance(raw_corrections, list) or not raw_corrections:
+            fail(f"corpus layer {corpus_id} has no audited corrections")
+        if base is None:
+            fail(f"corpus layer {corpus_id} cannot correct a missing base")
+        corrected_cases: set[str] = set()
+        for correction in raw_corrections:
+            if not isinstance(correction, dict):
+                fail(f"corpus layer {corpus_id} has a malformed correction")
+            case_id = correction.get("case")
+            reason = correction.get("reason")
+            if (
+                not isinstance(case_id, str)
+                or not case_id
+                or case_id in corrected_cases
+                or not isinstance(reason, str)
+                or not reason
+            ):
+                fail(f"corpus layer {corpus_id} has an invalid correction identity")
+            corrected_cases.add(case_id)
+            matches = [
+                index
+                for index, inherited in enumerate(cases)
+                if inherited.get("id") == case_id
+            ]
+            if len(matches) != 1:
+                fail(
+                    f"corpus correction {case_id} must name exactly one inherited case"
+                )
+
+            before = reviewed_labels(
+                cases[matches[0]].get("labels"), f"corpus correction {case_id} from"
+            )
+            declared_before = reviewed_labels(
+                correction.get("from"), f"corpus correction {case_id} from"
+            )
+            declared_after = reviewed_labels(
+                correction.get("to"), f"corpus correction {case_id} to"
+            )
+            if before != declared_before:
+                fail(f"corpus correction {case_id} does not reproduce inherited labels")
+            if declared_after == declared_before:
+                fail(f"corpus correction {case_id} does not change any labels")
+
+            audit = correction.get("audit")
+            if not isinstance(audit, dict):
+                fail(f"corpus correction {case_id} has no audit binding")
+            audit_value = audit.get("path")
+            audit_digest = audit.get("sha256")
+            audit_status = audit.get("status")
+            if (
+                not isinstance(audit_value, str)
+                or not audit_value
+                or not isinstance(audit_digest, str)
+                or len(audit_digest) != 64
+                or not isinstance(audit_status, str)
+                or not audit_status
+            ):
+                fail(f"corpus correction {case_id} has a malformed audit binding")
+            audit_path = require_repo_path(
+                root, audit_value, f"corpus correction {case_id} audit"
+            )
+            if sha256(audit_path) != audit_digest:
+                fail(f"corpus correction {case_id} audit digest does not match")
+            audit_record = load_json(audit_path)
+            audited_corpus = audit_record.get("corpus")
+            if (
+                audit_record.get("schema") != "bofbench.analyzer-corpus-label-audit"
+                or audit_record.get("schema_version") != 1
+                or audit_record.get("status") != audit_status
+                or not isinstance(audited_corpus, dict)
+                or audited_corpus.get("path") != base["path"]
+                or audited_corpus.get("sha256") != base["sha256"]
+                or audited_corpus.get("inherited_case") != case_id
+                or audited_corpus.get("frozen_behavior_chains")
+                != declared_before["behavior_chains"]
+                or audited_corpus.get("frozen_interprocedural_behavior_chains")
+                != declared_before["interprocedural_behavior_chains"]
+            ):
+                fail(f"corpus correction {case_id} audit does not bind its base labels")
+
+            corrected = copy.deepcopy(cases[matches[0]])
+            corrected["labels"] = declared_after
+            corrected["label_correction"] = {
+                "reason": reason,
+                "audit": {
+                    "path": audit_value,
+                    "sha256": audit_digest,
+                    "status": audit_status,
+                },
+                "from": declared_before,
+                "to": declared_after,
+            }
+            cases[matches[0]] = corrected
+            layer_corrections.append({"case": case_id, **corrected["label_correction"]})
+        corrections.extend(layer_corrections)
+    elif raw_corrections:
+        fail(f"corpus layer {corpus_id} uses corrections before schema version 3")
 
     provenance = corpus.get("provenance")
     if not isinstance(provenance, dict):
@@ -354,6 +476,7 @@ def resolve_corpus(
             "object_lock": object_lock["path"],
             "object_lock_sha256": object_lock["sha256"],
             "limitations": corpus.get("limitations"),
+            "corrections": layer_corrections,
         }
     )
     return {
@@ -365,6 +488,7 @@ def resolve_corpus(
         "sources": sources,
         "cases": cases,
         "layers": layers,
+        "corrections": corrections,
     }
 
 
@@ -429,6 +553,8 @@ def main() -> int:
     behavior_chains: Counter[str] = Counter()
     interprocedural: Counter[str] = Counter()
     pair_agreement = 0
+    paired_cases = 0
+    unpaired_cases = 0
     results: list[dict[str, Any]] = []
 
     for case in resolved["cases"]:
@@ -442,19 +568,24 @@ def main() -> int:
             isinstance(value, dict) for value in (objects, expected_support, labels)
         ):
             fail(f"case {case_id} is malformed")
-        expected_capabilities = exact_labels(
-            labels.get("capabilities"), f"{case_id} capabilities"
-        )
-        expected_chains = exact_labels(
-            labels.get("behavior_chains"), f"{case_id} behavior chains"
-        )
-        expected_interprocedural = exact_labels(
-            labels.get("interprocedural_behavior_chains"),
-            f"{case_id} interprocedural chains",
-        )
+        expected_labels = reviewed_labels(labels, f"case {case_id} labels")
+        expected_capabilities = expected_labels["capabilities"]
+        expected_chains = expected_labels["behavior_chains"]
+        expected_interprocedural = expected_labels["interprocedural_behavior_chains"]
+        declared_architectures = case.get("architectures", list(ARCHITECTURES))
+        if (
+            not isinstance(declared_architectures, list)
+            or not declared_architectures
+            or any(arch not in ARCHITECTURES for arch in declared_architectures)
+            or declared_architectures
+            != [arch for arch in ARCHITECTURES if arch in declared_architectures]
+            or set(objects) != set(declared_architectures)
+            or set(expected_support) != set(declared_architectures)
+        ):
+            fail(f"case {case_id} has invalid declared architectures")
         architectures: list[dict[str, Any]] = []
         actual_by_arch: dict[str, tuple[list[str], list[str], list[str]]] = {}
-        for arch in ("x64", "x86"):
+        for arch in declared_architectures:
             relative = objects.get(arch)
             if not isinstance(relative, str) or relative not in source["objects"]:
                 fail(
@@ -546,8 +677,13 @@ def main() -> int:
                 actual_chains,
                 actual_interprocedural,
             )
-        agrees = actual_by_arch["x64"] == actual_by_arch["x86"]
-        pair_agreement += int(agrees)
+        agrees: bool | None = None
+        if len(declared_architectures) == 2:
+            agrees = actual_by_arch["x64"] == actual_by_arch["x86"]
+            paired_cases += 1
+            pair_agreement += int(agrees)
+        else:
+            unpaired_cases += 1
         results.append(
             {
                 "id": case_id,
@@ -555,7 +691,7 @@ def main() -> int:
                 "architecture_label_agreement": agrees,
                 "status": (
                     "pass"
-                    if agrees
+                    if agrees is not False
                     and all(item["status"] == "pass" for item in architectures)
                     else "mismatch"
                 ),
@@ -602,6 +738,7 @@ def main() -> int:
             {
                 "layers": resolved["layers"],
                 "sources": public_sources,
+                "corrections": resolved["corrections"],
             }
         )
 
@@ -650,8 +787,9 @@ def main() -> int:
             ),
             "architecture_label_agreement": {
                 "matching_pairs": pair_agreement,
-                "total_pairs": len(results),
-                "rate": pair_agreement / len(results),
+                "total_pairs": paired_cases,
+                "unpaired_cases": unpaired_cases,
+                "rate": pair_agreement / paired_cases if paired_cases else None,
             },
         },
         "limitations": resolved["limitations"],

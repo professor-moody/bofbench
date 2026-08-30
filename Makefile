@@ -3,7 +3,7 @@ WINBIN := work/bin/bofbench.exe
 ANALYZER_CORPUS ?= testdata/analyzer-corpus-v1.json
 ANALYZER_CORPUS_REPORT ?= work/analyzer-corpus-evaluation.json
 
-.PHONY: generate verify-generated test build build-windows native-loader docs docs-check docs-media doctor analyzer-corpus analyzer-corpus-v2 verify-release-manifest release clean
+.PHONY: generate verify-generated test build build-windows native-loader docs docs-check docs-media doctor analyzer-corpus analyzer-corpus-v2 analyzer-corpus-v3 verify-release-manifest release clean
 
 generate:
 	go generate ./internal/capability
@@ -51,6 +51,11 @@ analyzer-corpus-v2:
 	$(MAKE) analyzer-corpus \
 		ANALYZER_CORPUS=testdata/analyzer-corpus-v2.json \
 		ANALYZER_CORPUS_REPORT=work/analyzer-corpus-v2-evaluation.json
+
+analyzer-corpus-v3:
+	$(MAKE) analyzer-corpus \
+		ANALYZER_CORPUS=testdata/analyzer-corpus-v3.json \
+		ANALYZER_CORPUS_REPORT=work/analyzer-corpus-v3-evaluation.json
 
 verify-release-manifest:
 	python3 scripts/verify-release-manifest.py

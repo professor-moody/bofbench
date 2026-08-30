@@ -1,0 +1,80 @@
+{
+  "schema": "bofbench.corpus-lock",
+  "schema_version": 1,
+  "repositories": [
+    {
+      "name": "adaptix-extension-kit",
+      "repository": "https://github.com/Adaptix-Framework/Extension-Kit.git",
+      "commit": "9413caf85fd83272f5866ef42f9e7ed8db9987d6",
+      "root": "arsenal/adaptix-extension-kit",
+      "review_sources": [
+        {
+          "path": "Injection-BOF/Makefile",
+          "sha256": "f1c7a79e7811e219a9d9bca55162042dad4c8cff47f14682a498ce09bfbba39a"
+        },
+        {
+          "path": "Injection-BOF/inject_poolparty/1.h",
+          "sha256": "5f287c5387da869a2c7cf452c0428070ac8192141d4aa0f9f65200c325c1f8ff"
+        },
+        {
+          "path": "Injection-BOF/inject_poolparty/2.h",
+          "sha256": "3845319c412df9dafdf6e7243ab20f03519c774ae127b7d280f775dbd8658ea2"
+        },
+        {
+          "path": "Injection-BOF/inject_poolparty/3.h",
+          "sha256": "22787977ec45c05570c4daf7c89699e7d0a2cd9d64ff0d09f259f60ee5f50009"
+        },
+        {
+          "path": "Injection-BOF/inject_poolparty/4.h",
+          "sha256": "081b34e9230d9b04df2f118f4d99fad496f6248a34888ced6bd15d00a2641026"
+        },
+        {
+          "path": "Injection-BOF/inject_poolparty/5.h",
+          "sha256": "2b6b9f53a0b508b9374fe77bcd53a8fc9945967a1149766f7104a29ae037ac32"
+        },
+        {
+          "path": "Injection-BOF/inject_poolparty/6.h",
+          "sha256": "c69aad1f830d69682eda57f058c3c57932a7f09e6d3389ed8fa6ff9ee540ae5d"
+        },
+        {
+          "path": "Injection-BOF/inject_poolparty/7.h",
+          "sha256": "96924068be6aaa9323fc7c5cbd2b07fccbc713870ff235f0f82d12b7fa1d589f"
+        },
+        {
+          "path": "Injection-BOF/inject_poolparty/8.h",
+          "sha256": "6cbb5fdde0486e0fdd92e6991c87269785e68076e9e2e895eaea199ea9b58c97"
+        },
+        {
+          "path": "Injection-BOF/inject_poolparty/PoolParty.h",
+          "sha256": "cc6f127c0031859e04d3904208bd7a06430f315a94b943ed3d190a56585be3fc"
+        },
+        {
+          "path": "Injection-BOF/inject_poolparty/inject_poolparty.c",
+          "sha256": "0082736c377a090c4798595b686334a274af85bfd968248ee0e30b080b31f9e1"
+        },
+        {
+          "path": "LateralMovement-BOF/Makefile",
+          "sha256": "84b7e1b4279a4007817471c8b75a09fa87020d931bd162b3ce1775406e329435"
+        },
+        {
+          "path": "LateralMovement-BOF/token_make/token_make.c",
+          "sha256": "403c6975284fe08641f1eaba98afe64cad367794f3d91e4edd055ff37fa54022"
+        }
+      ],
+      "objects": [
+        {
+          "path": "Injection-BOF/_bin/inject_poolparty.x64.o",
+          "sha256": "0ae5e3a50d3cc5fef24492880f0d515e51af3437e2ad3bc6c2f6e88ec10399b5"
+        },
+        {
+          "path": "LateralMovement-BOF/_bin/token_make.x32.o",
+          "sha256": "1e3a268deffd2dfa2317046f0bd8b62d789a975eb908772b95d545c76dea6ed1"
+        },
+        {
+          "path": "LateralMovement-BOF/_bin/token_make.x64.o",
+          "sha256": "6b4acafd6e0f5548b5c20ec059e33512fe30dd216a1665faec61c4c295453d82"
+        }
+      ]
+    }
+  ]
+}

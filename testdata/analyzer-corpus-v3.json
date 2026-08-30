@@ -1,0 +1,117 @@
+{
+  "schema": "bofbench.analyzer-evaluation-corpus",
+  "schema_version": 3,
+  "corpus_id": "reviewed-third-party-bofs-v3",
+  "state": "labels_frozen",
+  "frozen_at": "2026-08-30T16:52:20Z",
+  "extends": {
+    "corpus": "testdata/analyzer-corpus-v2.json",
+    "corpus_sha256": "18b3de78256e8c842df5b30a2e178593384752dc69d4e2b51dde4079393dc19e",
+    "object_lock": "testdata/corpus-extension-lock-v2.json",
+    "object_lock_sha256": "0d761da8ffc65af1d3f085e6d648e9fd1e92f43728fa2951a525359af2cc4d9b"
+  },
+  "corrections": [
+    {
+      "case": "sc_enum",
+      "reason": "The independent frozen-label audit confirms that the inherited source and both objects implement a remote service-inventory chain; versions 1 and 2 remain unchanged.",
+      "audit": {
+        "path": "qualification/receipts/bofbench-analyzer-corpus-v2-label-audit-20260830.json",
+        "sha256": "e5164d5a8d4a1cc0391b09e25a1a24e80014f32295291bde51a9f201b81f1680",
+        "status": "confirmed_frozen_label_omission"
+      },
+      "from": {
+        "capabilities": ["service_inventory"],
+        "behavior_chains": [],
+        "interprocedural_behavior_chains": []
+      },
+      "to": {
+        "capabilities": ["service_inventory"],
+        "behavior_chains": ["remote_service_inventory"],
+        "interprocedural_behavior_chains": ["remote_service_inventory"]
+      }
+    }
+  ],
+  "provenance": {
+    "object_lock": "testdata/corpus-extension-lock-v3.json",
+    "object_lock_sha256": "8fea2108ed705e522aa2afd9aa8cf0e36b0c45aa2a402898e47a06b5c47d07ce",
+    "sources": [
+      {
+        "name": "adaptix-extension-kit",
+        "repository": "https://github.com/Adaptix-Framework/Extension-Kit.git",
+        "commit": "9413caf85fd83272f5866ef42f9e7ed8db9987d6",
+        "root": "arsenal/adaptix-extension-kit"
+      }
+    ]
+  },
+  "review_policy": {
+    "basis": [
+      "upstream source at each frozen commit",
+      "compiled-object imports, symbols, and relocations",
+      "the native loader support contract",
+      "the unchanged version 1 and version 2 review boundaries",
+      "digest-bound independent audits for every inherited-label correction"
+    ],
+    "comparison": "exact label sets after applying only declared audit-bound corrections and combining all three immutable source layers",
+    "support_classes": [
+      "compatible",
+      "compatible_runtime_lookup",
+      "unsupported_beacon_api"
+    ],
+    "label_fields": [
+      "capabilities",
+      "behavior_chains",
+      "interprocedural_behavior_chains"
+    ]
+  },
+  "limitations": [
+    "Labels describe static capability evidence and loader support, not successful runtime behavior.",
+    "Version 3 spans three upstream repositories at exact revisions, so broader ecosystem generalization remains descriptive.",
+    "The second blocked family is represented by both upstream-published x64 and x86 objects.",
+    "The second positive interprocedural family is x64-only because the pinned upstream Makefile intentionally does not publish its x86 PoolParty build.",
+    "PoolParty contains eight selectable injection paths in one object; labels describe object-level static evidence, not execution of every path."
+  ],
+  "cases": [
+    {
+      "id": "token-make-unsupported-beacon-api",
+      "source": "adaptix-extension-kit",
+      "review_notes": "The source creates a logon token, inspects its elevation, and passes it to BeaconUseToken. Both published architectures import that unsupported Beacon API and retain the token-context primitives.",
+      "architectures": ["x64", "x86"],
+      "objects": {
+        "x64": "LateralMovement-BOF/_bin/token_make.x64.o",
+        "x86": "LateralMovement-BOF/_bin/token_make.x32.o"
+      },
+      "expected_support": {
+        "x64": "unsupported_beacon_api",
+        "x86": "unsupported_beacon_api"
+      },
+      "labels": {
+        "capabilities": ["token_context"],
+        "behavior_chains": [],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "poolparty-process-memory-read",
+      "source": "adaptix-extension-kit",
+      "review_notes": "The dispatcher selects Inject1 through Inject8. Inject2 opens the target process and calls RemoteTpWorkInsertion, which reads the remote worker-factory pool with ReadProcessMemory. The object also contains dynamic resolution, handle discovery, remote-memory operations, and temporary-file I/O; the latter does not resolve or write a Startup-folder path.",
+      "architectures": ["x64"],
+      "objects": {
+        "x64": "Injection-BOF/_bin/inject_poolparty.x64.o"
+      },
+      "expected_support": {
+        "x64": "compatible_runtime_lookup"
+      },
+      "labels": {
+        "capabilities": [
+          "dynamic_loading",
+          "file_write",
+          "handle_inventory",
+          "memory_operations",
+          "process_access"
+        ],
+        "behavior_chains": ["process_memory_read"],
+        "interprocedural_behavior_chains": ["process_memory_read"]
+      }
+    }
+  ]
+}
