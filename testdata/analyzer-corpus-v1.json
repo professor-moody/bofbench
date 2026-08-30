@@ -1,0 +1,296 @@
+{
+  "schema": "bofbench.analyzer-evaluation-corpus",
+  "schema_version": 1,
+  "corpus_id": "trustedsec-situational-awareness-reviewed-v1",
+  "state": "labels_frozen",
+  "frozen_at": "2026-08-30T13:16:27Z",
+  "provenance": {
+    "name": "trustedsec-situational-awareness-bofs",
+    "repository": "https://github.com/trustedsec/CS-Situational-Awareness-BOF.git",
+    "commit": "ee9459cc4f42c6b025797bad22ffe8d9f1cf6487",
+    "root": "arsenal/trustedsec-sa",
+    "object_lock": "testdata/corpus-lock.json",
+    "object_lock_sha256": "d73214e974884619390c247f9ea63ce7872f2ca14f9ae3952bed7c9bb56f916d"
+  },
+  "review_policy": {
+    "basis": [
+      "upstream source at the frozen commit",
+      "compiled-object imports and relocations",
+      "pre-existing source-reviewed regression expectations"
+    ],
+    "comparison": "exact label sets after collapsing duplicate behavior-chain IDs",
+    "support_classes": [
+      "compatible",
+      "compatible_runtime_lookup"
+    ],
+    "label_fields": [
+      "capabilities",
+      "behavior_chains",
+      "interprocedural_behavior_chains"
+    ]
+  },
+  "limitations": [
+    "This first corpus has no loader-blocked object, so blocked-object recall is not measurable.",
+    "This first corpus has no positive interprocedural behavior chain, so interprocedural recall is not measurable.",
+    "Labels describe static capability evidence and loader support, not successful runtime behavior.",
+    "All objects come from one upstream repository and one frozen revision."
+  ],
+  "cases": [
+    {
+      "id": "whoami",
+      "objects": {
+        "x64": "SA/whoami/whoami.x64.o",
+        "x86": "SA/whoami/whoami.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible"
+      },
+      "labels": {
+        "capabilities": ["identity_account_sid", "token_context"],
+        "behavior_chains": [],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "tasklist",
+      "objects": {
+        "x64": "SA/tasklist/tasklist.x64.o",
+        "x86": "SA/tasklist/tasklist.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible"
+      },
+      "labels": {
+        "capabilities": ["wmi_access"],
+        "behavior_chains": ["wmi_query"],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "wmi_query",
+      "objects": {
+        "x64": "SA/wmi_query/wmi_query.x64.o",
+        "x86": "SA/wmi_query/wmi_query.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible"
+      },
+      "labels": {
+        "capabilities": ["wmi_access"],
+        "behavior_chains": ["wmi_query"],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "sc_enum",
+      "objects": {
+        "x64": "SA/sc_enum/sc_enum.x64.o",
+        "x86": "SA/sc_enum/sc_enum.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible"
+      },
+      "labels": {
+        "capabilities": ["service_inventory"],
+        "behavior_chains": [],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "schtasksquery",
+      "objects": {
+        "x64": "SA/schtasksquery/schtasksquery.x64.o",
+        "x86": "SA/schtasksquery/schtasksquery.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible"
+      },
+      "labels": {
+        "capabilities": ["wmi_access"],
+        "behavior_chains": ["remote_task_inventory"],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "netshares",
+      "objects": {
+        "x64": "SA/netshares/netshares.x64.o",
+        "x86": "SA/netshares/netshares.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible"
+      },
+      "labels": {
+        "capabilities": ["share_inventory"],
+        "behavior_chains": [],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "get-netsession2",
+      "objects": {
+        "x64": "SA/get-netsession2/get-netsession2.x64.o",
+        "x86": "SA/get-netsession2/get-netsession2.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible_runtime_lookup"
+      },
+      "labels": {
+        "capabilities": ["domain_context", "dynamic_loading", "network_tcp"],
+        "behavior_chains": ["dns_query", "remote_session_inventory"],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "reg_query",
+      "objects": {
+        "x64": "SA/reg_query/reg_query.x64.o",
+        "x86": "SA/reg_query/reg_query.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible"
+      },
+      "labels": {
+        "capabilities": ["registry_read"],
+        "behavior_chains": ["remote_registry_read"],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "get_dpapi_system",
+      "objects": {
+        "x64": "SA/get_dpapi_system/get_dpapi_system.x64.o",
+        "x86": "SA/get_dpapi_system/get_dpapi_system.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible"
+      },
+      "labels": {
+        "capabilities": ["registry_read", "token_context"],
+        "behavior_chains": [],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "adcs_enum",
+      "objects": {
+        "x64": "SA/adcs_enum/adcs_enum.x64.o",
+        "x86": "SA/adcs_enum/adcs_enum.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible_runtime_lookup"
+      },
+      "labels": {
+        "capabilities": ["dynamic_loading", "identity_account_sid"],
+        "behavior_chains": [],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "get_session_info",
+      "objects": {
+        "x64": "SA/get_session_info/get_session_info.x64.o",
+        "x86": "SA/get_session_info/get_session_info.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible"
+      },
+      "labels": {
+        "capabilities": ["token_context"],
+        "behavior_chains": [],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "netloggedon2",
+      "objects": {
+        "x64": "SA/netloggedon2/netloggedon2.x64.o",
+        "x86": "SA/netloggedon2/netloggedon2.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible"
+      },
+      "labels": {
+        "capabilities": ["domain_context"],
+        "behavior_chains": [],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "nslookup",
+      "objects": {
+        "x64": "SA/nslookup/nslookup.x64.o",
+        "x86": "SA/nslookup/nslookup.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible_runtime_lookup"
+      },
+      "labels": {
+        "capabilities": ["dynamic_loading", "network_tcp"],
+        "behavior_chains": ["dns_query"],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "listdns",
+      "objects": {
+        "x64": "SA/listdns/listdns.x64.o",
+        "x86": "SA/listdns/listdns.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible"
+      },
+      "labels": {
+        "capabilities": [],
+        "behavior_chains": ["dns_cache_inventory"],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "netstat",
+      "objects": {
+        "x64": "SA/netstat/netstat.x64.o",
+        "x86": "SA/netstat/netstat.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible"
+      },
+      "labels": {
+        "capabilities": ["network_tcp", "process_access"],
+        "behavior_chains": ["socket_endpoint_inventory"],
+        "interprocedural_behavior_chains": []
+      }
+    },
+    {
+      "id": "ldapsecuritycheck",
+      "objects": {
+        "x64": "SA/ldapsecuritycheck/ldapsecuritycheck.x64.o",
+        "x86": "SA/ldapsecuritycheck/ldapsecuritycheck.x86.o"
+      },
+      "expected_support": {
+        "x64": "compatible",
+        "x86": "compatible"
+      },
+      "labels": {
+        "capabilities": ["domain_context"],
+        "behavior_chains": [],
+        "interprocedural_behavior_chains": []
+      }
+    }
+  ]
+}

@@ -78,6 +78,20 @@ bofbench arsenal regression <before-report> <after-report>
 
 The lock pins source revision and discovered object hashes. Regression distinguishes a changed hash from changed behavior or loader compatibility.
 
+## Frozen analyzer evaluation corpus
+
+`testdata/analyzer-corpus-v1.json` is the first review boundary for measuring the
+analyzer against third-party objects. It binds one TrustedSec source commit and
+the digest of `testdata/corpus-lock.json` to 16 reviewed behaviors and paired
+x64/x86 objects. Each case declares its expected loader-support class and exact
+capability, behavior-chain, and interprocedural-chain label sets.
+
+The labels are frozen before evaluation. A measurement may report disagreements
+but must not rewrite labels to match analyzer output. Version 1 contains no
+loader-blocked object and no positive interprocedural chain, so it can measure
+false positives in those areas but cannot support a recall claim for either.
+Static labels also do not claim that an object executed successfully.
+
 ## When analysis is uncertain
 
 - Check whether the object contains an entrypoint and supported architecture.

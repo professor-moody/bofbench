@@ -37,7 +37,9 @@
         {"path": "SA/listdns/listdns.x64.o", "sha256": "83ba901003adb5546343477f806de754e768f81ae597c9e5ba434da6470de4d1"},
         {"path": "SA/listdns/listdns.x86.o", "sha256": "3920cfb5f47ce4ab63d77ec71aa45ee4f808211b8e9c127168571aaec7648ea0"},
         {"path": "SA/netstat/netstat.x64.o", "sha256": "093d483cce679580e893b270134aae5f7b6d3ec92189b92df12f2ea08eae8d39"},
-        {"path": "SA/netstat/netstat.x86.o", "sha256": "4582da0abbccca9f749a6d4c8f76bcfbcfc9e58698033f5e98a19e6897449233"}
+        {"path": "SA/netstat/netstat.x86.o", "sha256": "4582da0abbccca9f749a6d4c8f76bcfbcfc9e58698033f5e98a19e6897449233"},
+        {"path": "SA/ldapsecuritycheck/ldapsecuritycheck.x64.o", "sha256": "b91980f94180f810bfa633b3964e22ec715933b5f6a94a70bfa0fe8232e16f2f"},
+        {"path": "SA/ldapsecuritycheck/ldapsecuritycheck.x86.o", "sha256": "528381f3942a57e89c4d0c92212acfafbffe38ba499443a3a9f70f083c52aa55"}
       ]
     }
   ]

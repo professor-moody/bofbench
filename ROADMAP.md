@@ -1,6 +1,6 @@
 # BOFBench roadmap
 
-Status: active, reviewed 2026-08-25.
+Status: active, reviewed 2026-08-30.
 
 BOFBench exists to compose, analyze, execute, compare, and export BOFs from
 typed capability contracts. Its next phase is stabilization and proof of the
@@ -36,9 +36,11 @@ Lab's product evidence; numeric scoring is withheld on target v2.
 
 ## Next action
 
-Build the first labeled third-party-object analyzer corpus. Freeze provenance,
-architecture, expected support class, and review labels before measuring
-precision, unsupported cases, and cross-function explanations.
+Evaluate the frozen third-party-object corpus without changing its labels.
+Record exact-set capability and behavior-chain precision/recall, loader-support
+accuracy, x64/x86 agreement, and interprocedural false positives. Withhold
+blocked-object and interprocedural recall because version 1 has no positive
+case for either class.
 
 ## Current state
 
@@ -186,6 +188,12 @@ precision, unsupported cases, and cross-function explanations.
   `qualification/receipts/bofbench-0.1.0-published-20260825.json` preserves the
   remote tag, release, asset, and qualification identities without changing
   any withheld or unavailable cell.
+- **Corpus frozen 2026-08-30:** `testdata/analyzer-corpus-v1.json` binds one
+  TrustedSec source commit and object lock to 16 reviewed behaviors, 32 paired
+  x64/x86 objects, per-architecture loader-support classes, and exact capability
+  and behavior-chain label sets. The freeze declares its two material coverage
+  limits before evaluation: there is no loader-blocked object and no positive
+  interprocedural chain.
 
 ## Completed: publish the release boundary
 
@@ -199,8 +207,8 @@ precision, unsupported cases, and cross-function explanations.
 
 ## Next: improve confidence, not surface area
 
-- Build a labeled third-party-object evaluation corpus for analyzer precision,
-  unsupported cases, architecture differences, and cross-function explanations.
+- Evaluate the frozen third-party-object corpus and deposit a digest-bound report
+  without revising labels in response to analyzer output.
 - Add compatibility tests for every supported prior schema and publish removal
   criteria for the legacy `feature`, `recipe`, `dev`, `preflight`, and `stage`
   commands.
